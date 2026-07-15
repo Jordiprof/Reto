@@ -1,0 +1,12 @@
+# Secretos — NUNCA subir (la API key vive aqui)
+.env
+
+# Entorno virtual (cada maquina crea el suyo)
+venv/
+
+# Cache de Python (ficheros compilados, se regeneran solos)
+__pycache__/
+*.pyc
+
+# Logs locales
+logs/
