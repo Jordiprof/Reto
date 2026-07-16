@@ -12,6 +12,7 @@
 | 15/07/2026 | S1 / Fase 0 | Git: ramas `feature/*` → `main` + tag por nivel, **sin develop** | Git-flow completo con develop | Proyecto individual de 1 mes: develop añade burocracia sin beneficio; los 4 tags marcan las entregas |
 | 15/07/2026 | S1 / Fase 0 | Documentación **versión ligera**: README + diario + E1–E4 (~1 pág) + 3-4 ADRs | Documentación exhaustiva (10+ documentos) | La doc debe ser proporcional al código; el tiempo del reto va a programar y comprender |
 | 15/07/2026 | S1 / Fase 0 | `.env.example` incluye también los **modelos** por defecto; para Ollama, `gpt-oss:20b` | Solo claves API en `.env`; modelo escrito a fuego en el código | El modelo es configuración. Verificado en docs oficiales (15/07): el free tier de Ollama Cloud limita por cuota de uso, no por catálogo → conviene un modelo ligero (nivel 1) con soporte de tools |
+| 16/07/2026 | S1 / Fase 0 | Pruebas reales de modelos gratuitos en 3 proveedores (Ollama Cloud, Google AI Studio, OpenRouter); Google y OpenRouter quedan como **candidatos**, no se amplía la cadena oficial todavía | Ampliar `llm_client.py` a 5 proveedores ya en Fase 0, sin comparación completa ni Groq probado | Evidencia real (`ollama launch`, OpenCode) da más y mejor información que un catálogo sin verificar; pero decidir la cadena definitiva antes de tiempo dispara el alcance (riesgo ya anotado en E1) — la decisión se cierra en F1.4 con todos los datos, ver ADR-001 |
 
 ## Reflexión final
 

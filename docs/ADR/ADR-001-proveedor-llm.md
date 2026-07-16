@@ -31,6 +31,41 @@ Diseño que la sostiene: `src/llm_client.py` abstrae el proveedor → cambiar = 
 - **07/2026 — Anthropic (pricing oficial):** sin free tier; `claude-haiku-4-5` $1/$5 MTok,
   `claude-sonnet-4-6` $3/$15. Válido como plan C de pago mínimo.
 - **Groq:** pendiente de verificar (F1.1) — modelos, límites del free tier y tool calling.
+  Hipótesis sin probar de Jordi (16/07): `llama-3.3-70b-versatile` podría funcionar bien
+  en Groq aunque en OpenRouter esté en cola — confirmar en F1.3, no dar por bueno todavía.
+
+## Pruebas reales — 16/07/2026 (Jordi, vía `ollama launch` / OpenCode)
+
+**Ollama Cloud — ampliación de la prueba de F1.2 (adelantada):**
+
+| Modelo | Resultado | Nota |
+|---|---|---|
+| `gpt-oss:20b-cloud` | ✅ Funciona | Nivel 1, ligero — default actual del proyecto |
+| `gpt-oss:120b-cloud` | ✅ Funciona | Nivel 2, más pesado |
+| `minimax-m3:cloud` | ✅ Funciona | Nivel 2 — mejor impresión que nemotron-3-super |
+| `gemma4:31b-cloud` | ✅ Funciona | Nivel 2 |
+| `nemotron-3-super:cloud` | ✅ Funciona | Nivel 2 — peor impresión que minimax-m3 |
+| `nemotron-3-ultra:cloud` | ✅ Funciona | Probablemente pesado (nombre "ultra") |
+| `kimi-k2.7-code:cloud` | ❌ No disponible en Free | Pide suscripción Pro/Max |
+
+**Candidatos explorados fuera de la cadena original del ADR-001** (Google AI Studio,
+OpenRouter) — no estaban en la hipótesis inicial (Ollama → Groq → Anthropic); se registran
+como hallazgos, la decisión de si entran en `llm_client.py` se toma en **F1.4** junto con Groq:
+
+| Proveedor | Modelo | Resultado | Nota |
+|---|---|---|---|
+| Google AI Studio | `gemini-3.5-flash` | ⚠️ Parcial | Arrancó vía OpenCode, ejecutó tool calls (Glob, Read) — interrumpido antes de respuesta final, sin confirmación completa |
+| Google AI Studio | `gemini-2.5-pro` | ❌ Descartado | Cola por alta demanda del modelo |
+| OpenRouter | modelo de código Qwen (ID exacto pendiente) | ❌ Descartado | Cola / disponibilidad, igual que gemini-2.5-pro |
+| OpenRouter | `poolside/laguna-xs-2.1:free` | ✅ Funciona | Según prueba directa de Jordi |
+| OpenRouter | `poolside/laguna-m.1:free` | ✅ Funciona | Según prueba directa de Jordi |
+| OpenRouter | `tencent/hy3:free` | ✅ Funciona | Según prueba directa de Jordi |
+| OpenRouter | `nvidia/nemotron-3-ultra-550b-a55b:free` | ✅ Funciona | Según prueba directa de Jordi |
+| OpenRouter | "Llama 3.3 70B Instruct" | ❌ Descartado | Cola / disponibilidad, igual que Qwen y gemini-2.5-pro |
+
+**Riesgo anotado:** ampliar la cadena de proveedores en Fase 0 aumenta el alcance
+(ver E1, tabla de riesgos). Se documenta la evidencia pero **no se cambia la arquitectura
+todavía** — eso se decide con datos completos en F1.4.
 
 ## Criterios para pasar a decisión (Fase 1)
 
@@ -38,6 +73,7 @@ Diseño que la sostiene: `src/llm_client.py` abstrae el proveedor → cambiar = 
 - [ ] F1.2 Smoke test real contra Ollama Cloud con API key propia
 - [ ] F1.3 Smoke test real contra Groq
 - [ ] F1.4 Elegir modelo(s) y SDK (oficial vs compatible-OpenAI) → actualizar este ADR a ✅ Decisión
+- [ ] F1.4 (extra) Decidir si Google AI Studio y/o OpenRouter entran en la cadena oficial, dado lo explorado el 16/07
 
 ## Consecuencias
 
