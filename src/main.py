@@ -1,8 +1,16 @@
 from src.llm_client import preguntar
 
-# Este if evita que el codigo se ejecute si algun dia importas este
-# fichero desde otro sitio; solo corre cuando lo lanzas directamente.
+
+def main():
+    print("Agente listo. Escribe 'salir' para terminar.")
+    while True:
+        pregunta = input("Tú: ")
+        if pregunta.strip().lower() == "salir":
+            print("Agente: ¡Hasta luego!")
+            break
+        respuesta = preguntar(pregunta)
+        print(f"Agente: {respuesta}")
+
+
 if __name__ == "__main__":
-    pregunta = "¿Qué es un LLM, en una frase?"
-    print(f"Tú: {pregunta}")
-    print(f"Agente: {preguntar(pregunta)}")
+    main()
