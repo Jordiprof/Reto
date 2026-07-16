@@ -30,6 +30,15 @@ modelos retirados; verificar siempre docs oficiales._
 
 **Hito transversal:** decidir la temática del agente experto antes del **28/07**.
 
-## 3. Seguimiento
+## 3. Ideas para revisar en Fase 5 (Nivel Experto)
+
+- **Orquestación multi-agente** (propuesta de Jordi, 16/07): además del agente principal,
+  ¿podría orquestar a 2-3 sub-agentes especializados? Es un patrón real y relacionado con
+  ADR-003 (framework vs a mano, y la comparativa opcional con LangGraph). **No se decide
+  ahora** — depende de la temática (límite 28/07) y de si aporta algo al caso de uso, no
+  se añade solo porque sea posible (ver riesgo de alcance disparado, E1). Distinto de la
+  cadena de fallback de proveedores (ADR-001), que es resiliencia de un único agente.
+
+## 4. Seguimiento
 
 _Desviaciones respecto al plan y sus motivos se anotan aquí al cierre de cada fase._
