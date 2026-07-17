@@ -20,6 +20,8 @@
 
 | 17/07/2026 | S2 / Fase 2 | Se documenta con datos reales (F2.5): latencia de Groq 0.27s–0.57s por llamada, y no-determinismo real en la misma pregunta repetida 2 veces | Dar por buena la latencia solo por lo que dice la doc; no comprobar el no-determinismo | Confirma con evidencia la elección de Groq como principal (ADR-001): la velocidad prometida por su hardware LPU se cumple en la práctica. El no-determinismo se observó limpio: misma pregunta 2 veces → mismo contenido factual (8 planetas, misma lista), redacción distinta palabra por palabra — útil como ejemplo real para explicar por qué el historial de conversación (Fase 3) no puede asumir respuestas repetibles |
 
+| 17/07/2026 | S2 / Fase 2 | Selector de proveedor al arrancar (F2.6): `config.py` lee credenciales bajo demanda por proveedor, `llm_client.py` tiene una función por SDK + diccionario de despacho; Anthropic queda fuera del código, solo documentado | Implementar los 4 proveedores del ADR-001 de golpe, incluido Anthropic | Anthropic es de pago y "seguramente no se use" (palabras de Jordi) — instalar su SDK ahora sería trabajo sin uso real; se añade cuando haga falta. Prueba real con los 3 proveedores y la misma pregunta ("¿quién ganó el mundial hace 4 años?") dio **respuestas factuales distintas**: Groq (principal) contestó Francia 2018 (incorrecto), Ollama contestó Argentina 2022 (correcto), Gemini dio la respuesta más completa y contextualizada. No cambia la cadena de fallback (basada en velocidad/cuota/tools, no en precisión), pero queda documentado como limitación real conocida del proveedor principal |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._
