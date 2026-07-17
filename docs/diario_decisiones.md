@@ -18,6 +18,8 @@
 
 | 16/07/2026 | S2 / Fase 2 | `config.py` (F2.1) carga **solo** las variables del proveedor activo en cada fase (Groq), no las 4 de golpe | Cargar de una vez las claves de los 4 proveedores de la cadena, ya preparado para el fallback futuro | Un `import` en Python ejecuta el fichero **entero** de arriba a abajo antes de devolver los nombres pedidos — aunque `llm_client.py` solo use `GROQ_API_KEY`/`GROQ_MODEL`, si `config.py` intenta leer también las de Ollama/Gemini/Anthropic y falta o está mal escrita una, el programa entero falla al importar, aunque esas claves no se fueran a usar. Se añadirán al `config.py` cuando el fallback real se implemente (Fase 2 avanzada / Fase 4) |
 
+| 17/07/2026 | S2 / Fase 2 | Se documenta con datos reales (F2.5): latencia de Groq 0.27s–0.57s por llamada, y no-determinismo real en la misma pregunta repetida 2 veces | Dar por buena la latencia solo por lo que dice la doc; no comprobar el no-determinismo | Confirma con evidencia la elección de Groq como principal (ADR-001): la velocidad prometida por su hardware LPU se cumple en la práctica. El no-determinismo se observó limpio: misma pregunta 2 veces → mismo contenido factual (8 planetas, misma lista), redacción distinta palabra por palabra — útil como ejemplo real para explicar por qué el historial de conversación (Fase 3) no puede asumir respuestas repetibles |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._

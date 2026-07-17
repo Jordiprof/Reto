@@ -1,16 +1,20 @@
 from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError
 import logging
+import time
 from src.config import GROQ_API_KEY, GROQ_MODEL
 
 client = Groq(api_key=GROQ_API_KEY)
 
 
 def preguntar(mensaje: str) -> str:
+    inicio = time.perf_counter()  # arranca el cronometro
     try:
         respuesta = client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[{"role": "user", "content": mensaje}],
         )
+        duracion = time.perf_counter() - inicio  # tiempo transcurrido en segundos
+        logging.info(f"Latencia: {duracion:.2f}s")
         return respuesta.choices[0].message.content
     except AuthenticationError:
         logging.error("Fallo de autenticacion: clave de API invalida")
