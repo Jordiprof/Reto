@@ -44,30 +44,35 @@ PROVEEDORES = {
     "gemini": "GEMINI_API_KEY",
 }
 
-# Modelos disponibles por proveedor (3 cada uno). Nombres EXACTOS
-# verificados en la documentacion oficial de cada proveedor el 17/07,
-# no copiados de catalogos sin contrastar.
+# Modelos disponibles por proveedor. Nombres EXACTOS, TODOS verificados
+# con llamadas reales (no solo docs) el 16-17/07 - ver diario de decisiones.
 MODELOS = {
-    # Groq: verificado en console.groq.com/docs/models.
+    # Groq: los 4 responden bien; los "qwen" muestran su razonamiento
+    # interno con <think> antes de la respuesta final.
     "groq": [
         "llama-3.3-70b-versatile",  # el que veniamos usando de default
         "openai/gpt-oss-120b",      # mismo modelo que en Ollama - sirve para comparar proveedor vs modelo
-        "qwen/qwen3-32b"            # modelo de razonamiento (preview)
-        "qwen/qwen3.6-27b",         #Modelos intermedios ideales para estructurar JSONs o actuar como agentes especialistas intermedios. Qwen destaca especialmente si manejas inputs multilenguaje.
+        "qwen/qwen3-32b",           # modelo de razonamiento (preview)
+        "qwen/qwen3.6-27b",         # modelo de razonamiento, bueno con JSON/multilenguaje
     ],
-    # Ollama Cloud: los 3 que Jordi probo de verdad con "ollama launch" el 16/07.
+    # Ollama Cloud: los 6 que SI funcionan, probados uno a uno. Se
+    # descartaron por error 403 (piden suscripcion Pro): glm-5.1, kimi-k2.6,
+    # kimi-k2.7-code, deepseek-v4-flash, qwen3.5 y qwen3.5:397b.
     "ollama": [
         "gpt-oss:120b-cloud",
         "gemma4:31b-cloud",
         "minimax-m3:cloud",
-        "deepseek-v4-flash",
+        "nemotron-3-super:cloud",
+        "minimax-m2.5:cloud",
+        "nemotron-3-ultra:cloud",
     ],
-    # Gemini: verificado en ai.google.dev. "gemini-3.0-flash" no existe
-    # como modelo real (comprobado) - se descarta a proposito.
+    # Gemini: "gemini-3.0-flash" no existe (404 real) y "gemini-2.5-pro"
+    # tiene cuota 0 en el free tier (429 real) - los dos descartados aposta.
     "gemini": [
-        "gemini-3.5-flash",
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
+        "models/gemini-3.5-flash",       # El mejor, más moderno y recomendado (Rápido y lógico)
+        "models/gemini-3.1-flash-lite",  # El más ligero, ideal si haces muchas llamadas seguidas
+        "models/gemini-2.5-flash",       # Versión Flash anterior, totalmente operativa y gratuita
+        "models/gemma-4-31b-it",          # El modelo abierto de Google más potente, libre de cuotas estrictas
     ],
 }
 
