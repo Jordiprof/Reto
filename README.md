@@ -1,6 +1,6 @@
 # Agente de IA en Python — Reto DataQuantum
 
-**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Fase 0 (esqueleto del repo)
+**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Nivel Básico completo (Fase 2)
 
 Agente de IA ejecutado desde la terminal, construido de forma incremental en 4 niveles:
 chat simple contra un LLM (**Básico**) → conversación con memoria (**Intermedio**) →
@@ -14,10 +14,19 @@ antes de usar abstracciones.
 python -m venv venv
 venv\Scripts\activate          # Windows
 pip install -r requirements.txt
-copy .env.example .env         # y rellenar las claves API
+copy .env.example .env         # y rellenar las claves API (ver ADR-001 para cuales hacen falta)
 ```
 
-> Todavía no hay código ejecutable — llega con el Nivel Básico (Fase 2).
+## Uso
+
+```bash
+python -m src.main
+```
+
+Al arrancar, pide elegir proveedor (`groq` / `ollama` / `gemini` — cadena decidida en
+[ADR-001](docs/ADR/ADR-001-proveedor-llm.md)) y entra en un chat por terminal. Escribe
+`salir` para terminar. Cada llamada queda registrada en `logs/agente.log` (clave, latencia,
+errores).
 
 ## Documentación
 

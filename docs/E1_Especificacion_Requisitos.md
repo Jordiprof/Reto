@@ -1,7 +1,7 @@
 # E1 — Especificación de Requisitos
 
 **Proyecto:** Agente de IA en terminal (nombre provisional)
-**Autor:** Jordi · **Fecha:** 15/07/2026 · **Versión:** 1.0 — documento vivo, evolucionará con el proyecto
+**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1, cierre Nivel Básico) · **Versión:** 1.1 — documento vivo, evolucionará con el proyecto
 
 ## 1. Propósito
 
@@ -50,7 +50,7 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 
 | Riesgo | Impacto | Mitigación |
 |---|---|---|
-| Free tier agotado o con límites duros | Bloqueo del desarrollo | Cadena de proveedores (Ollama Cloud → Groq → Anthropic) + abstracción `llm_client.py` |
+| Free tier agotado o con límites duros | Bloqueo del desarrollo | Cadena de proveedores decidida en ADR-001 (Groq → Ollama Cloud → Gemini → Anthropic) + abstracción `llm_client.py`, con selector de proveedor probado en F2.6 |
 | Modelos gratuitos con tool calling pobre | Nivel Avanzado en riesgo | Validación previa contra docs oficiales (Fase 1) antes de decidir |
 | La documentación de los SDKs cambia | Errores confusos | Usar siempre docs oficiales; fijar versiones en `requirements.txt` |
 | El alcance se dispara | No llegar al Experto | Fases cerradas por nivel; los extras son opcionales |
@@ -59,5 +59,6 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 ## 7. Preguntas abiertas
 
 - **Temática del agente experto** — decidir antes del 28/07 (condiciona herramientas y arquitectura final).
-- **Proveedor definitivo** — hipótesis: Ollama Cloud; se decide en la Fase 1 (~17/07) tras validar free tier y tool calling (ADR-001).
+- ~~Proveedor definitivo~~ — **resuelta.** ADR-001 cerrado como Decisión el 16/07: Groq → Ollama Cloud → Gemini → Anthropic.
+- **¿Groq debería seguir siendo el principal?** — F2.6 detectó un fallo factual de Groq (`llama-3.3-70b-versatile`) frente a aciertos de Ollama y Gemini en la misma pregunta, pero la comparación mezcló modelos distintos, no el mismo modelo en proveedores distintos. Pendiente de una prueba controlada (`gpt-oss:120b` también vía Groq) antes de tocar el ADR-001.
 - **¿Hará falta memoria semántica en el Experto?** — solo si la temática lo justifica; se decide con la temática.

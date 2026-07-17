@@ -22,6 +22,8 @@
 
 | 17/07/2026 | S2 / Fase 2 | Selector de proveedor al arrancar (F2.6): `config.py` lee credenciales bajo demanda por proveedor, `llm_client.py` tiene una función por SDK + diccionario de despacho; Anthropic queda fuera del código, solo documentado | Implementar los 4 proveedores del ADR-001 de golpe, incluido Anthropic | Anthropic es de pago y "seguramente no se use" (palabras de Jordi) — instalar su SDK ahora sería trabajo sin uso real; se añade cuando haga falta. Prueba real con los 3 proveedores y la misma pregunta ("¿quién ganó el mundial hace 4 años?") dio **respuestas factuales distintas**: Groq (principal) contestó Francia 2018 (incorrecto), Ollama contestó Argentina 2022 (correcto), Gemini dio la respuesta más completa y contextualizada. No cambia la cadena de fallback (basada en velocidad/cuota/tools, no en precisión), pero queda documentado como limitación real conocida del proveedor principal |
 
+| 17/07/2026 | S2 / Fase 2 | Latencia real confirmada con los 3 proveedores en la misma sesión: Groq 0.46s, Ollama 1.47s, Gemini 5.81s | — | Groq sigue siendo, con diferencia, el más rápido (12x que Gemini) — refuerza la parte de velocidad del ADR-001. **Pregunta abierta (no decidida):** tras el fallo factual de Groq en F2.6, se plantea si la precisión debería pesar más que la latencia al elegir el proveedor principal — pero la prueba comparó modelos distintos (`llama-3.3-70b-versatile` vs `gpt-oss:120b` vs `gemini-3.5-flash`), no el mismo modelo en proveedores distintos. Antes de tocar el ADR-001 hace falta una prueba controlada: `openai/gpt-oss-120b` también está disponible en Groq (ver F1.1) — si acierta ahí, el problema era el modelo elegido, no el proveedor |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._
