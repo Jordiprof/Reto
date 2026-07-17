@@ -1,36 +1,28 @@
-# Traemos del config.py: la funcion para leer las credenciales del
-# proveedor elegido, y el diccionario PROVEEDORES (para saber que
-# opciones existen y mostrarlas al usuario).
-from src.config import obtener_credenciales, PROVEEDORES
-
+# Traemos de config.py: la funcion para leer la clave del proveedor
+# elegido, el diccionario PROVEEDORES (nombres de proveedor) y MODELOS
+# (lista de modelos disponibles por proveedor).
+from src.config import obtener_api_key, PROVEEDORES, MODELOS
 # Traemos de llm_client.py la funcion que hace la pregunta de verdad.
 from src.llm_client import preguntar
 
 
-def elegir_proveedor() -> str:
-    """Pregunta al usuario que proveedor quiere usar, hasta que escriba uno valido."""
-    # .keys() saca los nombres del diccionario PROVEEDORES ("groq", "ollama", "gemini").
-    # list(...) los convierte en una lista para poder usarlos varias veces.
-    opciones = list(PROVEEDORES.keys())
-
+def elegir_de_lista(pregunta: str, opciones: list) -> str:
+    """Funcion generica: sirve tanto para elegir proveedor como modelo."""
     while True:
-        # "/".join(opciones) junta la lista en un texto tipo "groq/ollama/gemini"
-        # para mostrarlo en el mensaje.
-        elegido = input(f"¿Qué proveedor quieres usar? ({'/'.join(opciones)}): ").strip().lower()
-
-        # "in" comprueba si lo escrito esta dentro de la lista de opciones validas.
+        # "/".join(opciones) junta la lista en texto tipo "a/b/c" para mostrarlo.
+        elegido = input(f"{pregunta} ({'/'.join(opciones)}): ").strip().lower()
+        # "in" comprueba si lo escrito esta dentro de la lista valida.
         if elegido in opciones:
             return elegido
-
-        print(f"Proveedor no válido. Opciones: {', '.join(opciones)}")
+        print(f"Opción no válida. Opciones: {', '.join(opciones)}")
 
 
 def main():
-    proveedor = elegir_proveedor()
-
-    # Pide a config.py las credenciales (clave y modelo) SOLO de este
-    # proveedor concreto - no de los otros tres.
-    api_key, modelo = obtener_credenciales(proveedor)
+    # Primero se elige el proveedor...
+    proveedor = elegir_de_lista("¿Qué proveedor quieres usar?", list(PROVEEDORES.keys()))
+    # ...y con ese proveedor ya sabido, se elige uno de sus 3 modelos.
+    modelo = elegir_de_lista("¿Qué modelo quieres usar?", MODELOS[proveedor])
+    api_key = obtener_api_key(proveedor)
 
     print(f"Agente listo con {proveedor} ({modelo}). Escribe 'salir' para terminar.")
 
@@ -39,9 +31,6 @@ def main():
         if pregunta.strip().lower() == "salir":
             print("Agente: ¡Hasta luego!")
             break
-
-        # Le pasamos a preguntar() todo lo que necesita: el texto, que
-        # proveedor usar, y las credenciales de ese proveedor.
         respuesta = preguntar(pregunta, proveedor, api_key, modelo)
         print(f"Agente: {respuesta}")
 

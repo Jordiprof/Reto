@@ -24,6 +24,8 @@
 
 | 17/07/2026 | S2 / Fase 2 | Latencia real confirmada con los 3 proveedores en la misma sesión: Groq 0.46s, Ollama 1.47s, Gemini 5.81s | — | Groq sigue siendo, con diferencia, el más rápido (12x que Gemini) — refuerza la parte de velocidad del ADR-001. **Pregunta abierta (no decidida):** tras el fallo factual de Groq en F2.6, se plantea si la precisión debería pesar más que la latencia al elegir el proveedor principal — pero la prueba comparó modelos distintos (`llama-3.3-70b-versatile` vs `gpt-oss:120b` vs `gemini-3.5-flash`), no el mismo modelo en proveedores distintos. Antes de tocar el ADR-001 hace falta una prueba controlada: `openai/gpt-oss-120b` también está disponible en Groq (ver F1.1) — si acierta ahí, el problema era el modelo elegido, no el proveedor |
 
+| 17/07/2026 | S2 / Fase 2 (post-cierre) | Selector de modelo dentro de cada proveedor (addendum de F2.6): `MODELOS` en `config.py` con 3 modelos verificados por proveedor (9 en total), verificación en vivo contra las 3 APIs con scripts propios | Ampliar a 5-7 modelos/proveedor | Se probaron los 9 modelos contra las APIs reales (no solo docs): confirmados los 3 de Groq, los 3 de Ollama y los 3 de Gemini. Hallazgo extra: el sufijo `-cloud` de Ollama es opcional en la API directa (`gpt-oss:120b` y `gpt-oss:120b-cloud` funcionan igual). Se descarta ampliar a 5-7 por ser tarea "Extra" de Nivel Básico — más cantidad no aporta aprendizaje nuevo, solo mantenimiento |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._
