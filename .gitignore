@@ -10,3 +10,9 @@ __pycache__/
 
 # Logs locales
 logs/
+
+# Conversaciones guardadas (datos personales, no codigo)
+conversations/
+
+# Cache de pytest (se regenera solo en cada ejecucion)
+.pytest_cache/

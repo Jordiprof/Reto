@@ -40,7 +40,31 @@ es cambiar configuración (`.env`), no reescribir el agente (ver ADR-001).
 
 ## 4. Experimento de system prompts
 
-_Pendiente (F3.2, Nivel Intermedio): comparar 2–3 system prompts y documentar aquí las diferencias observadas._
+**F3.2 (17/07/2026).** Mismas 3 preguntas fijas ("¿qué herramientas puedes usar por mí?",
+"cuéntame un chiste corto", "explícame qué es una lista en Python"), mismo modelo por
+proveedor, solo cambiando el `system prompt`. Repetido en 3 modelos distintos
+(`llama-3.3-70b-versatile` en Groq, `minimax-m3:cloud` en Ollama, `gemini-2.5-flash`)
+para comprobar si el patrón se repite o es específico de uno solo. Tres estilos:
+
+1. **Cercano** (el de producción, `main.py`): tono de amigo, respuestas cortas y directas.
+2. **Formal**: registro corporativo, de usted, respuestas completas y con fuentes.
+3. **Tutor**: didáctico, explica el porqué, cierra con una pregunta reflexiva.
+
+**Resultado, consistente en los 3 modelos:**
+
+- **Longitud**: el mismo modelo pasó de 2-3 frases (cercano) a respuestas 5-15 veces más
+  largas (formal), sin que cambiara nada del mensaje del usuario.
+- **El prompt cambia comportamiento, no solo estilo**: el estilo "formal" **se niega**
+  a contar el chiste ("queda fuera de mi registro profesional") en los 3 modelos — el
+  `system prompt` no es decoración, condiciona qué está dispuesto a hacer el modelo.
+- **El rol se filtra en la estructura**: el "tutor" añade una pregunta reflexiva al final
+  de cada respuesta en los 3 modelos, sin que se le pidiera explícitamente — el rol
+  aparece en cómo se organiza la respuesta, no solo en el vocabulario.
+
+**Efecto secundario observado (relevante para Storage/F3.3):** cuantas más
+instrucciones lleva el `system prompt` y más larga es la respuesta, más tokens viajan
+en cada llamada — y como el historial se reenvía completo en cada turno (§3), el coste
+por turno crece más rápido cuanto más "elaborado" es el estilo elegido.
 
 ## 5. Decisiones de arquitectura
 
