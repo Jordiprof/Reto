@@ -36,6 +36,10 @@
 
 | 20/07/2026 | S2 / Fase 3 | F3.7 — **ADR-002 cerrado: Decisión final.** Memoria evolutiva en 4 escalones (ver [ADR-002](ADR/ADR-002-memoria-evolutiva.md)) | SQLite/vector store desde el día 1 | Ya ejecutado en Intermedio (F3.3 JSON + F3.5 índice SQLite); se formaliza aquí como ADR porque la fase que decide "Intermedio" está cerrada, mismo criterio que el cierre de ADR-001 en F1.6 |
 
+| 20/07/2026 | S2 / Fase 3 | F3.7 — Temática del Nivel Experto: **asistente personal por Telegram** (Bot API oficial, un solo usuario autorizado); reflejado en E1 v1.2 (RF-10/11, RNF-05) | WhatsApp (self-bot no oficial); orquestador multi-LLM | Telegram Bot API es la única opción segura/gratuita/legal de las valoradas (WhatsApp exige verificación empresa o incumple ToS con libs no oficiales). Un solo `Agent` con tools es suficiente; proactividad futura vía `APScheduler`, no multiagente |
+
+| 21/07/2026 | S3 / Fase 4-5 (planificación) | Arquitectura del bot de Telegram: **un solo `Agent` con tools agrupadas por categoría**, no orquestador + sub-agentes; filtrado dinámico de qué tools se pasan al modelo como mejora si hace falta | Orquestador + sub-agentes especializados (patrón LangGraph, un router que deriva a agentes por dominio) | Con ~30 herramientas candidatas, un orquestador resuelve la selección de tools a costa de una capa nueva de complejidad (routing, paso de contexto entre agentes) que agrupar categorías ya resuelve más simple. Coherente con ADR-003 ("a mano primero"); el patrón orquestador queda para F5.5 (Extra) como comparación real con LangGraph, no como base del bot |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._

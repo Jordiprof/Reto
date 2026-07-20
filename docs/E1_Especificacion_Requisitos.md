@@ -1,7 +1,7 @@
 # E1 — Especificación de Requisitos
 
 **Proyecto:** Agente de IA en terminal (nombre provisional)
-**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1, cierre Nivel Básico) · **Versión:** 1.1 — documento vivo, evolucionará con el proyecto
+**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1, cierre Nivel Básico) → 20/07/2026 (v1.2, temática Experto decidida) · **Versión:** 1.2 — documento vivo, evolucionará con el proyecto
 
 ## 1. Propósito
 
@@ -9,9 +9,9 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 
 ## 2. Alcance
 
-**Incluye:** conversación por terminal (entrada/salida de texto) · historial de conversación · system prompt configurable · persistencia de conversaciones (JSON → SQLite) · herramientas vía tool calling · manejo de errores robusto · logging · configuración por variables de entorno (`.env`) · tests de las utilidades que no dependen del modelo.
+**Incluye:** conversación por terminal (entrada/salida de texto) · historial de conversación · system prompt configurable · persistencia de conversaciones (JSON → SQLite) · herramientas vía tool calling · manejo de errores robusto · logging · configuración por variables de entorno (`.env`) · tests de las utilidades que no dependen del modelo · **Nivel Experto: agente asistente personal accesible por Telegram** (Bot API oficial), de un solo usuario autorizado.
 
-**No incluye:** interfaz web o gráfica · multiusuario · entrenamiento o fine-tuning de modelos · despliegue en la nube · voz o imágenes.
+**No incluye:** interfaz web o gráfica · **multiusuario público** (el bot de Telegram es de uso personal, con lista blanca — ver RNF-05) · entrenamiento o fine-tuning de modelos · despliegue en la nube · voz o imágenes.
 
 **Evolución futura (conscientemente fuera de alcance):** interfaz web/dashboard y orquestación multiagente — la arquitectura modular (núcleo del agente separado de la CLI) las hace posibles sin reescribir el motor, pero no se abordan dentro del mes del reto.
 
@@ -28,7 +28,8 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 | RF-07 | El agente puede invocar herramientas (tool calling) y usar su resultado para responder | Alta | Avanzado |
 | RF-08 | Los parámetros que el modelo envía a una herramienta se validan antes de ejecutarla | Alta | Avanzado |
 | RF-09 | Se pueden añadir herramientas nuevas sin modificar el núcleo del agente | Media | Avanzado |
-| RF-10 | El agente resuelve de principio a fin el caso de uso elegido (temática pendiente) | Alta | Experto |
+| RF-10 | El agente resuelve de principio a fin el caso de uso elegido: asistente personal accesible por Telegram | Alta | Experto |
+| RF-11 | El bot solo responde a mensajes del usuario autorizado (lista blanca de `user_id` en `.env`); cualquier otro remitente se ignora antes de llamar al LLM | Alta | Experto |
 
 ## 4. Requisitos no funcionales
 
@@ -38,6 +39,7 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 | RNF-02 | Fiabilidad | Ante un fallo de API, el programa avisa al usuario y sigue vivo |
 | RNF-03 | Mantenibilidad | Arquitectura modular; cambiar de proveedor LLM = cambiar configuración (`llm_client.py`) |
 | RNF-04 | Portabilidad | Python 3.13 + venv + `requirements.txt` con versiones fijadas |
+| RNF-05 | Seguridad/privacidad del canal (Telegram) | El bot se identifica por token (`.env`), nunca por el número de teléfono personal — sin self-bot (Telethon/Pyrogram descartados). Telegram sandboxea al bot: sin acceso a fotos, contactos ni otros chats. Filtrado por `message.from_user.id` contra lista blanca antes de cualquier llamada al LLM |
 
 ## 5. Casos de uso principales
 
@@ -58,7 +60,7 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 
 ## 7. Preguntas abiertas
 
-- **Temática del agente experto** — decidir antes del 28/07 (condiciona herramientas y arquitectura final).
+- ~~Temática del agente experto~~ — **resuelta (20/07).** Asistente personal accesible por Telegram (ver §2, RF-10/RF-11, RNF-05).
 - ~~Proveedor definitivo~~ — **resuelta.** ADR-001 cerrado como Decisión el 16/07: Groq → Ollama Cloud → Gemini → Anthropic.
-- **¿Groq debería seguir siendo el principal?** — F2.6 detectó un fallo factual de Groq (`llama-3.3-70b-versatile`) frente a aciertos de Ollama y Gemini en la misma pregunta, pero la comparación mezcló modelos distintos, no el mismo modelo en proveedores distintos. Pendiente de una prueba controlada (`gpt-oss:120b` también vía Groq) antes de tocar el ADR-001.
-- **¿Hará falta memoria semántica en el Experto?** — solo si la temática lo justifica; se decide con la temática.
+- ~~¿Groq debería seguir siendo el principal?~~ — **cerrada (20/07), sin cambios.** Tras varias rondas de pruebas con distintos modelos, Jordi decide no seguir ampliando comparativas: la cadena de `config.py` queda definitiva.
+- **¿Hará falta memoria semántica en el Experto?** — de momento no se ve necesidad clara para un asistente personal de un solo usuario (el volumen de conversación no lo justifica); se revisita en Fase 5 si aparece un caso de uso concreto que sí la requiera (ver ADR-002).
