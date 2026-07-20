@@ -30,6 +30,10 @@
 | 17/07/2026 | S2 / Fase 3 | F3.3 — Guardado de conversación en `.json` (`src/storage.py`), también ante `Ctrl+C` (`try/finally`) | Guardar solo al escribir "salir" | Cerrar la terminal a medio uso es un caso real; sin el `finally` esa conversación se perdería. Se guarda el proveedor/modelo final, no el historial de cambios |
 | 20/07/2026 | S2 / Fase 3 | F3.4 — Primer test con `pytest` sobre `traducir_historial_gemini` (función pura); se ejecuta con `python -m pytest` | Ejecutar `pytest` a secas | `-m` añade el directorio actual al `sys.path`, igual que `python -m src.main`, sin necesitar `conftest.py`. Se eligió una función pura para no gastar cuota de ningún proveedor en los tests |
 
+| 20/07/2026 | S2 / Fase 3 | F3.5 — Intro SQLite: `conversations.db` con una tabla índice (`conversaciones`), el JSON sigue siendo la fuente completa | Duplicar todo el contenido en tablas `conversaciones`+`mensajes` | Ese trabajo completo es de Fase Avanzada (ADR-002); aquí solo toca una toma de contacto con `sqlite3`. Placeholders `?` en el `INSERT`, nunca f-strings, por costumbre segura aunque el dato no venga de un usuario externo |
+
+| 20/07/2026 | S2 / Fase 3 | F3.6 (Extra) — Comando `/resumen`: pide al modelo resumir la conversación con una lista nueva (`historial` + petición), sin tocar el historial real | Guardar la petición y el resumen como un turno más | Un resumen guardado se resumiría a sí mismo en la siguiente llamada a `/resumen` — se trata como consulta de lectura, no como parte de la conversación |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._

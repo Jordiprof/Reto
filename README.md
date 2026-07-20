@@ -1,6 +1,6 @@
 # Agente de IA en Python — Reto DataQuantum
 
-**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Nivel Básico completo (Fase 2)
+**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Nivel Intermedio completo (Fase 3)
 
 Agente de IA ejecutado desde la terminal, construido de forma incremental en 4 niveles:
 chat simple contra un LLM (**Básico**) → conversación con memoria (**Intermedio**) →
@@ -24,9 +24,24 @@ python -m src.main
 ```
 
 Al arrancar, pide elegir proveedor (`groq` / `ollama` / `gemini` — cadena decidida en
-[ADR-001](docs/ADR/ADR-001-proveedor-llm.md)) y entra en un chat por terminal. Escribe
-`salir` para terminar. Cada llamada queda registrada en `logs/agente.log` (clave, latencia,
-errores).
+[ADR-001](docs/ADR/ADR-001-proveedor-llm.md)) y modelo, y entra en un chat por terminal
+**con memoria**: cada turno se reenvía junto con todo el historial anterior, así que el
+agente recuerda lo que ya has hablado (incluso si cambias de proveedor a mitad).
+
+Comandos disponibles dentro del chat:
+
+| Comando | Qué hace |
+|---|---|
+| `salir` | Termina y guarda la conversación (también se guarda si cortas con `Ctrl+C`) |
+| `/modelo` | Cambia de modelo sin tocar el proveedor actual |
+| `/proveedor` | Cambia de proveedor (y de modelo); la conversación sigue igual |
+| `/resumen` | Pide al modelo un resumen de la conversación hasta ahora, sin guardarlo como turno |
+
+Cada conversación queda guardada en `conversations/<fecha>_<hora>.json` (contenido
+completo) y también indexada en `conversations.db` (SQLite, una fila por conversación —
+ver [E2 §2](docs/E2_Arquitectura.md)). **Nota:** el programa no recarga conversaciones
+anteriores al arrancar; cada ejecución empieza con historial vacío. Cada llamada al LLM
+queda además registrada en `logs/agente.log` (latencia, errores).
 
 ## Documentación
 

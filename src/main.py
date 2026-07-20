@@ -61,7 +61,7 @@ def main():
     api_key = obtener_api_key(proveedor)
 
     print(f"Agente listo con {proveedor} ({modelo}).")
-    print("Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar.")
+    print("Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar, '/resumen' para resumir.")
 
     # El historial ES la memoria de la conversacion. El modelo no recuerda
     # nada entre llamadas: en cada turno le reenviamos esta lista entera y
@@ -98,6 +98,23 @@ def main():
                 modelo = elegir_modelo(proveedor)
                 api_key = obtener_api_key(proveedor)
                 print(f"Proveedor cambiado a: {proveedor} ({modelo})")
+                continue
+
+            # F3.6 (extra): pide al propio modelo que resuma la conversacion
+            # hasta ahora. OJO: construimos una lista NUEVA (historial + la
+            # peticion de resumen), no modificamos "historial" - el resumen
+            # es una consulta de lectura, no un turno mas de la conversacion.
+            # Si lo guardaramos en el historial real, cada vez que pidas otro
+            # resumen estarias resumiendo (entre otras cosas) resumenes
+            # anteriores, en vez de la conversacion original.
+            if comando == "/resumen":
+                peticion = historial + [{
+                    "role": "user",
+                    "content": "Resume la conversacion anterior en pocas frases, "
+                                "destacando solo lo mas importante.",
+                }]
+                resumen = preguntar(peticion, proveedor, api_key, modelo)
+                print(f"Resumen: {resumen}")
                 continue
 
             # 1) La pregunta entra al historial ANTES de llamar: la API tiene
