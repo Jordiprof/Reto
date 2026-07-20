@@ -34,6 +34,8 @@
 
 | 20/07/2026 | S2 / Fase 3 | F3.6 (Extra) — Comando `/resumen`: pide al modelo resumir la conversación con una lista nueva (`historial` + petición), sin tocar el historial real | Guardar la petición y el resumen como un turno más | Un resumen guardado se resumiría a sí mismo en la siguiente llamada a `/resumen` — se trata como consulta de lectura, no como parte de la conversación |
 
+| 20/07/2026 | S2 / Fase 3 | F3.7 — **ADR-002 cerrado: Decisión final.** Memoria evolutiva en 4 escalones (ver [ADR-002](ADR/ADR-002-memoria-evolutiva.md)) | SQLite/vector store desde el día 1 | Ya ejecutado en Intermedio (F3.3 JSON + F3.5 índice SQLite); se formaliza aquí como ADR porque la fase que decide "Intermedio" está cerrada, mismo criterio que el cierre de ADR-001 en F1.6 |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._
