@@ -55,6 +55,9 @@
 
 | 21/07/2026 | S3 / Fase 4 | F4.6 — Hallazgo real de Jordi probando `main.py` a mano: Gemini a veces manda varias `parts` en la respuesta (texto + petición de función), y mirar solo `parts[0]` se comía la llamada a la tool si no era la primera — el agente "fingía" calcular sin hacerlo. Arreglado recorriendo todas las `parts` | Asumir que la función siempre viene en `parts[0]`, como en los ejemplos simples de la doc | Reproducido y confirmado con la pregunta exacta que falló en la prueba real ("sabes calcularme 200/33+589-12?"): antes fallaba 2 de 2 veces, después de la corrección acertó 3 de 3 (el 4º intento chocó con el límite de cuota ya conocido, no con este bug) |
 
+| 21/07/2026 | S3 / Fase 4 | F4.6 (cierre real) — E3 actualizado a v0.2 (estado del arte de tool calling con evidencia real, fechas reales vs planeadas, decisión de arquitectura del bot); merge a `main` + tag `nivel-avanzado` | — | Fases 3 y 4 se cerraron muy por delante del calendario original (Fase 4 en 1 día en vez de 7) — documentado en E3 §4 como ritmo real, no como excusa para relajar el rigor: cada fase sigue con evidencia real en el diario, no solo teoría |
+| 21/07/2026 | S3 / Fase 4→5 (planificación) | Candidata nueva para el bot: correo (Gmail, solo lectura) + Calendar | Leer y también enviar/crear eventos desde el principio | Empezar por el alcance de menor riesgo (solo lectura) — un fallo del modelo como mucho hace que leas algo de más, nunca envía ni crea nada por error. Enviar/crear se valora más adelante si hace falta de verdad |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._
