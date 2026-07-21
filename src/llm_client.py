@@ -341,8 +341,18 @@ def _preguntar_gemini_con_tools(historial: list, api_key: str, modelo: str) -> s
             return f"⚠️ Error al hablar con Gemini: {error}"
         logging.info(f"Latencia (gemini/{modelo}, con tools): {time.perf_counter() - inicio:.2f}s")
 
-        parte = respuesta.candidates[0].content.parts[0]
-        llamada = getattr(parte, "function_call", None)
+        # Hallazgo real (F4.6, probado en vivo por Jordi): Gemini puede
+        # devolver VARIAS partes en la misma respuesta - por ejemplo,
+        # una de texto ("Dejame calcular...") seguida de la parte real
+        # con la peticion de funcion. Mirar solo parts[0] se comia la
+        # llamada a la tool si no era la primera parte, y el agente
+        # "fingia" que iba a calcular sin hacerlo nunca. Ahora se busca
+        # en TODAS las partes, no solo en la primera.
+        llamada = None
+        for parte in respuesta.candidates[0].content.parts:
+            llamada = getattr(parte, "function_call", None)
+            if llamada:
+                break
 
         if not llamada:
             # Respuesta final: texto normal, sin peticion de funcion.
