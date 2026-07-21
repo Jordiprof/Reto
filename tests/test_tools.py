@@ -1,6 +1,10 @@
 import pytest
 
 from src.tools import calcular
+# _ejecutar_tool vive en llm_client.py (no en tools.py): es la pieza
+# que sabe despachar por nombre y capturar errores de CUALQUIER tool,
+# no algo propio de la calculadora.
+from src.llm_client import _ejecutar_tool
 
 
 def test_operaciones_basicas():
@@ -52,3 +56,27 @@ def test_expresion_con_sintaxis_invalida():
     traceback feo de SyntaxError sin controlar."""
     with pytest.raises(ValueError):
         calcular("2 + + + ")
+
+
+def test_expresion_de_tipo_incorrecto():
+    """F4.4: si el parametro no es texto (ej. el modelo manda un
+    numero suelto), debe ser un ValueError claro, no un TypeError
+    tecnico escapando de ast.parse()."""
+    with pytest.raises(ValueError):
+        calcular(2)  # int en vez de str
+
+
+def test_ejecutar_tool_con_parametro_faltante():
+    """F4.4, caso limite real: el modelo llama a 'calcular' sin mandar
+    'expresion'. _ejecutar_tool no debe reventar - debe devolver un
+    string de error que el propio modelo pueda leer y explicar."""
+    resultado = _ejecutar_tool("calcular", {})
+    assert "Error" in resultado
+
+
+def test_ejecutar_tool_con_nombre_inventado():
+    """F4.4, caso limite real: el modelo "alucina" el nombre de una
+    tool que no existe. Debe rechazarse con un mensaje claro, sin
+    intentar ejecutar nada."""
+    resultado = _ejecutar_tool("buscar_en_internet", {"query": "algo"})
+    assert "no existe" in resultado

@@ -18,12 +18,12 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # elegido, el diccionario PROVEEDORES (nombres de proveedor) y MODELOS
 # (lista de modelos disponibles por proveedor).
 from src.config import obtener_api_key, PROVEEDORES, MODELOS
-# Traemos de llm_client.py: preguntar() para /resumen (no necesita
-# tools), preguntar_con_tools() para el turno normal (F4.3 - el modelo
-# puede pedir usar la calculadora si hace falta).
-from src.llm_client import preguntar, preguntar_con_tools
-# Traemos de storage.py la funcion que guarda la conversacion en disco.
-from src.storage import guardar_conversacion
+# F4.5: toda la logica de la conversacion (historial, tools, resumen,
+# guardado) vive ahora en agent.py - main.py solo habla con un Agente
+# a traves de sus metodos, no conoce ni un detalle de como funciona
+# por dentro. Esto es lo que permitira reutilizar Agente con Telegram
+# en Fase 5, sin tocar nada de su logica interna.
+from src.agent import Agente
 
 # SYSTEM PROMPT: instrucciones ESTABLES del asistente (quien es, como
 # habla, que limites tiene). Va una sola vez al principio del historial
@@ -78,14 +78,12 @@ def main():
     modelo = elegir_modelo(proveedor)
     api_key = obtener_api_key(proveedor)
 
+    # El Agente es quien lleva de verdad la conversacion (historial,
+    # tools, resumen, guardado) - main.py solo lo crea y le pregunta.
+    agente = Agente(SYSTEM_PROMPT, proveedor, api_key, modelo)
+
     print(f"Agente listo con {proveedor} ({modelo}).")
     print("Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar, '/resumen' para resumir.")
-
-    # El historial ES la memoria de la conversacion. El modelo no recuerda
-    # nada entre llamadas: en cada turno le reenviamos esta lista entera y
-    # el genera "la siguiente linea de la transcripcion". Arranca con el
-    # system prompt y solo crece (cada turno añade 2 mensajes: user + assistant).
-    historial = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     # try/finally alrededor de TODO el bucle: asi la conversacion se
     # guarda tanto si sales escribiendo "salir" (break normal) como si
@@ -103,62 +101,31 @@ def main():
             # Comando para cambiar solo el modelo, sin tocar el proveedor.
             if comando == "/modelo":
                 modelo = elegir_modelo(proveedor)
+                agente.cambiar_modelo(modelo)
                 print(f"Modelo cambiado a: {modelo}")
                 continue  # vuelve al principio del bucle, no manda nada al LLM
 
             # Comando para cambiar de proveedor - hay que volver a pedir modelo
             # (la lista de modelos depende del proveedor) y la clave tambien cambia.
-            # OJO: el historial NO se borra al cambiar - como esta en formato
-            # canonico, el proveedor nuevo hereda la conversacion entera. Puedes
-            # empezar a hablar con Groq y seguir la MISMA charla con Gemini.
+            # OJO: el historial NO se borra al cambiar - el Agente lo hereda
+            # tal cual (formato canonico, ver F3.1). Puedes empezar a hablar
+            # con Groq y seguir la MISMA charla con Gemini.
             if comando == "/proveedor":
                 proveedor = elegir_proveedor()
                 modelo = elegir_modelo(proveedor)
                 api_key = obtener_api_key(proveedor)
+                agente.cambiar_proveedor(proveedor, modelo, api_key)
                 print(f"Proveedor cambiado a: {proveedor} ({modelo})")
                 continue
 
-            # F3.6 (extra): pide al propio modelo que resuma la conversacion
-            # hasta ahora. OJO: construimos una lista NUEVA (historial + la
-            # peticion de resumen), no modificamos "historial" - el resumen
-            # es una consulta de lectura, no un turno mas de la conversacion.
-            # Si lo guardaramos en el historial real, cada vez que pidas otro
-            # resumen estarias resumiendo (entre otras cosas) resumenes
-            # anteriores, en vez de la conversacion original.
+            # F3.6 (extra): pide al propio modelo que resuma la conversacion.
             if comando == "/resumen":
-                peticion = historial + [{
-                    "role": "user",
-                    "content": "Resume la conversacion anterior en pocas frases, "
-                                "destacando solo lo mas importante.",
-                }]
-                resumen = preguntar(peticion, proveedor, api_key, modelo)
-                print(f"Resumen: {resumen}")
+                print(f"Resumen: {agente.resumir()}")
                 continue
 
-            # 1) La pregunta entra al historial ANTES de llamar: la API tiene
-            #    que recibir la lista con este ultimo mensaje ya incluido.
-            historial.append({"role": "user", "content": pregunta})
-
-            # 2) Ya no mandamos la pregunta suelta: mandamos la lista completa.
-            #    preguntar_con_tools() puede usar la calculadora por dentro
-            #    (F4.3) si el modelo decide que la necesita - main.py no
-            #    tiene que enterarse de ese ir-y-venir, solo recibe el
-            #    texto final, igual que antes de tener tools.
-            respuesta = preguntar_con_tools(historial, proveedor, api_key, modelo)
-
-            # 3) La respuesta tambien se guarda - el modelo NO recuerda ni sus
-            #    propias respuestas; si no la añadimos, en el siguiente turno
-            #    "olvidaria" lo que acaba de decir. EXCEPCION: si la llamada
-            #    fallo, las funciones de llm_client.py devuelven un aviso que
-            #    empieza por "⚠️" (nunca texto real del modelo) - eso NO es un
-            #    turno de conversacion valido. Si lo guardaramos, se reenviaria
-            #    como si el asistente lo hubiera dicho de verdad, y el modelo
-            #    empezaria a "razonar" sobre su propio mensaje de error en
-            #    turnos futuros. La pregunta del usuario SI queda guardada
-            #    (es real); solo se descarta la respuesta rota.
-            if not respuesta.startswith("⚠️"):
-                historial.append({"role": "assistant", "content": respuesta})
-
+            # Un turno completo (historial, tools, guardado del turno) lo
+            # resuelve el Agente por dentro - main.py solo imprime.
+            respuesta = agente.preguntar(pregunta)
             print(f"Agente: {respuesta}")
     except KeyboardInterrupt:
         # Ctrl+C dispara esta excepcion en vez de reventar con un
@@ -167,9 +134,9 @@ def main():
         print("\nAgente: interrumpido, guardando la conversación...")
     finally:
         # Se ejecuta SIEMPRE: tanto tras el break de "salir" como tras el
-        # except de arriba. guardar_conversacion() ya decide por dentro
-        # si hay algo real que guardar (ver storage.py).
-        ruta = guardar_conversacion(historial, proveedor, modelo)
+        # except de arriba. agente.guardar() ya decide por dentro si hay
+        # algo real que guardar (ver storage.py).
+        ruta = agente.guardar()
         if ruta:
             print(f"Conversación guardada en conversations/{ruta.name}")
 

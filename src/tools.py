@@ -68,6 +68,16 @@ def calcular(expresion: str) -> float:
     una tool del agente: el modelo manda el string, esta funcion decide
     si es seguro calcularlo, no el modelo.
     """
+    # F4.4: el type hint "expresion: str" NO se comprueba solo en
+    # tiempo de ejecucion - es solo una anotacion, no una validacion
+    # real. Si el modelo mandara, por ejemplo, un numero suelto en vez
+    # de texto, ast.parse() lanzaria un TypeError con un mensaje tecnico
+    # confuso ("expected string or bytes-like object"). Lo comprobamos
+    # a mano primero para dar un error claro, como con cualquier
+    # entrada que no controlas del todo.
+    if not isinstance(expresion, str):
+        raise ValueError(f"La expresión debe ser texto, no {type(expresion).__name__}")
+
     try:
         arbol = ast.parse(expresion, mode="eval")
     except SyntaxError:

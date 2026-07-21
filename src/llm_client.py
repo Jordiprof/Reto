@@ -24,8 +24,12 @@ def _preguntar_groq(historial: list, api_key: str, modelo: str) -> str:
     # cuando de verdad se usa este proveedor, no siempre que se importa
     # llm_client.py.
     # Groq: cliente oficial. Authentication/APIConnection/RateLimit Error:
-    # tipos de error concretos definidos por ese mismo SDK.
-    from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError
+    # tipos de error concretos definidos por ese mismo SDK. APIError es
+    # la clase BASE de la que heredan estos tres (y cualquier otro error
+    # de la API de Groq que no hayamos previsto a mano) - verificado con
+    # __mro__ tras un fallo real (F4.5): groq.BadRequestError con
+    # tool_use_failed, no capturado por ninguna de las 3 especificas.
+    from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError, APIError
 
     client = Groq(api_key=api_key)
     inicio = time.perf_counter()
@@ -52,6 +56,13 @@ def _preguntar_groq(historial: list, api_key: str, modelo: str) -> str:
     except RateLimitError:
         logging.error("Groq: limite de peticiones superado")
         return "⚠️ Error: límite de peticiones de Groq superado."
+    except APIError as error:
+        # Red de seguridad: cualquier otro error de la API de Groq que
+        # no sea uno de los 3 de arriba (ej. tool_use_failed cuando el
+        # modelo formatea mal una llamada a funcion) cae aqui, en vez
+        # de reventar el programa entero.
+        logging.error(f"Groq: error de API no especifico - {error}")
+        return f"⚠️ Error de Groq: {error}"
 
 
 def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
@@ -79,7 +90,7 @@ def _preguntar_groq_con_tools(historial: list, api_key: str, modelo: str) -> str
     el resultado -> volver a llamar -> repetir hasta que responda con
     texto normal (sin mas tool_calls) o se agote _MAX_PASOS_DE_HERRAMIENTAS.
     """
-    from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError
+    from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError, APIError
 
     client = Groq(api_key=api_key)
     # Copia de trabajo: aqui SI se van a colar los mensajes intermedios
@@ -105,6 +116,15 @@ def _preguntar_groq_con_tools(historial: list, api_key: str, modelo: str) -> str
         except RateLimitError:
             logging.error("Groq: limite de peticiones superado")
             return "⚠️ Error: límite de peticiones de Groq superado."
+        except APIError as error:
+            # F4.5, fallo real encontrado en pruebas en vivo: a veces el
+            # modelo formatea mal una llamada a funcion y Groq devuelve
+            # groq.BadRequestError (tool_use_failed) - no es ninguna de
+            # las 3 excepciones de arriba. Sin esta captura, el programa
+            # entero se caia. No-determinismo del modelo (ver F2.5): no
+            # siempre pasa con la misma pregunta.
+            logging.error(f"Groq: error de API no especifico - {error}")
+            return f"⚠️ Error de Groq: {error}"
         logging.info(f"Latencia (groq/{modelo}, con tools): {time.perf_counter() - inicio:.2f}s")
 
         mensaje = respuesta.choices[0].message
@@ -282,6 +302,77 @@ def _preguntar_gemini(historial: list, api_key: str, modelo: str) -> str:
         return f"⚠️ Error al hablar con Gemini: {error}"
 
 
+def _preguntar_gemini_con_tools(historial: list, api_key: str, modelo: str) -> str:
+    """Version de _preguntar_gemini que sabe usar tools (F4.5).
+
+    Verificado contra la doc oficial (ai.google.dev/gemini-api/docs/
+    generate-content/function-calling, con generate_content - no la
+    Interactions API, coherente con la decision de F3.1). Tres
+    diferencias reales respecto a Groq/Ollama:
+    1) las tools se declaran SIN el "type": "function" de fuera - solo
+       name/description/parameters, envueltas en types.Tool(...).
+    2) la peticion de funcion no viene en un campo tool_calls, sino
+       dentro de response.candidates[0].content.parts[0].function_call.
+    3) los argumentos ya llegan como dict (como Ollama, no como texto
+       JSON como Groq).
+    """
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client()
+    contents, system_instruction = traducir_historial_gemini(historial)
+
+    # De TOOLS (formato Groq/OpenAI) sacamos solo el diccionario interior
+    # "function" de cada una - es la parte que Gemini SI reconoce.
+    declaraciones = [tool["function"] for tool in TOOLS]
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        tools=[types.Tool(function_declarations=declaraciones)],
+    )
+
+    for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
+        inicio = time.perf_counter()
+        try:
+            respuesta = client.models.generate_content(
+                model=modelo, contents=contents, config=config,
+            )
+        except Exception as error:
+            logging.error(f"Gemini: error - {error}")
+            return f"⚠️ Error al hablar con Gemini: {error}"
+        logging.info(f"Latencia (gemini/{modelo}, con tools): {time.perf_counter() - inicio:.2f}s")
+
+        parte = respuesta.candidates[0].content.parts[0]
+        llamada = getattr(parte, "function_call", None)
+
+        if not llamada:
+            # Respuesta final: texto normal, sin peticion de funcion.
+            return respuesta.text
+
+        # dict(...) por seguridad: args llega como un tipo propio del
+        # SDK parecido a un dict, no un dict de Python puro - dict()
+        # lo normaliza para poder usarlo con **argumentos sin sorpresas.
+        argumentos = dict(llamada.args)
+        resultado = _ejecutar_tool(llamada.name, argumentos)
+
+        # Igual que con Groq/Ollama: guardamos la peticion del modelo y
+        # el resultado antes de volver a preguntar - pero con el formato
+        # de Content/Part propio de Gemini, no dicts sueltos.
+        contents.append(respuesta.candidates[0].content)
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_function_response(
+                        name=llamada.name,
+                        response={"resultado": resultado},
+                    )
+                ],
+            )
+        )
+
+    return "⚠️ El agente no llegó a una respuesta final tras varios pasos de herramientas."
+
+
 # Diccionario que asocia el nombre de cada proveedor con la funcion de
 # arriba que sabe hablar con el. Permite elegir proveedor en tiempo de
 # ejecucion sin un if/elif largo.
@@ -302,17 +393,12 @@ def preguntar(historial: list, proveedor: str, api_key: str, modelo: str) -> str
     return funcion(historial, api_key, modelo)
 
 
-# F4.3: dispatcher equivalente a _FUNCIONES pero para las versiones con
-# tools. Gemini todavia NO tiene tool calling implementado (su formato
-# de declaracion de tools es distinto, otra vez - se hara cuando haga
-# falta de verdad, mismo criterio que con el historial en F3.1); de
-# momento reutiliza _preguntar_gemini normal, asi que sigue
-# funcionando como chat de siempre, solo que sin poder usar la
-# calculadora todavia.
+# F4.3-F4.5: dispatcher equivalente a _FUNCIONES pero para las
+# versiones con tools. Los 3 proveedores soportan ya tool calling real.
 _FUNCIONES_CON_TOOLS = {
     "groq": _preguntar_groq_con_tools,
     "ollama": _preguntar_ollama_con_tools,
-    "gemini": _preguntar_gemini,
+    "gemini": _preguntar_gemini_con_tools,
 }
 
 
