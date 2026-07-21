@@ -40,6 +40,8 @@
 
 | 21/07/2026 | S3 / Fase 4-5 (planificación) | Arquitectura del bot de Telegram: **un solo `Agent` con tools agrupadas por categoría**, no orquestador + sub-agentes; filtrado dinámico de qué tools se pasan al modelo como mejora si hace falta | Orquestador + sub-agentes especializados (patrón LangGraph, un router que deriva a agentes por dominio) | Con ~30 herramientas candidatas, un orquestador resuelve la selección de tools a costa de una capa nueva de complejidad (routing, paso de contexto entre agentes) que agrupar categorías ya resuelve más simple. Coherente con ADR-003 ("a mano primero"); el patrón orquestador queda para F5.5 (Extra) como comparación real con LangGraph, no como base del bot |
 
+| 21/07/2026 | S3 / Fase 4 | F4.1 — Primera tool (`calcular`, `src/tools.py`): evaluación segura de expresiones vía `ast`, nunca `eval()` | `eval()` directo, o una whitelist de regex sobre el string | `eval()` ejecutaría cualquier código Python que el modelo mandara como parámetro, no solo aritmética. Con `ast.parse()` se analiza la expresión como árbol (sin ejecutar nada) y se recorre a mano aceptando solo números y `+-*/` — cualquier otro nodo (llamada a función, nombre de variable) se rechaza aunque sea sintácticamente válido. Verificado con 9 tests de pytest, incluida una prueba real de intento de ejecutar un comando del sistema |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._
