@@ -1,11 +1,27 @@
+# sys: para forzar la codificacion de la salida estandar a UTF-8 (ver
+# comentario justo debajo).
+import sys
 # questionary: libreria para menus interactivos en terminal (flechas + Enter).
 import questionary
+
+# Forzamos UTF-8 en stdout SIEMPRE, sin depender de que la terminal
+# donde se ejecute este programa lo tenga configurado asi. Hallazgo
+# real de F4.3: un modelo devolvio un caracter Unicode poco comun
+# (un "espacio estrecho" para agrupar digitos), y con la codificacion
+# por defecto de algunas consolas (cp1252 en parte de Windows) un
+# print() normal con ese caracter revienta el programa entero con
+# UnicodeEncodeError. errors="replace": si algun caracter fuera IMPOSIBLE
+# de mostrar ni asi, se sustituye por un simbolo en vez de crashear -
+# coherente con RNF-02 (el programa avisa y sigue vivo, nunca se cae).
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # Traemos de config.py: la funcion para leer la clave del proveedor
 # elegido, el diccionario PROVEEDORES (nombres de proveedor) y MODELOS
 # (lista de modelos disponibles por proveedor).
 from src.config import obtener_api_key, PROVEEDORES, MODELOS
-# Traemos de llm_client.py la funcion que hace la pregunta de verdad.
-from src.llm_client import preguntar
+# Traemos de llm_client.py: preguntar() para /resumen (no necesita
+# tools), preguntar_con_tools() para el turno normal (F4.3 - el modelo
+# puede pedir usar la calculadora si hace falta).
+from src.llm_client import preguntar, preguntar_con_tools
 # Traemos de storage.py la funcion que guarda la conversacion en disco.
 from src.storage import guardar_conversacion
 
@@ -124,7 +140,11 @@ def main():
             historial.append({"role": "user", "content": pregunta})
 
             # 2) Ya no mandamos la pregunta suelta: mandamos la lista completa.
-            respuesta = preguntar(historial, proveedor, api_key, modelo)
+            #    preguntar_con_tools() puede usar la calculadora por dentro
+            #    (F4.3) si el modelo decide que la necesita - main.py no
+            #    tiene que enterarse de ese ir-y-venir, solo recibe el
+            #    texto final, igual que antes de tener tools.
+            respuesta = preguntar_con_tools(historial, proveedor, api_key, modelo)
 
             # 3) La respuesta tambien se guarda - el modelo NO recuerda ni sus
             #    propias respuestas; si no la añadimos, en el siguiente turno

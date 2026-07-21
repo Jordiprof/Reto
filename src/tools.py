@@ -73,3 +73,62 @@ def calcular(expresion: str) -> float:
     except SyntaxError:
         raise ValueError(f"Expresión inválida: {expresion!r}")
     return _evaluar_nodo(arbol)
+
+
+# F4.2: descripcion de "calcular" como TOOL, en el formato JSON Schema
+# que entienden Groq y Ollama (compatible con la convencion de OpenAI,
+# verificado contra la doc oficial de Groq - console.groq.com/docs/
+# tool-use/local-tool-calling). Gemini usa su propio formato de
+# declaracion de tools - ese adaptador se escribe en F4.3, cuando
+# montemos el bucle real y haga falta de verdad (mismo criterio que
+# con _preguntar_gemini en F3.1: no se construye hasta que se necesita).
+#
+# Es una lista porque en el futuro habra mas de una tool - cada
+# diccionario de la lista describe una funcion distinta.
+TOOLS = [
+    {
+        # "function": el unico tipo que soportan estos proveedores hoy
+        # (llamar a una funcion de tu codigo, no ejecutar codigo suyo).
+        "type": "function",
+        "function": {
+            # name DEBE coincidir letra a letra con el nombre real de la
+            # funcion en Python - es la clave que se usara en F4.3 para
+            # saber cual ejecutar cuando el modelo pida "calcular".
+            "name": "calcular",
+            # description: la frase que el modelo lee para decidir SI
+            # usar esta tool y CUANDO. Cuanto mas clara, mejor elige -
+            # por eso se explicita que es preferible a inventar de memoria.
+            "description": (
+                "Evalua una expresion aritmetica (suma, resta, multiplicacion, "
+                "division). Usala siempre que el usuario pida un calculo, en vez "
+                "de inventar el resultado de memoria."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    # Este nombre ("expresion") es el que usara main.py
+                    # para leer el parametro de la respuesta del modelo -
+                    # tiene que coincidir con el argumento de calcular().
+                    "expresion": {
+                        "type": "string",
+                        "description": (
+                            "La expresion matematica a evaluar, ej. '2 + 2' "
+                            "o '(10 - 4) * 3'. Solo +, -, * y /."
+                        ),
+                    }
+                },
+                # Sin "expresion" la tool no se puede ejecutar - el
+                # modelo debe mandarla siempre que llame a esta funcion.
+                "required": ["expresion"],
+            },
+        },
+    }
+]
+
+# F4.3: diccionario que asocia el NOMBRE de cada tool (el string que
+# manda el modelo, igual que en TOOLS) con la funcion real de Python
+# que hay que ejecutar. Mismo patron que _FUNCIONES en llm_client.py -
+# permite ejecutar la tool correcta sin un if/elif por cada una.
+HERRAMIENTAS_DISPONIBLES = {
+    "calcular": calcular,
+}
