@@ -52,6 +52,8 @@ comparativas de vector DBs (Chroma/Qdrant/FAISS), y guías de frameworks de agen
 | Vector DB (RAG) | Pinecone | ❌ Descartada | Nube, de pago; los embeddings de las conversaciones saldrían de la máquina |
 | Vector DB (RAG) | ChromaDB / Qdrant / FAISS | ✅ ChromaDB (F5.3) | Las tres corren locales y gratis; ChromaDB es la más simple para aprender |
 | Embeddings | API de pago (OpenAI, etc.) | ❌ Descartados | Enviarían el texto de las conversaciones a un tercero. Se usan embeddings LOCALES (`sentence-transformers`) |
+| Embeddings (modelo) | `all-MiniLM-L6-v2` | ❌ Descartado | El más citado en tutoriales, muy ligero (~90MB), pero entrenado sobre todo en inglés — peor calidad semántica buscando en conversaciones en español (RF-12) |
+| Embeddings (modelo) | `paraphrase-multilingual-MiniLM-L12-v2` | ✅ Elegido (F5.3, ADR-003) | Multilingüe (incluye español), ligero (~470MB), buen equilibrio calidad/recursos para correr en la máquina de Jordi (o una Raspberry Pi si esa es la opción de hosting de F5.2) |
 
 **Lección transversal:** el requisito de privacidad no limita el aprendizaje — al contrario, obliga
 a entender qué hace cada herramienta por dentro y dónde van los datos, en vez de conectar servicios

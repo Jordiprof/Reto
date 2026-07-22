@@ -65,6 +65,9 @@
 | 21/07/2026 | S3 / Fase 5 (planificación) | **Gmail aparcado** tras investigar el coste real de OAuth | Añadir el correo (solo lectura) en Fase 5 como se pensó el 20/07 | Hallazgo: modo "Testing" gratis caduca el token cada 7 días (reautorizar a mano); modo "Production" con scope `gmail.readonly` exige verificación de Google. No encaja con "gratis, sin sorpresas" — supera la fila del 20/07, queda en backlog |
 | 21/07/2026 | S3 / Fase 5 (planificación) | Observabilidad: **basta `logs/agente.log`** por ahora; si hace falta más, herramienta LOCAL (Phoenix/Langfuse), nunca LangSmith | Montar LangSmith para trazas detalladas | LangSmith manda las trazas a la nube (rompe RNF-06); el logging actual ya cubre latencia y errores para un bot personal. Se añade observabilidad local solo si se queda corto de verdad |
 
+| 22/07/2026 | S3 / Fase 5 (F5.1) | **ADR-003 formalizado como fichero de decisión**: agente único a mano + Pydantic (F5.4), LangChain fuera, LangGraph/PydanticAI solo comparación (F5.6), multiagente descartado | Dejarlo solo mencionado en E2/E3/diario sin ADR propio | El resto de decisiones de arquitectura (ADR-001, ADR-002) tienen su fichero formal con Contexto/Alternativas/Decisión/Consecuencias; ADR-003 se estaba citando sin existir como tal — F5.1 lo cierra |
+| 22/07/2026 | S3 / Fase 5 (F5.1) | Modelo de embeddings local elegido: `paraphrase-multilingual-MiniLM-L12-v2` (F5.3) | `all-MiniLM-L6-v2` (el más citado en tutoriales) · `paraphrase-multilingual-mpnet-base-v2` (versión grande) | Las conversaciones del bot son en español (RF-12); `all-MiniLM-L6-v2` está optimizado sobre todo en inglés y daría peor calidad de búsqueda semántica. La versión multilingüe "L12" es más ligera que la "mpnet" (~470MB vs ~1GB) y suficiente para un bot personal |
+
 ## Reflexión final
 
 _Se redacta al cierre del reto (F6.2)._

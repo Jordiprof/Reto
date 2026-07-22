@@ -86,5 +86,5 @@ por turno crece más rápido cuanto más "elaborado" es el estilo elegido.
 
 ## 5. Decisiones de arquitectura
 
-Ver [ADR/](ADR/) — proveedor (ADR-001, hipótesis), memoria evolutiva (ADR-002, se
-formaliza en Intermedio), framework vs a mano (ADR-003, se formaliza en Experto).
+Ver [ADR/](ADR/) — proveedor (ADR-001, decisión), memoria evolutiva (ADR-002, decisión),
+framework vs a mano y agente único (ADR-003, decisión, 22/07/2026).
