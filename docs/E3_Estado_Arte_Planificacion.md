@@ -1,7 +1,7 @@
 # E3 — Estado del arte y planificación
 
-**Proyecto:** Agente de IA en terminal (nombre provisional)
-**Autor:** Jordi · **Fecha:** 15/07/2026 (v0.1) → 21/07/2026 (v0.2, cierre Nivel Avanzado) · **Versión:** 0.2
+**Proyecto:** Agente de IA (terminal → Telegram en Fase 5)
+**Autor:** Jordi · **Fecha:** 15/07/2026 (v0.1) → 21/07/2026 (v0.3, cierre Nivel Avanzado + planificación Fase 5 con stack experto) · **Versión:** 0.3
 
 ## 1. Estado del arte
 
@@ -33,6 +33,30 @@ modelos retirados; verificar siempre docs oficiales._
   mano con tools agrupadas por categoría; orquestador multi-agente queda como comparación
   con LangGraph en F5.5 (Extra), no como base del bot real.
 
+### 1.1. Stack "experto" — investigación 2026 y criterio de selección por privacidad
+
+Al planificar Fase 5 (21/07) se investigó el estado actual de las tecnologías del ecosistema de
+agentes que Jordi quería valorar. **Criterio rector: privacidad** (RNF-06) — los datos del bot no
+deben salir de la máquina salvo la llamada al LLM. Ese criterio decide qué entra y qué se descarta.
+Fuentes consultadas (2026): comparativas de observabilidad LLM (Langfuse/Phoenix/LangSmith),
+comparativas de vector DBs (Chroma/Qdrant/FAISS), y guías de frameworks de agentes
+(LangGraph/CrewAI/AutoGen) — todas de 2026, verificadas, no de conocimiento previo.
+
+| Categoría | Herramientas | Decisión | Motivo |
+|---|---|---|---|
+| Orquestación multi-agente | LangGraph, CrewAI, AutoGen | Solo LangGraph, y solo como comparación (F5.6) | El caso de uso es un agente único; multiagente es para coordinar objetivos distintos. AutoGen además está en mantenimiento (Microsoft movió el foco a otro producto) |
+| Framework LLM general | LangChain | Fuera del núcleo | Redundante con `llm_client.py`/`agent.py` ya construidos; ADR-003 = "a mano primero" |
+| Validación de datos | Pydantic | ✅ Entra (F5.4) | Librería local sin red; endurece la validación de parámetros de tools de F4.4 |
+| Framework de agentes ligero | PydanticAI | Solo comparación opcional (F5.6) | Alternativa a LangChain, pero el bot ya está construido a mano |
+| Observabilidad | LangSmith | ❌ Descartada | Cloud SaaS closed-source; manda todas las trazas (prompts/respuestas) a servidores de LangChain — incompatible con "confidencial". Alternativas locales/open-source (Phoenix, Langfuse) sí respetarían la privacidad, pero de momento basta `logs/agente.log` |
+| Vector DB (RAG) | Pinecone | ❌ Descartada | Nube, de pago; los embeddings de las conversaciones saldrían de la máquina |
+| Vector DB (RAG) | ChromaDB / Qdrant / FAISS | ✅ ChromaDB (F5.3) | Las tres corren locales y gratis; ChromaDB es la más simple para aprender |
+| Embeddings | API de pago (OpenAI, etc.) | ❌ Descartados | Enviarían el texto de las conversaciones a un tercero. Se usan embeddings LOCALES (`sentence-transformers`) |
+
+**Lección transversal:** el requisito de privacidad no limita el aprendizaje — al contrario, obliga
+a entender qué hace cada herramienta por dentro y dónde van los datos, en vez de conectar servicios
+en la nube a ciegas. Varias decisiones "se toman solas" en cuanto se aplica el criterio.
+
 ## 2. Planificación (roadmap)
 
 | Fase | Fechas planeadas | Fechas reales | Entregable | Tag |
@@ -50,17 +74,19 @@ el 20/07** (bot de Telegram personal, ver E1 v1.2 y diario).
 
 ## 3. Ideas para revisar en Fase 5 (Nivel Experto)
 
-- **Orquestación multi-agente** (propuesta de Jordi, 16/07) — **resuelto en brainstorming del
-  21/07** (ver diario): NO se usa como base del bot — un solo `Agent` con tools agrupadas por
-  categoría. El patrón orquestador+sub-agentes queda como comparación real con LangGraph en
-  F5.5 (Extra), coherente con ADR-003 (a mano primero). Distinto de la cadena de fallback de
-  proveedores (ADR-001), que es resiliencia de un único agente.
-- **Correo (Gmail) + Calendar, solo lectura** (propuesta de Jordi, 21/07) — candidata nueva
-  para Fase 5, usando una cuenta de Gmail sin uso. Gmail API + Google Calendar API; el modo
-  "Testing" de Google Cloud Console evita la verificación completa de Google para un único
-  usuario personal. Alcance inicial deliberadamente reducido: solo lectura (resumir correos
-  nuevos, consultar agenda) — enviar correos o crear eventos se deja para más adelante, si
-  hace falta de verdad, para no disparar el riesgo de seguridad de entrada.
+- **Orquestación multi-agente** (propuesta de Jordi, 16/07) — **resuelto (21/07): agente único**
+  (ver §1.1 y diario). NO se usa como base del bot. El patrón orquestador+sub-agentes queda como
+  comparación real con LangGraph en F5.6 (Extra), coherente con ADR-003 (a mano primero). Distinto
+  de la cadena de fallback de proveedores (ADR-001), que es resiliencia de un único agente.
+- **Memoria semántica (RAG local)** — **resuelto (21/07): sí, se implementa** (F5.3). Es lo que
+  Jordi pidió como "que se acuerde de días anteriores": ChromaDB local + embeddings locales. Cumple
+  la condición de ADR-002 ("solo si se justifica"). Ver RF-12.
+- **Correo (Gmail), solo lectura** (propuesta de Jordi, 21/07) — **aparcada tras investigar el
+  coste real.** En modo "Testing" de Google Cloud Console (gratis, sin verificación) el refresh
+  token de un scope restringido como `gmail.readonly` **caduca a los 7 días** y obliga a
+  reautorizar a mano; el modo "Production" exige verificación de Google (posible coste/fricción).
+  Ninguna opción encaja limpio con "gratis y sin sorpresas" — queda en el backlog, no en F5, con el
+  hallazgo documentado para retomarlo con la decisión ya informada.
 
 ## 4. Seguimiento
 

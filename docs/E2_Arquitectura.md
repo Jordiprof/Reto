@@ -1,39 +1,45 @@
 # E2 — Arquitectura
 
-**Proyecto:** Agente de IA en terminal (nombre provisional)
-**Autor:** Jordi · **Fecha:** 20/07/2026 · **Versión:** 0.2 — Nivel Intermedio completo (Fase 3)
+**Proyecto:** Agente de IA (terminal → Telegram en Fase 5)
+**Autor:** Jordi · **Fecha:** 20/07/2026 (v0.2) → 21/07/2026 (v0.3, Nivel Avanzado completo + arquitectura Fase 5) · **Versión:** 0.3
 
 ## 1. Visión global
 
-Estado real tras Fase 3 (sin `agent.py` ni `tools.py` todavía — son de Fase Avanzada,
-ver §3):
+Estado real tras Fase 4 (líneas sólidas) y arquitectura planificada de Fase 5 (líneas punteadas):
 
 ```mermaid
 flowchart LR
-    U([Usuario]) <--> CLI[CLI<br/>main.py]
-    CLI --> LLM[LLMClient<br/>llm_client.py]
-    LLM <--> PROV[(Proveedor LLM<br/>Groq / Ollama Cloud / Gemini)]
-    CLI --> ST[Storage<br/>storage.py]
-    ST --> JSON[(conversations/*.json<br/>fuente completa)]
-    ST --> DB[(conversations.db<br/>indice SQLite)]
+    U([Usuario]) <--> CLI[CLI terminal<br/>main.py]
+    TG[Bot Telegram<br/>telegram_bot.py *F5*] -. reutiliza .-> AG
+    U -. Telegram .-> TG
+    CLI --> AG[Agente<br/>agent.py]
+    AG --> LLM[LLMClient<br/>llm_client.py]
+    LLM <--> PROV[(Proveedor LLM<br/>Groq / Ollama / Gemini)]
+    AG --> TOOLS[Tools<br/>tools.py]
+    AG --> ST[Storage<br/>storage.py]
+    ST --> JSON[(conversations/*.json)]
+    ST --> DB[(conversations.db<br/>SQLite)]
+    AG -. RAG semántico F5 .-> VEC[(ChromaDB local<br/>+ embeddings locales)]
 ```
 
-**Regla de dependencias:** la CLI nunca habla directamente con el proveedor; todo pasa
-por `LLMClient`, la única pieza que conoce la API de cada SDK. Así, cambiar de proveedor
-es cambiar configuración, no reescribir el bucle principal (ver ADR-001). En Fase
-Avanzada esta regla se refuerza con un `Agent` intermedio que orqueste también el
-bucle de tools.
+**Regla de dependencias:** ni la CLI ni el bot de Telegram hablan directamente con el
+proveedor — todo pasa por `Agente`, y solo `LLMClient` conoce la API de cada SDK. La clave del
+diseño de Fase 4 (F4.5): `Agente` no sabe NADA de cómo llegan las preguntas ni cómo se
+muestran las respuestas, así en Fase 5 el bot de Telegram lo reutiliza tal cual — solo cambia
+la capa de entrada/salida, no la lógica del agente.
 
 ## 2. Componentes
 
 | Componente | Fichero | Responsabilidad | Aparece en |
 |---|---|---|---|
-| CLI | `src/main.py` | Bucle de entrada/salida, historial en memoria, comandos (`/modelo`, `/proveedor`, `/resumen`) | Básico → Intermedio |
-| LLMClient | `src/llm_client.py` | Abstrae el proveedor LLM; traduce el historial canónico al dialecto de Gemini (`traducir_historial_gemini`, función pura) | Básico → Intermedio |
+| CLI | `src/main.py` | Bucle de terminal + comandos (`/modelo`, `/proveedor`, `/resumen`); delega todo en `Agente` | Básico → Avanzado |
+| Agente | `src/agent.py` | Núcleo: historial, tools, resumen, guardado. No conoce la capa de E/S — reutilizable con Telegram | Avanzado |
+| LLMClient | `src/llm_client.py` | Abstrae el proveedor LLM y el bucle de tools (LLM→tool→resultado→LLM); traduce al dialecto de Gemini (historial y tools) | Básico → Avanzado |
+| Tools | `src/tools.py` | Herramientas puras (`calcular`) + su JSON Schema (`TOOLS`) + despacho por nombre | Avanzado |
 | Storage | `src/storage.py` | Persistencia: JSON completo con fecha + índice en SQLite (ADR-002) | Intermedio |
 | Config | `src/config.py` | Carga de `.env` (claves y modelos) | Básico |
-| Agent | `src/agent.py` *(pendiente)* | Orquestará el bucle de tools: LLM → tool → resultado → LLM | Avanzado |
-| Tools | `src/tools.py` *(pendiente)* | Herramientas puras de Python + su JSON Schema | Avanzado |
+| Bot Telegram | `src/telegram_bot.py` *(F5)* | Capa de E/S por Telegram; lista blanca de `user_id` antes del LLM; reutiliza `Agente` | Experto |
+| Memoria semántica | *(F5, ChromaDB local)* | RAG: recupera por significado fragmentos de conversaciones pasadas (RF-12) | Experto |
 
 ## 3. Evolución por niveles
 
@@ -41,9 +47,14 @@ bucle de tools.
 - **Intermedio (cerrado, Fase 3):** historial canónico reenviado completo cada turno +
   system prompt + comando `/resumen` + Storage (JSON completo + índice SQLite) +
   primer test con `pytest` sobre la función pura de traducción de Gemini.
-- **Avanzado:** + `Agent`/`Tools` con JSON Schema + bucle del agente: LLM → tool →
-  resultado → LLM.
-- **Experto:** caso de uso completo sobre la temática elegida (decisión: F3.7, límite 28/07).
+- **Avanzado (cerrado, Fase 4):** `Agente` + `Tools` con JSON Schema + bucle del agente
+  (LLM → tool → resultado → LLM) en los 3 proveedores + validación de parámetros.
+- **Experto (Fase 5, planificado 21/07):** bot de Telegram privado (un solo usuario, lista
+  blanca de `user_id`) que reutiliza `Agente` tal cual; memoria semántica local (RAG con
+  ChromaDB + embeddings locales) para recordar días anteriores; validación de tools con
+  Pydantic; rollout incremental de herramientas por categorías. **Un solo agente, no
+  multiagente** (ver ADR-003 y diario). Requisito rector: privacidad — los datos no salen de
+  la máquina salvo la llamada al LLM (RNF-06).
 
 ## 4. Experimento de system prompts
 
