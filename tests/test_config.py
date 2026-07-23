@@ -4,7 +4,10 @@
 # fallo de API, el programa avisa al usuario y sigue vivo").
 import pytest
 
-from src.config import obtener_api_key, ClaveApiNoConfigurada, PROVEEDORES
+from src.config import (
+    obtener_api_key, obtener_modelo_por_defecto,
+    ClaveApiNoConfigurada, PROVEEDORES, MODELOS_ENV, MODELOS,
+)
 
 
 def test_clave_ausente_lanza_error_controlado(monkeypatch):
@@ -26,3 +29,26 @@ def test_clave_presente_se_devuelve_tal_cual(monkeypatch):
     monkeypatch.setenv(PROVEEDORES["groq"], "clave-de-prueba")
 
     assert obtener_api_key("groq") == "clave-de-prueba"
+
+
+def test_modelo_por_defecto_lee_del_env(monkeypatch):
+    """F5.0/T5: el modelo por defecto sale de la variable *_MODEL del .env."""
+    monkeypatch.setenv(MODELOS_ENV["gemini"], "models/gemini-2.5-flash")
+
+    assert obtener_modelo_por_defecto("gemini") == "models/gemini-2.5-flash"
+
+
+def test_modelo_por_defecto_cae_al_catalogo_si_no_hay_env(monkeypatch):
+    """Si la variable no esta puesta, cae al primero del catalogo MODELOS
+    (un valor verificado) para que el programa arranque igual."""
+    monkeypatch.delenv(MODELOS_ENV["gemini"], raising=False)
+
+    assert obtener_modelo_por_defecto("gemini") == MODELOS["gemini"][0]
+
+
+def test_modelo_por_defecto_env_vacio_cae_al_catalogo(monkeypatch):
+    """Una variable puesta pero VACIA tambien cae al catalogo (el 'or'
+    cubre el string vacio, no solo la ausencia)."""
+    monkeypatch.setenv(MODELOS_ENV["groq"], "")
+
+    assert obtener_modelo_por_defecto("groq") == MODELOS["groq"][0]

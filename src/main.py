@@ -17,7 +17,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # Traemos de config.py: la funcion para leer la clave del proveedor
 # elegido, el diccionario PROVEEDORES (nombres de proveedor) y MODELOS
 # (lista de modelos disponibles por proveedor).
-from src.config import obtener_api_key, PROVEEDORES, MODELOS, ClaveApiNoConfigurada
+from src.config import (
+    obtener_api_key, obtener_modelo_por_defecto,
+    PROVEEDORES, MODELOS, ClaveApiNoConfigurada,
+)
 # F4.5: toda la logica de la conversacion (historial, tools, resumen,
 # guardado) vive ahora en agent.py - main.py solo habla con un Agente
 # a traves de sus metodos, no conoce ni un detalle de como funciona
@@ -64,10 +67,18 @@ def elegir_proveedor() -> str:
 
 
 def elegir_modelo(proveedor: str) -> str:
-    """Muestra un menu de flechas con los modelos del proveedor ya elegido."""
+    """Muestra un menu de flechas con los modelos del proveedor ya elegido.
+
+    F5.0/T5: el modelo por defecto del .env aparece YA preseleccionado (basta
+    pulsar Enter para usarlo). questionary exige que 'default' sea uno de los
+    choices, asi que si el modelo del .env no esta en el catalogo, no se pasa
+    (queda seleccionado el primero de la lista)."""
+    catalogo = MODELOS[proveedor]
+    por_defecto = obtener_modelo_por_defecto(proveedor)
     return questionary.select(
         "¿Qué modelo quieres usar?",
-        choices=MODELOS[proveedor],
+        choices=catalogo,
+        default=por_defecto if por_defecto in catalogo else None,
     ).ask()
 
 

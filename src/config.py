@@ -44,27 +44,49 @@ PROVEEDORES = {
     "gemini": "GEMINI_API_KEY",
 }
 
-# Modelos disponibles por proveedor. Nombres EXACTOS, TODOS verificados
-# con llamadas reales (no solo docs) el 16-17/07 - ver diario de decisiones.
+# Nombre de la variable de entorno con el modelo POR DEFECTO de cada
+# proveedor. F5.0/T5: hasta ahora estas variables (GROQ_MODEL, etc.) estaban
+# en .env.example pero NADIE las leia - config.py ignoraba el modelo del
+# .env y usaba solo las listas de MODELOS. Eso contradecia la decision del
+# diario (15/07): "el modelo es configuracion, vive en .env". Ahora SI se
+# leen (ver obtener_modelo_por_defecto): son la FUENTE DE VERDAD del modelo
+# por defecto. Las listas MODELOS pasan a ser SOLO el catalogo del menu.
+MODELOS_ENV = {
+    "groq": "GROQ_MODEL",
+    "ollama": "OLLAMA_MODEL",
+    "gemini": "GEMINI_MODEL",
+}
+
+# Catalogo de modelos por proveedor para el MENU interactivo (/modelo).
+# Nombres EXACTOS, verificados con llamadas reales el 16-17/07 y
+# RE-verificados el 23/07 (F5.0/T5) contra las APIs en vivo (scripts/lista_
+# modelos_*.py) al activar por fin la lectura de *_MODEL del .env - asi se
+# encontro que "qwen/qwen3-32b" (Groq) ya no existe y que Ollama Cloud dejo
+# de usar el sufijo "-cloud"/":cloud" en sus 6 modelos (mismo hallazgo,
+# nuevo ejemplo de la leccion del 15/07: verificar SIEMPRE en fuentes
+# oficiales, los catalogos tambien caducan, no solo lo que dicen los LLM).
+# El primero de cada lista es el fallback si la variable *_MODEL no esta en
+# el .env.
 MODELOS = {
-    # Groq: los 4 responden bien; los "qwen" muestran su razonamiento
-    # interno con <think> antes de la respuesta final.
+    # Groq: 3 modelos verificados en vivo el 23/07 (se retira "qwen3-32b",
+    # ya no existe en la API - la version "qwen3.6-27b" sigue viva).
     "groq": [
         "llama-3.3-70b-versatile",  # el que veniamos usando de default
         "openai/gpt-oss-120b",      # mismo modelo que en Ollama - sirve para comparar proveedor vs modelo
-        "qwen/qwen3-32b",           # modelo de razonamiento (preview)
         "qwen/qwen3.6-27b",         # modelo de razonamiento, bueno con JSON/multilenguaje
     ],
-    # Ollama Cloud: los 6 que SI funcionan, probados uno a uno. Se
-    # descartaron por error 403 (piden suscripcion Pro): glm-5.1, kimi-k2.6,
-    # kimi-k2.7-code, deepseek-v4-flash, qwen3.5 y qwen3.5:397b.
+    # Ollama Cloud: los mismos 6 modelos probados el 16-17/07, RENOMBRADOS
+    # el 23/07 (la API quito el sufijo "-cloud"/":cloud" - mismo modelo,
+    # nombre distinto). Se descartaron por error 403 (piden suscripcion
+    # Pro): glm-5.1, kimi-k2.6, kimi-k2.7-code, deepseek-v4-flash, qwen3.5
+    # y qwen3.5:397b.
     "ollama": [
-        "gpt-oss:120b-cloud",
-        "gemma4:31b-cloud",
-        "minimax-m3:cloud",
-        "nemotron-3-super:cloud",
-        "minimax-m2.5:cloud",
-        "nemotron-3-ultra:cloud",
+        "gpt-oss:120b",
+        "gemma4:31b",
+        "minimax-m3",
+        "nemotron-3-super",
+        "minimax-m2.5",
+        "nemotron-3-ultra",
     ],
     # Gemini: "gemini-3.0-flash" no existe (404 real) y "gemini-2.5-pro"
     # tiene cuota 0 en el free tier (429 real) - los dos descartados aposta.
@@ -96,3 +118,16 @@ def obtener_api_key(proveedor: str) -> str:
         raise ClaveApiNoConfigurada(
             f"Falta configurar {nombre_variable} en tu archivo .env."
         ) from None
+
+
+def obtener_modelo_por_defecto(proveedor: str) -> str:
+    """Modelo por defecto del proveedor (F5.0/T5).
+
+    Fuente de verdad: la variable del .env (GROQ_MODEL, OLLAMA_MODEL,
+    GEMINI_MODEL). Si no esta puesta (o esta vacia), cae al primero del
+    catalogo MODELOS - un valor verificado, para que el programa arranque
+    igual sin configuracion extra.
+    """
+    nombre_variable = MODELOS_ENV[proveedor]
+    # os.environ.get devuelve None si no existe; el "or" tambien cubre "".
+    return os.environ.get(nombre_variable) or MODELOS[proveedor][0]

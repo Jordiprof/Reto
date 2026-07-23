@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 # Cada eslabon de la cadena necesita SU proveedor + clave + modelo. El
 # router los prueba en orden.
-from src.config import obtener_api_key, ClaveApiNoConfigurada, MODELOS
+from src.config import obtener_api_key, obtener_modelo_por_defecto, ClaveApiNoConfigurada
 from src.llm_client import responder_proveedor
 from src.llm_errors import ErrorLLM
 
@@ -122,8 +122,9 @@ def construir_cadena(proveedor_primario: str, api_key: str, modelo: str,
     si solo hay una clave, la cadena es de un solo eslabon y se comporta
     como antes (sin fallback), pero sin codigo especial para ese caso.
 
-    El modelo de cada fallback sale de MODELOS[proveedor][0] por ahora; T5
-    afinara de donde viene el modelo por defecto (una sola fuente de verdad).
+    El modelo de cada fallback sale de obtener_modelo_por_defecto() (F5.0/T5:
+    fuente unica de verdad = variable *_MODEL del .env, con el catalogo como
+    respaldo) - la misma que usa el menu para el primario.
     """
     eslabones = [Eslabon(proveedor_primario, api_key, modelo)]
 
@@ -134,6 +135,6 @@ def construir_cadena(proveedor_primario: str, api_key: str, modelo: str,
             clave = obtener_api_key(proveedor)
         except ClaveApiNoConfigurada:
             continue  # sin clave configurada: no puede ser fallback
-        eslabones.append(Eslabon(proveedor, clave, MODELOS[proveedor][0]))
+        eslabones.append(Eslabon(proveedor, clave, obtener_modelo_por_defecto(proveedor)))
 
     return LLMRouter(eslabones, **kwargs_router)
