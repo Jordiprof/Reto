@@ -17,7 +17,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # Traemos de config.py: la funcion para leer la clave del proveedor
 # elegido, el diccionario PROVEEDORES (nombres de proveedor) y MODELOS
 # (lista de modelos disponibles por proveedor).
-from src.config import obtener_api_key, PROVEEDORES, MODELOS
+from src.config import obtener_api_key, PROVEEDORES, MODELOS, ClaveApiNoConfigurada
 # F4.5: toda la logica de la conversacion (historial, tools, resumen,
 # guardado) vive ahora en agent.py - main.py solo habla con un Agente
 # a traves de sus metodos, no conoce ni un detalle de como funciona
@@ -76,7 +76,13 @@ def main():
     proveedor = elegir_proveedor()
     # ...y con ese proveedor ya sabido, se elige uno de sus 3 modelos.
     modelo = elegir_modelo(proveedor)
-    api_key = obtener_api_key(proveedor)
+    # F5.0/T2 (AUD-06): si falta la API key en .env, avisar con claridad y
+    # salir - NO reventar con un traceback (RNF-02).
+    try:
+        api_key = obtener_api_key(proveedor)
+    except ClaveApiNoConfigurada as error:
+        print(f"⚠️ {error}")
+        return
 
     # El Agente es quien lleva de verdad la conversacion (historial,
     # tools, resumen, guardado) - main.py solo lo crea y le pregunta.
@@ -111,9 +117,17 @@ def main():
             # tal cual (formato canonico, ver F3.1). Puedes empezar a hablar
             # con Groq y seguir la MISMA charla con Gemini.
             if comando == "/proveedor":
-                proveedor = elegir_proveedor()
-                modelo = elegir_modelo(proveedor)
-                api_key = obtener_api_key(proveedor)
+                nuevo_proveedor = elegir_proveedor()
+                nuevo_modelo = elegir_modelo(nuevo_proveedor)
+                # Si falta la API key de este proveedor, avisamos y
+                # seguimos con el proveedor/modelo que ya teniamos (RNF-02:
+                # avisa y sigue vivo, en vez de perder la sesion en curso).
+                try:
+                    api_key = obtener_api_key(nuevo_proveedor)
+                except ClaveApiNoConfigurada as error:
+                    print(f"⚠️ {error}")
+                    continue
+                proveedor, modelo = nuevo_proveedor, nuevo_modelo
                 agente.cambiar_proveedor(proveedor, modelo, api_key)
                 print(f"Proveedor cambiado a: {proveedor} ({modelo})")
                 continue

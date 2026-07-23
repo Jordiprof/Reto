@@ -1,5 +1,12 @@
-# Traemos de llm_client.py las dos funciones que hacen la llamada real.
-from src.llm_client import preguntar, preguntar_con_tools
+# F5.0/T4: el Agente ya no habla con UN proveedor, sino con un router que
+# prueba la cadena ADR-001 (primario + fallbacks) con reintentos.
+from src.llm_router import construir_cadena
+# TOOLS: herramientas disponibles; se pasan al router en cada turno normal.
+from src.tools import TOOLS
+# Excepcion base de fallos al hablar con un proveedor (F5.0/T2) - antes se
+# detectaba un fallo mirando si el texto empezaba por "⚠️". La lanza el
+# router cuando TODOS los proveedores de la cadena han fallado.
+from src.llm_errors import ErrorLLM
 # Traemos de storage.py la funcion que guarda la conversacion en disco.
 from src.storage import guardar_conversacion
 
@@ -18,12 +25,17 @@ class Agente:
         self.proveedor = proveedor
         self.api_key = api_key
         self.modelo = modelo
+        # El router lleva la cadena: proveedor elegido como primario + los
+        # demas de ADR-001 (con clave) como fallback automatico (F5.0/T4).
+        self.router = construir_cadena(proveedor, api_key, modelo)
         # El historial ES la memoria de la conversacion (ver F3.1) -
         # arranca con el system prompt y solo crece.
         self.historial = [{"role": "system", "content": system_prompt}]
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
+        # Rehacemos la cadena con el modelo nuevo como primario.
+        self.router = construir_cadena(self.proveedor, self.api_key, modelo)
 
     def cambiar_proveedor(self, proveedor: str, modelo: str, api_key: str) -> None:
         # El historial NO se toca al cambiar - esta en formato canonico,
@@ -31,6 +43,8 @@ class Agente:
         self.proveedor = proveedor
         self.modelo = modelo
         self.api_key = api_key
+        # El proveedor elegido pasa a ser el nuevo primario de la cadena.
+        self.router = construir_cadena(proveedor, api_key, modelo)
 
     def preguntar(self, pregunta: str) -> str:
         """Un turno completo: manda la pregunta (con tools disponibles),
@@ -40,16 +54,20 @@ class Agente:
         # 1) La pregunta entra al historial ANTES de llamar.
         self.historial.append({"role": "user", "content": pregunta})
 
-        # 2) preguntar_con_tools() puede usar la calculadora por dentro
-        #    (F4.3-F4.5) sin que este metodo tenga que enterarse de nada.
-        respuesta = preguntar_con_tools(self.historial, self.proveedor, self.api_key, self.modelo)
+        try:
+            # 2) El router prueba la cadena (primario + fallbacks) y resuelve
+            #    por dentro el tool-calling con la calculadora (F4.3-F4.5).
+            #    Solo lanza ErrorLLM si TODOS los proveedores fallaron.
+            respuesta = self.router.responder(self.historial, tools=TOOLS)
+        except ErrorLLM as error:
+            # F5.0/T2: un fallo real (auth, conexion, limite...) NO se
+            # guarda en el historial como si el asistente lo hubiera dicho
+            # de verdad - contaminaria la memoria de la conversacion en
+            # turnos futuros (mismo principio que F3.1, ahora con una
+            # excepcion tipada en vez de mirar el texto de la respuesta).
+            return error.mensaje_usuario
 
-        # 3) Igual que en F3.1: los errores ("⚠️...") no se guardan como
-        #    si el asistente los hubiera dicho de verdad - contaminarian
-        #    la memoria de la conversacion en turnos futuros.
-        if not respuesta.startswith("⚠️"):
-            self.historial.append({"role": "assistant", "content": respuesta})
-
+        self.historial.append({"role": "assistant", "content": respuesta})
         return respuesta
 
     def resumir(self) -> str:
@@ -61,7 +79,10 @@ class Agente:
             "content": "Resume la conversacion anterior en pocas frases, "
                         "destacando solo lo mas importante.",
         }]
-        return preguntar(peticion, self.proveedor, self.api_key, self.modelo)
+        try:
+            return self.router.responder(peticion, tools=None)
+        except ErrorLLM as error:
+            return error.mensaje_usuario
 
     def guardar(self):
         """Delega en storage.py - devuelve la ruta del fichero, o None

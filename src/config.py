@@ -77,9 +77,22 @@ MODELOS = {
 }
 
 
+class ClaveApiNoConfigurada(Exception):
+    """La variable de entorno de la API key de este proveedor no esta en
+    el .env (F5.0/T2, hallazgo AUD-06 de la auditoria del 23/07: antes esto
+    lanzaba un KeyError sin capturar y el programa moria con un traceback,
+    incumpliendo RNF-02 - "ante un fallo de API, el programa avisa y sigue
+    vivo")."""
+
+
 def obtener_api_key(proveedor: str) -> str:
     """Lee del .env solo la clave del proveedor elegido (lectura perezosa)."""
     # Busca el NOMBRE de la variable de entorno para este proveedor...
     nombre_variable = PROVEEDORES[proveedor]
-    # ...y ahora si, lee su VALOR real desde las variables de entorno.
-    return os.environ[nombre_variable]
+    try:
+        # ...y ahora si, lee su VALOR real desde las variables de entorno.
+        return os.environ[nombre_variable]
+    except KeyError:
+        raise ClaveApiNoConfigurada(
+            f"Falta configurar {nombre_variable} en tu archivo .env."
+        ) from None

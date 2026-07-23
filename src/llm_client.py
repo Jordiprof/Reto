@@ -1,78 +1,43 @@
 # logging: para registrar cada llamada y cada error en logs/agente.log
 # (la configuracion real vive en config.py, aqui solo lo usamos).
 import logging
-# time: modulo estandar con funciones de tiempo. perf_counter() es un
-# cronometro de alta precision, para medir cuanto tarda cada llamada.
+# time: perf_counter() es un cronometro de alta precision, para medir
+# cuanto tarda cada llamada.
 import time
-# json: los argumentos que manda Groq para una tool vienen como texto
-# JSON dentro de la respuesta (no como dict ya hecho, a diferencia de
-# Ollama) - hay que parsearlos antes de poder usarlos.
+# json: los argumentos que manda Groq para una tool vienen como texto JSON
+# (no como dict, a diferencia de Ollama) - hay que parsearlos.
 import json
 # TOOLS: la ficha tecnica (JSON Schema) de cada herramienta disponible.
-# HERRAMIENTAS_DISPONIBLES: el nombre de cada tool -> la funcion real de
-# Python que hay que ejecutar cuando el modelo la pida.
+# HERRAMIENTAS_DISPONIBLES: nombre de cada tool -> funcion real de Python.
 from src.tools import TOOLS, HERRAMIENTAS_DISPONIBLES
+# Formas neutras compartidas por los 3 proveedores (F5.0/T1).
+from src.llm_types import RespuestaLLM, ToolCall
+# Excepciones tipadas (F5.0/T2): sustituyen a los strings "⚠️ ..." que se
+# detectaban con .startswith() - ver src/llm_errors.py para el porque.
+from src.llm_errors import (
+    ErrorAutenticacion, ErrorConexion, ErrorLimitePasos,
+    ErrorLimitePeticiones, ErrorPeticionInvalida, ErrorTimeout,
+)
 
-# Limite de vueltas del bucle LLM -> tool -> resultado -> LLM. Sin esto,
-# si el modelo se quedara pidiendo la misma tool una y otra vez (un bug
-# suyo, no imposible), el programa se colgaria en un bucle infinito.
+# Limite de vueltas del bucle LLM -> tool -> resultado -> LLM. Sin esto, si
+# el modelo se quedara pidiendo la misma tool una y otra vez (un bug suyo,
+# no imposible), el programa se colgaria en un bucle infinito.
 _MAX_PASOS_DE_HERRAMIENTAS = 5
 
-
-def _preguntar_groq(historial: list, api_key: str, modelo: str) -> str:
-    # Import dentro de la funcion: asi el SDK de Groq solo se carga
-    # cuando de verdad se usa este proveedor, no siempre que se importa
-    # llm_client.py.
-    # Groq: cliente oficial. Authentication/APIConnection/RateLimit Error:
-    # tipos de error concretos definidos por ese mismo SDK. APIError es
-    # la clase BASE de la que heredan estos tres (y cualquier otro error
-    # de la API de Groq que no hayamos previsto a mano) - verificado con
-    # __mro__ tras un fallo real (F4.5): groq.BadRequestError con
-    # tool_use_failed, no capturado por ninguna de las 3 especificas.
-    from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError, APIError
-
-    client = Groq(api_key=api_key)
-    inicio = time.perf_counter()
-    try:
-        respuesta = client.chat.completions.create(
-            model=modelo,
-            # messages: ahora mandamos el historial COMPLETO, no solo la
-            # ultima pregunta. El modelo no recuerda nada entre llamadas:
-            # la "memoria" es esta lista que le reenviamos entera cada vez.
-            # Groq usa el formato canonico (system/user/assistant + content),
-            # asi que la lista viaja tal cual, sin traducir.
-            messages=historial,
-        )
-        logging.info(f"Latencia (groq/{modelo}): {time.perf_counter() - inicio:.2f}s")
-        # choices es una lista (podria haber varias respuestas candidatas);
-        # cogemos la primera [0] y su texto.
-        return respuesta.choices[0].message.content
-    except AuthenticationError:
-        logging.error("Groq: clave de API invalida")
-        return "⚠️ Error: la clave de API de Groq no es válida."
-    except APIConnectionError:
-        logging.error("Groq: fallo de conexion")
-        return "⚠️ Error: no hay conexión con Groq."
-    except RateLimitError:
-        logging.error("Groq: limite de peticiones superado")
-        return "⚠️ Error: límite de peticiones de Groq superado."
-    except APIError as error:
-        # Red de seguridad: cualquier otro error de la API de Groq que
-        # no sea uno de los 3 de arriba (ej. tool_use_failed cuando el
-        # modelo formatea mal una llamada a funcion) cae aqui, en vez
-        # de reventar el programa entero.
-        logging.error(f"Groq: error de API no especifico - {error}")
-        return f"⚠️ Error de Groq: {error}"
+# F5.0/T3 (hallazgo AUD-02 de la auditoria): ninguna llamada de red tenia
+# timeout - una conexion colgada bloqueaba el proceso entero sin limite.
+# 30s en SEGUNDOS (Groq/Ollama lo piden asi); Gemini lo pide en MILISEGUNDOS,
+# ver _ProveedorGemini._estado_inicial.
+_TIMEOUT_SEGUNDOS = 30.0
 
 
 def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
-    """Ejecuta una tool por nombre, con los argumentos ya en forma de
-    dict de Python. Compartida por Groq y Ollama (ambos acaban con los
-    argumentos en el mismo formato, aunque lleguen distinto - ver abajo).
+    """Ejecuta una tool por nombre, con los argumentos ya en forma de dict.
+    Compartida por los 3 proveedores (todos acaban con los argumentos en el
+    mismo formato gracias a la capa de traduccion).
 
-    Si la tool no existe o falla, NO se rompe el programa: se devuelve
-    un string de error, que el modelo vera como el "resultado" de la
-    tool y puede usar para explicarle al usuario que algo fue mal.
+    Si la tool no existe o falla, NO se rompe el programa: se devuelve un
+    string de error, que el modelo vera como el "resultado" de la tool.
     """
     funcion = HERRAMIENTAS_DISPONIBLES.get(nombre)
     if funcion is None:
@@ -83,181 +48,24 @@ def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
         return f"Error ejecutando '{nombre}': {error}"
 
 
-def _preguntar_groq_con_tools(historial: list, api_key: str, modelo: str) -> str:
-    """Version de _preguntar_groq que sabe usar tools (F4.3).
-
-    Bucle: llamar al modelo -> si pide una tool, ejecutarla y mandarle
-    el resultado -> volver a llamar -> repetir hasta que responda con
-    texto normal (sin mas tool_calls) o se agote _MAX_PASOS_DE_HERRAMIENTAS.
-    """
-    from groq import Groq, AuthenticationError, APIConnectionError, RateLimitError, APIError
-
-    client = Groq(api_key=api_key)
-    # Copia de trabajo: aqui SI se van a colar los mensajes intermedios
-    # de tool-calling (peticion del modelo + resultado de la tool), pero
-    # esos NUNCA salen de esta funcion - el historial canonico de
-    # main.py solo vera la pregunta original y la respuesta final.
-    mensajes = list(historial)
-
-    for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
-        inicio = time.perf_counter()
-        try:
-            respuesta = client.chat.completions.create(
-                model=modelo,
-                messages=mensajes,
-                tools=TOOLS,
-            )
-        except AuthenticationError:
-            logging.error("Groq: clave de API invalida")
-            return "⚠️ Error: la clave de API de Groq no es válida."
-        except APIConnectionError:
-            logging.error("Groq: fallo de conexion")
-            return "⚠️ Error: no hay conexión con Groq."
-        except RateLimitError:
-            logging.error("Groq: limite de peticiones superado")
-            return "⚠️ Error: límite de peticiones de Groq superado."
-        except APIError as error:
-            # F4.5, fallo real encontrado en pruebas en vivo: a veces el
-            # modelo formatea mal una llamada a funcion y Groq devuelve
-            # groq.BadRequestError (tool_use_failed) - no es ninguna de
-            # las 3 excepciones de arriba. Sin esta captura, el programa
-            # entero se caia. No-determinismo del modelo (ver F2.5): no
-            # siempre pasa con la misma pregunta.
-            logging.error(f"Groq: error de API no especifico - {error}")
-            return f"⚠️ Error de Groq: {error}"
-        logging.info(f"Latencia (groq/{modelo}, con tools): {time.perf_counter() - inicio:.2f}s")
-
-        mensaje = respuesta.choices[0].message
-
-        if not mensaje.tool_calls:
-            # Respuesta final: texto normal, el modelo ya no pide tools.
-            return mensaje.content
-
-        # El modelo pide usar una o mas tools: guardamos SU mensaje tal
-        # cual (incluye los tool_calls) - la API necesita verlo para
-        # saber a que peticion responde cada resultado que mandemos.
-        mensajes.append(mensaje)
-
-        for llamada in mensaje.tool_calls:
-            # Groq (como OpenAI) manda los argumentos como texto JSON,
-            # no como dict ya construido - hay que parsearlo a mano.
-            # F4.4: este parseo puede fallar si el modelo devuelve un
-            # JSON mal formado (raro, pero no imposible) - sin este
-            # try/except, un error aqui tiraba abajo TODO el programa
-            # en vez de quedarse como un simple resultado de tool fallido.
-            try:
-                argumentos = json.loads(llamada.function.arguments)
-            except json.JSONDecodeError as error:
-                resultado = f"Error: argumentos no válidos para '{llamada.function.name}' ({error})"
-            else:
-                resultado = _ejecutar_tool(llamada.function.name, argumentos)
-            mensajes.append({
-                "role": "tool",
-                # tool_call_id: asi la API sabe que ESTE resultado
-                # responde a ESA llamada concreta (puede haber varias
-                # en el mismo turno).
-                "tool_call_id": llamada.id,
-                "content": resultado,
-            })
-
-    return "⚠️ El agente no llegó a una respuesta final tras varios pasos de herramientas."
-
-
-def _preguntar_ollama(historial: list, api_key: str, modelo: str) -> str:
-    # Client: cliente oficial de Ollama. host="https://ollama.com" para
-    # hablar directamente con la API en la nube (no un Ollama local).
-    from ollama import Client
-
-    # La clave de Ollama no se pasa como parametro "api_key" (a diferencia
-    # de Groq): va a mano en la cabecera HTTP "Authorization: Bearer ...".
-    client = Client(host="https://ollama.com", headers={"Authorization": "Bearer " + api_key})
-
-    inicio = time.perf_counter()
-    try:
-        respuesta = client.chat(
-            model=modelo,
-            # Igual que Groq: Ollama entiende el formato canonico
-            # (system/user/assistant + content), historial tal cual.
-            messages=historial,
-        )
-        logging.info(f"Latencia (ollama/{modelo}): {time.perf_counter() - inicio:.2f}s")
-        # La respuesta de Ollama es un diccionario, no un objeto con
-        # .choices como Groq - se accede con corchetes.
-        return respuesta["message"]["content"]
-    except Exception as error:
-        # Ollama no define excepciones tan especificas como Groq en su
-        # SDK; capturamos generico y lo afinamos si hace falta.
-        logging.error(f"Ollama: error - {error}")
-        return f"⚠️ Error al hablar con Ollama: {error}"
-
-
-def _preguntar_ollama_con_tools(historial: list, api_key: str, modelo: str) -> str:
-    """Version de _preguntar_ollama que sabe usar tools (F4.3).
-
-    Mismo bucle que Groq, pero con dos diferencias reales de la API de
-    Ollama (verificadas en su documentacion oficial, no supuestas):
-    1) los argumentos de la tool ya vienen como dict, no como texto
-       JSON - no hace falta json.loads() aqui.
-    2) el mensaje de resultado usa la clave "tool_name", NO
-       "tool_call_id" como Groq/OpenAI - Ollama no reparte un id por
-       cada llamada.
-    """
-    from ollama import Client
-
-    client = Client(host="https://ollama.com", headers={"Authorization": "Bearer " + api_key})
-    mensajes = list(historial)
-
-    for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
-        inicio = time.perf_counter()
-        try:
-            respuesta = client.chat(model=modelo, messages=mensajes, tools=TOOLS)
-        except Exception as error:
-            logging.error(f"Ollama: error - {error}")
-            return f"⚠️ Error al hablar con Ollama: {error}"
-        logging.info(f"Latencia (ollama/{modelo}, con tools): {time.perf_counter() - inicio:.2f}s")
-
-        mensaje = respuesta["message"]
-
-        if not mensaje.get("tool_calls"):
-            return mensaje["content"]
-
-        mensajes.append(mensaje)
-
-        for llamada in mensaje["tool_calls"]:
-            # Aqui NO hace falta json.loads(): Ollama ya entrega los
-            # argumentos como dict de Python, a diferencia de Groq.
-            argumentos = llamada["function"]["arguments"]
-            nombre = llamada["function"]["name"]
-            resultado = _ejecutar_tool(nombre, argumentos)
-            mensajes.append({
-                "role": "tool",
-                "content": resultado,
-                "tool_name": nombre,
-            })
-
-    return "⚠️ El agente no llegó a una respuesta final tras varios pasos de herramientas."
-
-
 def traducir_historial_gemini(historial: list) -> tuple[list, str | None]:
     """Traduce el historial canonico (system/user/assistant + content) al
     formato propio de Gemini. Devuelve (contents, system_instruction).
 
-    Funcion PURA a proposito: no toca la red ni el historial original,
-    solo transforma una lista en otra. Asi se puede probar con pytest
-    sin gastar llamadas reales (F3.4). Sin guion bajo inicial: es parte
-    "publica" del modulo porque los tests la importaran directamente.
+    Funcion PURA a proposito: no toca la red ni el historial original, solo
+    transforma una lista en otra. Asi se puede probar con pytest sin gastar
+    llamadas reales (F3.4). Sin guion bajo inicial: los tests la importan.
     """
-    # Gemini no acepta un mensaje con rol "system" dentro de la lista:
-    # las instrucciones estables van aparte, como system_instruction.
+    # Gemini no acepta un mensaje con rol "system" dentro de la lista: las
+    # instrucciones estables van aparte, como system_instruction.
     system_instruction = None
-    # Lista NUEVA (no modificamos historial en el sitio): si mutaramos la
-    # original, el formato de Gemini "contaminaria" el historial canonico
-    # que main.py sigue usando para Groq/Ollama y para guardarlo en JSON.
+    # Lista NUEVA (no mutamos historial): si la modificaramos en el sitio, el
+    # formato de Gemini contaminaria el historial canonico que se usa para
+    # Groq/Ollama y para guardar en JSON.
     contents = []
 
     for mensaje in historial:
         if mensaje["role"] == "system":
-            # Lo extraemos de la conversacion y lo devolvemos aparte.
             system_instruction = mensaje["content"]
         else:
             # Dos diferencias de nombre respecto al formato canonico:
@@ -269,154 +77,375 @@ def traducir_historial_gemini(historial: list) -> tuple[list, str | None]:
     return contents, system_instruction
 
 
-def _preguntar_gemini(historial: list, api_key: str, modelo: str) -> str:
-    # genai: SDK oficial de Google para la API de Gemini.
-    # types: clases de configuracion del SDK (GenerateContentConfig).
-    from google import genai
-    from google.genai import types
+def _texto_de_gemini(respuesta) -> str:
+    """Extrae el texto de una respuesta de Gemini de forma DEFENSIVA.
 
-    # OJO: a diferencia de Groq y Ollama, aqui NO se pasa la api_key a
-    # mano. El SDK busca el solo la variable de entorno GEMINI_API_KEY
-    # (ya cargada por dotenv en config.py).
-    client = genai.Client()
-
-    # Traducimos el historial canonico al dialecto de Gemini ANTES de
-    # llamar (funcion pura de arriba, verificada en docs oficiales 17/07).
-    contents, system_instruction = traducir_historial_gemini(historial)
-
-    inicio = time.perf_counter()
-    try:
-        # Metodo distinto a los otros dos: generate_content, no
-        # chat.completions.create ni chat(). El system prompt NO viaja en
-        # contents: va en config, como system_instruction.
-        respuesta = client.models.generate_content(
-            model=modelo,
-            contents=contents,
-            config=types.GenerateContentConfig(system_instruction=system_instruction),
-        )
-        logging.info(f"Latencia (gemini/{modelo}): {time.perf_counter() - inicio:.2f}s")
-        # Aqui la respuesta es la mas simple de los 3: .text directamente.
-        return respuesta.text
-    except Exception as error:
-        logging.error(f"Gemini: error - {error}")
-        return f"⚠️ Error al hablar con Gemini: {error}"
-
-
-def _preguntar_gemini_con_tools(historial: list, api_key: str, modelo: str) -> str:
-    """Version de _preguntar_gemini que sabe usar tools (F4.5).
-
-    Verificado contra la doc oficial (ai.google.dev/gemini-api/docs/
-    generate-content/function-calling, con generate_content - no la
-    Interactions API, coherente con la decision de F3.1). Tres
-    diferencias reales respecto a Groq/Ollama:
-    1) las tools se declaran SIN el "type": "function" de fuera - solo
-       name/description/parameters, envueltas en types.Tool(...).
-    2) la peticion de funcion no viene en un campo tool_calls, sino
-       dentro de response.candidates[0].content.parts[0].function_call.
-    3) los argumentos ya llegan como dict (como Ollama, no como texto
-       JSON como Groq).
+    En vez de usar respuesta.text a pelo (que puede lanzar una excepcion si
+    el candidato no trae ninguna parte de texto - p. ej. cuando solo trae
+    una function_call, o cuando la respuesta viene bloqueada por seguridad),
+    recorremos las partes y concatenamos solo el texto que haya. Tolerante:
+    si no hay texto, devuelve "" en vez de reventar (hallazgo #7 de la
+    auditoria de seguridad del 23/07).
     """
-    from google import genai
-    from google.genai import types
+    try:
+        candidato = respuesta.candidates[0]
+    except (AttributeError, IndexError, TypeError):
+        return ""
+    partes = getattr(candidato.content, "parts", None) or []
+    return "".join(p.text for p in partes if getattr(p, "text", None))
 
-    client = genai.Client()
-    contents, system_instruction = traducir_historial_gemini(historial)
 
-    # De TOOLS (formato Groq/OpenAI) sacamos solo el diccionario interior
-    # "function" de cada una - es la parte que Gemini SI reconoce.
-    declaraciones = [tool["function"] for tool in TOOLS]
-    config = types.GenerateContentConfig(
-        system_instruction=system_instruction,
-        tools=[types.Tool(function_declarations=declaraciones)],
-    )
+class _ProveedorLLM:
+    """Clase base: define el BUCLE compartido (LLM -> tool -> resultado ->
+    LLM) una sola vez. Cada proveedor concreto solo implementa las 4 piezas
+    que de verdad cambian entre SDKs; el bucle no las conoce.
+    """
 
-    for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
+    # Nombre para los logs de latencia; lo fija cada subclase.
+    _nombre = "?"
+
+    def __init__(self, api_key: str, modelo: str):
+        self.api_key = api_key
+        self.modelo = modelo
+
+    def responder(self, historial: list, tools: list | None) -> str:
+        """El bucle unico. Recibe el historial canonico y, opcionalmente, la
+        lista de tools disponibles (None = modo sin herramientas). Devuelve
+        el texto final de la respuesta - todo el ir y venir de tool-calling
+        queda resuelto aqui dentro.
+        """
+        estado = self._estado_inicial(historial, tools)
+
+        for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
+            # _llamar() puede lanzar ErrorLLM (auth, conexion, limite...) -
+            # NO se atrapa aqui: sube tal cual a quien llamo a responder(),
+            # que decide que hacer (agent.py, y mas adelante el router T4).
+            respuesta = self._llamar(estado)
+
+            if not respuesta.pide_tools:
+                # Respuesta final: el modelo ya no pide herramientas.
+                return respuesta.texto
+
+            # El modelo pidio una o mas tools: registramos SU peticion (en el
+            # formato que su propio SDK necesita ver luego) y ejecutamos.
+            self._registrar_peticion(estado, respuesta)
+            for llamada in respuesta.tool_calls:
+                # Si el traductor marco un error de parseo de argumentos
+                # (JSON mal formado de Groq, F4.4), NO se ejecuta la tool:
+                # ese texto de error hace de "resultado".
+                if llamada.error:
+                    resultado = llamada.error
+                else:
+                    resultado = _ejecutar_tool(llamada.nombre, llamada.argumentos)
+                self._registrar_resultado(estado, llamada, resultado)
+
+        raise ErrorLimitePasos(self._nombre)
+
+    # --- Piezas que cada proveedor implementa (lo unico que cambia) ---
+
+    def _estado_inicial(self, historial: list, tools: list | None):
+        """Prepara el cliente y el estado de trabajo (mensajes/contents)."""
+        raise NotImplementedError
+
+    def _llamar(self, estado) -> RespuestaLLM:
+        """Hace UNA llamada al modelo y traduce su respuesta a RespuestaLLM."""
+        raise NotImplementedError
+
+    def _registrar_peticion(self, estado, respuesta: RespuestaLLM) -> None:
+        """Anade al estado la peticion de tools del modelo (formato del SDK)."""
+        raise NotImplementedError
+
+    def _registrar_resultado(self, estado, llamada: ToolCall, resultado: str) -> None:
+        """Anade al estado el resultado de una tool (formato del SDK)."""
+        raise NotImplementedError
+
+
+class _ProveedorGroq(_ProveedorLLM):
+    _nombre = "groq"
+
+    def _estado_inicial(self, historial, tools):
+        # Import dentro: el SDK de Groq solo se carga si se usa este proveedor.
+        from groq import Groq
+
+        # Groq usa el formato canonico tal cual (system/user/assistant +
+        # content), asi que los mensajes viajan sin traducir.
+        # timeout=_TIMEOUT_SEGUNDOS (F5.0/T3): sin esto, por defecto Groq
+        # espera 1 minuto entero antes de rendirse - demasiado para un bot
+        # que debe seguir vivo (verificado en groq-python/README.md).
+        return {
+            "client": Groq(api_key=self.api_key, timeout=_TIMEOUT_SEGUNDOS),
+            "mensajes": list(historial),
+            "tools": tools,
+        }
+
+    def _llamar(self, estado):
+        # APIError es la clase BASE de la que heredan los errores concretos de
+        # Groq (y del que hereda tambien groq.BadRequestError con
+        # tool_use_failed, no capturado por las especificas - hallazgo real
+        # de F4.5). Sin este ultimo except, el programa se caia.
+        # APITimeoutError hereda de APIConnectionError (verificado en el SDK) -
+        # por eso se captura ANTES: si fuera despues, nunca se alcanzaria.
+        from groq import (
+            AuthenticationError, APIConnectionError, APITimeoutError,
+            RateLimitError, APIError,
+        )
+
+        client = estado["client"]
+        # Solo pasamos tools si las hay (modo sin herramientas = tools None).
+        kwargs = {"model": self.modelo, "messages": estado["mensajes"]}
+        if estado["tools"]:
+            kwargs["tools"] = estado["tools"]
+
+        inicio = time.perf_counter()
+        try:
+            respuesta = client.chat.completions.create(**kwargs)
+        except AuthenticationError as error:
+            logging.error("Groq: clave de API invalida")
+            raise ErrorAutenticacion("Groq", str(error)) from error
+        except APITimeoutError as error:
+            logging.error(f"Groq: timeout tras {_TIMEOUT_SEGUNDOS}s")
+            raise ErrorTimeout("Groq", str(error)) from error
+        except APIConnectionError as error:
+            logging.error("Groq: fallo de conexion")
+            raise ErrorConexion("Groq", str(error)) from error
+        except RateLimitError as error:
+            logging.error("Groq: limite de peticiones superado")
+            raise ErrorLimitePeticiones("Groq", str(error)) from error
+        except APIError as error:
+            logging.error(f"Groq: error de API no especifico - {error}")
+            raise ErrorPeticionInvalida("Groq", str(error)) from error
+        logging.info(f"Latencia (groq/{self.modelo}): {time.perf_counter() - inicio:.2f}s")
+
+        mensaje = respuesta.choices[0].message
+        if not mensaje.tool_calls:
+            return RespuestaLLM(texto=mensaje.content)
+
+        tool_calls = []
+        for llamada in mensaje.tool_calls:
+            # Groq (como OpenAI) manda los argumentos como texto JSON, no como
+            # dict - hay que parsearlo. Puede fallar si el modelo devuelve un
+            # JSON mal formado (raro, pero F4.4 lo vio en real): se marca como
+            # error en el ToolCall en vez de reventar.
+            try:
+                argumentos = json.loads(llamada.function.arguments)
+                tool_calls.append(ToolCall(
+                    nombre=llamada.function.name, argumentos=argumentos, id=llamada.id,
+                ))
+            except json.JSONDecodeError as error:
+                tool_calls.append(ToolCall(
+                    nombre=llamada.function.name, argumentos={}, id=llamada.id,
+                    error=f"Error: argumentos no válidos para '{llamada.function.name}' ({error})",
+                ))
+        # 'raw' = el mensaje del SDK; la API necesita volver a verlo para
+        # saber a que peticion responde cada resultado que le mandemos.
+        return RespuestaLLM(tool_calls=tool_calls, raw=mensaje)
+
+    def _registrar_peticion(self, estado, respuesta):
+        estado["mensajes"].append(respuesta.raw)
+
+    def _registrar_resultado(self, estado, llamada, resultado):
+        estado["mensajes"].append({
+            "role": "tool",
+            # tool_call_id: asi la API sabe que ESTE resultado responde a ESA
+            # llamada concreta (puede haber varias en el mismo turno).
+            "tool_call_id": llamada.id,
+            "content": resultado,
+        })
+
+
+class _ProveedorOllama(_ProveedorLLM):
+    _nombre = "ollama"
+
+    def _estado_inicial(self, historial, tools):
+        from ollama import Client
+
+        # La clave de Ollama no se pasa como parametro api_key (a diferencia
+        # de Groq): va a mano en la cabecera HTTP Authorization: Bearer ...
+        # timeout=_TIMEOUT_SEGUNDOS (F5.0/T3): el Client de Ollama reenvia
+        # este kwarg tal cual al httpx.Client interno (verificado en la doc
+        # del SDK) - sin el, una llamada colgada no tenia limite de tiempo.
+        client = Client(
+            host="https://ollama.com",
+            headers={"Authorization": "Bearer " + self.api_key},
+            timeout=_TIMEOUT_SEGUNDOS,
+        )
+        return {"client": client, "mensajes": list(historial), "tools": tools}
+
+    def _llamar(self, estado):
+        # httpx: libreria HTTP que usa el SDK de Ollama por dentro.
+        # TimeoutException es la que lanza si se supera _TIMEOUT_SEGUNDOS -
+        # se captura ANTES del except Exception generico de abajo para
+        # poder distinguirla (el router de T4 solo reintentara esta).
+        import httpx
+
+        client = estado["client"]
+        kwargs = {"model": self.modelo, "messages": estado["mensajes"]}
+        if estado["tools"]:
+            kwargs["tools"] = estado["tools"]
+
+        inicio = time.perf_counter()
+        try:
+            respuesta = client.chat(**kwargs)
+        except httpx.TimeoutException as error:
+            logging.error(f"Ollama: timeout tras {_TIMEOUT_SEGUNDOS}s")
+            raise ErrorTimeout("Ollama", str(error)) from error
+        except Exception as error:
+            # Ollama no define excepciones tan especificas como Groq en su
+            # SDK; capturamos generico. ErrorPeticionInvalida como cajon
+            # generico (no reintentable) - se afina si algun dia se necesita
+            # distinguir auth/conexion/limite tambien aqui.
+            logging.error(f"Ollama: error - {error}")
+            raise ErrorPeticionInvalida("Ollama", str(error)) from error
+        logging.info(f"Latencia (ollama/{self.modelo}): {time.perf_counter() - inicio:.2f}s")
+
+        mensaje = respuesta["message"]
+        if not mensaje.get("tool_calls"):
+            return RespuestaLLM(texto=mensaje["content"])
+
+        tool_calls = []
+        for llamada in mensaje["tool_calls"]:
+            # Ollama YA entrega los argumentos como dict (no como texto JSON,
+            # a diferencia de Groq) y NO reparte un id por llamada.
+            tool_calls.append(ToolCall(
+                nombre=llamada["function"]["name"],
+                argumentos=llamada["function"]["arguments"],
+            ))
+        return RespuestaLLM(tool_calls=tool_calls, raw=mensaje)
+
+    def _registrar_peticion(self, estado, respuesta):
+        estado["mensajes"].append(respuesta.raw)
+
+    def _registrar_resultado(self, estado, llamada, resultado):
+        estado["mensajes"].append({
+            "role": "tool",
+            "content": resultado,
+            # Ollama identifica el resultado por "tool_name", NO por
+            # tool_call_id como Groq/OpenAI.
+            "tool_name": llamada.nombre,
+        })
+
+
+class _ProveedorGemini(_ProveedorLLM):
+    _nombre = "gemini"
+
+    def _estado_inicial(self, historial, tools):
+        from google import genai
+        from google.genai import types
+
+        # OJO: a diferencia de Groq/Ollama, aqui NO se pasa la api_key a mano.
+        # El SDK busca solo la variable de entorno GEMINI_API_KEY.
+        # http_options timeout (F5.0/T3): a diferencia de Groq/Ollama, este
+        # SDK lo pide en MILISEGUNDOS, no segundos (verificado en la doc de
+        # google-genai) - de ahi el *1000. Hay issues abiertos en el repo del
+        # SDK reportando que a veces no se respeta del todo; se deja puesto
+        # igualmente porque es lo documentado, y el limite del bucle
+        # (_MAX_PASOS_DE_HERRAMIENTAS) sigue de red de seguridad.
+        client = genai.Client(
+            http_options=types.HttpOptions(timeout=int(_TIMEOUT_SEGUNDOS * 1000))
+        )
+        # Traducimos el historial canonico al dialecto de Gemini.
+        contents, system_instruction = traducir_historial_gemini(historial)
+
+        if tools:
+            # De TOOLS (formato Groq/OpenAI) sacamos solo el dict interior
+            # "function" de cada una - es lo que Gemini reconoce.
+            declaraciones = [tool["function"] for tool in tools]
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                tools=[types.Tool(function_declarations=declaraciones)],
+            )
+        else:
+            config = types.GenerateContentConfig(system_instruction=system_instruction)
+
+        return {"client": client, "contents": contents, "config": config}
+
+    def _llamar(self, estado):
+        # httpx: el SDK de Gemini tambien lo usa por debajo para el
+        # transporte HTTP; TimeoutException es lo que lanza al superar el
+        # timeout de http_options.
+        import httpx
+
+        client = estado["client"]
         inicio = time.perf_counter()
         try:
             respuesta = client.models.generate_content(
-                model=modelo, contents=contents, config=config,
+                model=self.modelo,
+                contents=estado["contents"],
+                config=estado["config"],
             )
+        except httpx.TimeoutException as error:
+            logging.error(f"Gemini: timeout tras {_TIMEOUT_SEGUNDOS}s")
+            raise ErrorTimeout("Gemini", str(error)) from error
         except Exception as error:
             logging.error(f"Gemini: error - {error}")
-            return f"⚠️ Error al hablar con Gemini: {error}"
-        logging.info(f"Latencia (gemini/{modelo}, con tools): {time.perf_counter() - inicio:.2f}s")
+            raise ErrorPeticionInvalida("Gemini", str(error)) from error
+        logging.info(f"Latencia (gemini/{self.modelo}): {time.perf_counter() - inicio:.2f}s")
 
-        # Hallazgo real (F4.6, probado en vivo por Jordi): Gemini puede
-        # devolver VARIAS partes en la misma respuesta - por ejemplo,
-        # una de texto ("Dejame calcular...") seguida de la parte real
-        # con la peticion de funcion. Mirar solo parts[0] se comia la
-        # llamada a la tool si no era la primera parte, y el agente
-        # "fingia" que iba a calcular sin hacerlo nunca. Ahora se busca
-        # en TODAS las partes, no solo en la primera.
-        llamada = None
-        for parte in respuesta.candidates[0].content.parts:
-            llamada = getattr(parte, "function_call", None)
-            if llamada:
-                break
+        # Hallazgo real (F4.6): Gemini puede devolver VARIAS partes - una de
+        # texto ("Dejame calcular...") y luego la peticion de funcion. Hay que
+        # recorrer TODAS las partes, no solo parts[0], o se pierde la llamada.
+        content = respuesta.candidates[0].content
+        tool_calls = []
+        for parte in content.parts:
+            funcion = getattr(parte, "function_call", None)
+            if funcion:
+                # dict(...) normaliza los args (llegan como un tipo del SDK
+                # parecido a dict) para poder usarlos con **argumentos.
+                tool_calls.append(ToolCall(nombre=funcion.name, argumentos=dict(funcion.args)))
 
-        if not llamada:
-            # Respuesta final: texto normal, sin peticion de funcion.
-            return respuesta.text
+        if tool_calls:
+            return RespuestaLLM(tool_calls=tool_calls, raw=content)
+        return RespuestaLLM(texto=_texto_de_gemini(respuesta))
 
-        # dict(...) por seguridad: args llega como un tipo propio del
-        # SDK parecido a un dict, no un dict de Python puro - dict()
-        # lo normaliza para poder usarlo con **argumentos sin sorpresas.
-        argumentos = dict(llamada.args)
-        resultado = _ejecutar_tool(llamada.name, argumentos)
+    def _registrar_peticion(self, estado, respuesta):
+        # Con el formato Content/Part propio de Gemini, no dicts sueltos.
+        estado["contents"].append(respuesta.raw)
 
-        # Igual que con Groq/Ollama: guardamos la peticion del modelo y
-        # el resultado antes de volver a preguntar - pero con el formato
-        # de Content/Part propio de Gemini, no dicts sueltos.
-        contents.append(respuesta.candidates[0].content)
-        contents.append(
+    def _registrar_resultado(self, estado, llamada, resultado):
+        from google.genai import types
+
+        estado["contents"].append(
             types.Content(
                 role="user",
-                parts=[
-                    types.Part.from_function_response(
-                        name=llamada.name,
-                        response={"resultado": resultado},
-                    )
-                ],
+                parts=[types.Part.from_function_response(
+                    name=llamada.nombre,
+                    response={"resultado": resultado},
+                )],
             )
         )
 
-    return "⚠️ El agente no llegó a una respuesta final tras varios pasos de herramientas."
 
-
-# Diccionario que asocia el nombre de cada proveedor con la funcion de
-# arriba que sabe hablar con el. Permite elegir proveedor en tiempo de
-# ejecucion sin un if/elif largo.
-_FUNCIONES = {
-    "groq": _preguntar_groq,
-    "ollama": _preguntar_ollama,
-    "gemini": _preguntar_gemini,
+# Registro nombre de proveedor -> clase. Elegir proveedor en tiempo de
+# ejecucion sin un if/elif largo (mismo patron que antes con _FUNCIONES).
+_PROVEEDORES = {
+    "groq": _ProveedorGroq,
+    "ollama": _ProveedorOllama,
+    "gemini": _ProveedorGemini,
 }
+
+
+def responder_proveedor(proveedor: str, api_key: str, modelo: str,
+                        historial: list, tools: list | None) -> str:
+    """Ejecuta el bucle completo en UN proveedor concreto y devuelve el
+    texto final. Es la pieza que usa el router (F5.0/T4) para cada eslabon
+    de la cadena: si este proveedor falla, el router captura el ErrorLLM y
+    decide si reintentar o degradar al siguiente.
+    """
+    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools)
 
 
 def preguntar(historial: list, proveedor: str, api_key: str, modelo: str) -> str:
-    """Punto de entrada unico: busca la funcion del proveedor elegido y la ejecuta.
+    """Punto de entrada SIN herramientas: una llamada, respuesta de texto.
 
-    Recibe el historial COMPLETO en formato canonico (system/user/assistant
-    + content). Cada funcion interna lo adapta a su proveedor si hace falta.
+    Recibe el historial COMPLETO en formato canonico. Se usa, p. ej., para
+    el comando /resumen (agent.resumir), donde no hacen falta tools.
     """
-    funcion = _FUNCIONES[proveedor]
-    return funcion(historial, api_key, modelo)
-
-
-# F4.3-F4.5: dispatcher equivalente a _FUNCIONES pero para las
-# versiones con tools. Los 3 proveedores soportan ya tool calling real.
-_FUNCIONES_CON_TOOLS = {
-    "groq": _preguntar_groq_con_tools,
-    "ollama": _preguntar_ollama_con_tools,
-    "gemini": _preguntar_gemini_con_tools,
-}
+    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools=None)
 
 
 def preguntar_con_tools(historial: list, proveedor: str, api_key: str, modelo: str) -> str:
-    """Como preguntar(), pero permite al modelo usar las tools de TOOLS
-    (src/tools.py). Devuelve directamente el texto final de la
-    respuesta - todo el ir-y-venir de tool-calling queda resuelto por
-    dentro, main.py no necesita saber que ha pasado nada especial.
+    """Como preguntar(), pero deja al modelo usar las tools de TOOLS
+    (src/tools.py). Todo el tool-calling se resuelve dentro del bucle; quien
+    llama solo recibe el texto final.
     """
-    funcion = _FUNCIONES_CON_TOOLS[proveedor]
-    return funcion(historial, api_key, modelo)
+    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools=TOOLS)
