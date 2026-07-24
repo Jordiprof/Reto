@@ -50,11 +50,19 @@ def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
     """
     funcion = HERRAMIENTAS_DISPONIBLES.get(nombre)
     if funcion is None:
-        return f"Error: la herramienta '{nombre}' no existe."
-    try:
-        return str(funcion(**argumentos))
-    except Exception as error:
-        return f"Error ejecutando '{nombre}': {error}"
+        resultado = f"Error: la herramienta '{nombre}' no existe."
+    else:
+        try:
+            resultado = str(funcion(**argumentos))
+        except Exception as error:
+            resultado = f"Error ejecutando '{nombre}': {error}"
+    # F5.0/T8: antes no quedaba ningun rastro de que tool se llamo, con que
+    # argumentos ni que resultado dio - solo se logeaba la latencia del LLM,
+    # nunca lo que hacia por dentro. Con esto se puede auditar turno a turno
+    # que hizo el agente de verdad (usa %s en vez de f-string: logging solo
+    # construye el mensaje si el nivel INFO esta activo, mas barato).
+    logging.info("Tool '%s' args=%s -> %s", nombre, argumentos, resultado)
+    return resultado
 
 
 def traducir_historial_gemini(historial: list) -> tuple[list, str | None]:
