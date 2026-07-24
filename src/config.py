@@ -122,6 +122,26 @@ def obtener_api_key(proveedor: str) -> str:
         ) from None
 
 
+# F5.3: nombre de la variable con la clave de cifrado de las conversaciones
+# guardadas (RNF-06). Solo el NOMBRE, igual que PROVEEDORES: el valor se lee
+# tarde, cuando hace falta.
+CLAVE_CONVERSACIONES_ENV = "CONVERSATIONS_KEY"
+
+
+def obtener_clave_conversaciones() -> bytes | None:
+    """Lee del .env la clave Fernet para cifrar las conversaciones, o
+    None si no esta configurada.
+
+    Devolver None (en vez de lanzar) es deliberado: el cifrado es
+    OPCIONAL, el agente funciona sin el. Lo que NO se acepta es que la
+    ausencia de clave pase desapercibida - quien llame a esto avisa
+    (ver storage.guardar_conversacion y cifrado_activo).
+    """
+    clave = os.environ.get(CLAVE_CONVERSACIONES_ENV)
+    # El "not" tambien cubre la cadena vacia (variable puesta pero sin valor).
+    return clave.encode() if clave else None
+
+
 def obtener_modelo_por_defecto(proveedor: str) -> str:
     """Modelo por defecto del proveedor (F5.0/T5).
 

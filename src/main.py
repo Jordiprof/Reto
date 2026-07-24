@@ -35,6 +35,11 @@ from src.config import (  # noqa: E402
     obtener_modelo_por_defecto,
 )
 
+# cifrado_activo: para avisar al arrancar si las conversaciones se van a
+# guardar sin cifrar (F5.3). main.py es la capa que habla con el usuario;
+# storage.py solo expone el dato, no imprime nada.
+from src.storage import cifrado_activo  # noqa: E402
+
 # SYSTEM PROMPT: instrucciones ESTABLES del asistente (quien es, como
 # habla, que limites tiene). Va una sola vez al principio del historial
 # y no cambia en toda la conversacion. Lo que cambia en cada turno (la
@@ -115,6 +120,15 @@ def main():
     agente = Agente(SYSTEM_PROMPT, proveedor, api_key, modelo)
 
     print(f"Agente listo con {proveedor} ({modelo}).")
+    # F5.3: el cifrado de las conversaciones es opcional, pero si esta
+    # apagado hay que DECIRLO. Un aviso solo en logs/agente.log no sirve:
+    # nadie lee el log mientras usa el programa, y una degradacion de
+    # seguridad que nadie ve es como si no existiera.
+    if not cifrado_activo():
+        print(
+            "⚠️ Las conversaciones se guardaran SIN CIFRAR "
+            "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
+        )
     print(
         "Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar, "
         "'/resumen' para resumir."
