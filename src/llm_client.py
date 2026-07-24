@@ -9,6 +9,10 @@ import logging
 # cuanto tarda cada llamada.
 import time
 
+# ValidationError: la excepcion que lanza Pydantic cuando los datos no
+# encajan con el modelo declarado (F5.4).
+from pydantic import ValidationError
+
 # Excepciones tipadas (F5.0/T2): sustituyen a los strings "⚠️ ..." que se
 # detectaban con .startswith() - ver src/llm_errors.py para el porque.
 from src.llm_errors import (
@@ -23,10 +27,12 @@ from src.llm_errors import (
 # Formas neutras compartidas por los 3 proveedores (F5.0/T1).
 from src.llm_types import RespuestaLLM, ToolCall
 
-# HERRAMIENTAS_DISPONIBLES: nombre de cada tool -> funcion real de Python.
+# HERRAMIENTAS: registro unico de tools (funcion + modelo de args +
+# descripcion). Desde F5.4 no basta con la funcion: hace falta tambien su
+# modelo Pydantic para validar lo que manda el LLM antes de ejecutar nada.
 # (TOOLS, la ficha tecnica JSON Schema, ya no se usa aqui - desde F5.0/T4
 # quien decide que tools pasar es Agente, ver src/agent.py).
-from src.tools import HERRAMIENTAS_DISPONIBLES
+from src.tools import HERRAMIENTAS
 
 # Limite de vueltas del bucle LLM -> tool -> resultado -> LLM. Sin esto, si
 # el modelo se quedara pidiendo la misma tool una y otra vez (un bug suyo,
@@ -40,22 +46,61 @@ _MAX_PASOS_DE_HERRAMIENTAS = 5
 _TIMEOUT_SEGUNDOS = 30.0
 
 
+def _resumir_validacion(error: ValidationError) -> str:
+    """Convierte el volcado de Pydantic (que puede ocupar varias lineas,
+    con tipos internos y una URL a su documentacion) en UNA linea corta.
+
+    Ese texto acaba enviado al LLM como resultado de la tool, asi que
+    debe decirle lo justo para que reintente bien: que campo falla y por
+    que. Los mensajes de Pydantic vienen en ingles y se dejan tal cual -
+    el modelo los entiende sin problema, y traducirlos obligaria a
+    mantener un diccionario propio a cambio de nada.
+    """
+    partes = []
+    for fallo in error.errors():
+        # loc es una tupla con la "ruta" al campo que falla; para tools
+        # planas es un solo nombre, pero se une por si algun dia hay
+        # argumentos anidados.
+        campo = ".".join(str(tramo) for tramo in fallo["loc"]) or "(sin campo)"
+        partes.append(f"{campo}: {fallo['msg']}")
+    return "; ".join(partes)
+
+
 def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
-    """Ejecuta una tool por nombre, con los argumentos ya en forma de dict.
+    """Ejecuta una tool por nombre, validando antes sus argumentos.
     Compartida por los 3 proveedores (todos acaban con los argumentos en el
     mismo formato gracias a la capa de traduccion).
 
-    Si la tool no existe o falla, NO se rompe el programa: se devuelve un
-    string de error, que el modelo vera como el "resultado" de la tool.
+    Si la tool no existe, los argumentos no son validos o la funcion falla,
+    NO se rompe el programa: se devuelve un string de error, que el modelo
+    vera como el "resultado" de la tool.
     """
-    funcion = HERRAMIENTAS_DISPONIBLES.get(nombre)
-    if funcion is None:
+    herramienta = HERRAMIENTAS.get(nombre)
+    if herramienta is None:
         resultado = f"Error: la herramienta '{nombre}' no existe."
     else:
         try:
-            resultado = str(funcion(**argumentos))
-        except Exception as error:
-            resultado = f"Error ejecutando '{nombre}': {error}"
+            # F5.4: el modelo Pydantic decide si lo que manda el LLM es
+            # aceptable ANTES de llamar a la funcion. Antes se llamaba a
+            # pelo con **argumentos y era Python quien fallaba - con un
+            # TypeError cuyo texto interno acababa enviado al modelo.
+            # TypeError se captura tambien aqui por si "argumentos" no
+            # fuera un diccionario (JSON valido pero con forma rara).
+            validados = herramienta.args(**argumentos)
+        except (ValidationError, TypeError) as error:
+            detalle = (
+                _resumir_validacion(error)
+                if isinstance(error, ValidationError)
+                else str(error)
+            )
+            resultado = f"Error: argumentos no validos para '{nombre}' - {detalle}"
+        else:
+            try:
+                # model_dump() devuelve el modelo ya validado como dict
+                # limpio: sin campos de mas y con los tipos correctos.
+                resultado = str(herramienta.funcion(**validados.model_dump()))
+            except Exception as error:
+                resultado = f"Error ejecutando '{nombre}': {error}"
     # F5.0/T8: antes no quedaba ningun rastro de que tool se llamo, con que
     # argumentos ni que resultado dio - solo se logeaba la latencia del LLM,
     # nunca lo que hacia por dentro. Con esto se puede auditar turno a turno
@@ -345,6 +390,40 @@ class _ProveedorOllama(_ProveedorLLM):
         })
 
 
+# F5.4: claves de JSON Schema que la API de Gemini NO reconoce y que
+# hacen fallar la peticion ENTERA con 400 INVALID_ARGUMENT ("Unknown name
+# ... Cannot find field"). Aparecieron al generar el schema con Pydantic
+# (que anade additionalProperties por el extra="forbid" de ArgsCalcular).
+#
+# Verificado con llamadas REALES el 24/07, no de memoria: el SDK de
+# google-genai las acepta en local (las traduce a snake_case sin quejarse)
+# pero el servidor las rechaza - validar la forma en el cliente NO
+# garantiza que el servidor lo trague. Se comprobo aparte que "maxLength"
+# SI se acepta, asi que no se quita: es informacion util para el modelo.
+_CLAVES_NO_SOPORTADAS_GEMINI = ("additionalProperties",)
+
+
+def _limpiar_schema_para_gemini(esquema):
+    """Devuelve una COPIA del schema sin las claves que Gemini rechaza.
+
+    Va aqui y no en tools.py a proposito: TOOLS es una lista neutra y
+    cada proveedor adapta lo que necesita (mismo principio que la
+    traduccion del historial). Groq y Ollama siguen recibiendo el schema
+    completo, que es valido para ellos.
+
+    Recursiva porque en F5.5 habra tools con objetos anidados.
+    """
+    if isinstance(esquema, dict):
+        return {
+            clave: _limpiar_schema_para_gemini(valor)
+            for clave, valor in esquema.items()
+            if clave not in _CLAVES_NO_SOPORTADAS_GEMINI
+        }
+    if isinstance(esquema, list):
+        return [_limpiar_schema_para_gemini(elemento) for elemento in esquema]
+    return esquema
+
+
 class _ProveedorGemini(_ProveedorLLM):
     _nombre = "gemini"
 
@@ -368,8 +447,11 @@ class _ProveedorGemini(_ProveedorLLM):
 
         if tools:
             # De TOOLS (formato Groq/OpenAI) sacamos solo el dict interior
-            # "function" de cada una - es lo que Gemini reconoce.
-            declaraciones = [tool["function"] for tool in tools]
+            # "function" de cada una - es lo que Gemini reconoce - y le
+            # quitamos las claves que su API rechaza (F5.4, ver arriba).
+            declaraciones = [
+                _limpiar_schema_para_gemini(tool["function"]) for tool in tools
+            ]
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 tools=[types.Tool(function_declarations=declaraciones)],

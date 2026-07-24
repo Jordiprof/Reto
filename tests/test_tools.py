@@ -1,10 +1,15 @@
+# inspect: permite mirar la firma real de una funcion de Python en
+# tiempo de ejecucion. Lo usamos para comprobar que el schema que lee el
+# LLM y los argumentos de la funcion no se han separado (F5.4).
+import inspect
+
 import pytest
 
 # _ejecutar_tool vive en llm_client.py (no en tools.py): es la pieza
 # que sabe despachar por nombre y capturar errores de CUALQUIER tool,
 # no algo propio de la calculadora.
 from src.llm_client import _ejecutar_tool
-from src.tools import calcular
+from src.tools import TOOLS, ArgsCalcular, calcular
 
 
 def test_operaciones_basicas():
@@ -91,3 +96,83 @@ def test_ejecutar_tool_con_nombre_inventado():
     intentar ejecutar nada."""
     resultado = _ejecutar_tool("buscar_en_internet", {"query": "algo"})
     assert "no existe" in resultado
+
+
+# --- F5.4: validacion de argumentos con Pydantic ---------------------
+# Los dos tests de arriba (F4.4) solo comprueban que aparece la palabra
+# "Error": tragan igual el mensaje viejo de Python y el nuevo controlado
+# por nosotros, asi que NO habrian detectado si la validacion dejara de
+# funcionar. Los de aqui si distinguen.
+
+
+def test_argumento_que_sobra_se_rechaza():
+    """El agujero que abre F5.4: hasta ahora, si el modelo alucinaba un
+    argumento de mas, la llamada llegaba a Python y reventaba con un
+    TypeError. Con extra="forbid" se rechaza en el borde, y la tool NO
+    llega a ejecutarse (por eso no aparece el resultado de 2+2)."""
+    resultado = _ejecutar_tool("calcular", {"expresion": "2+2", "modo": "admin"})
+
+    assert "no validos" in resultado
+    assert "modo" in resultado          # dice QUE campo sobra
+    assert "4" not in resultado          # y NO se ejecuto el calculo
+
+
+def test_mensajes_de_error_no_filtran_detalles_internos():
+    """Mismo principio que los errores tipados de F5.0/T2: el texto que
+    se manda al LLM es NUESTRO, no el volcado interno de Python. Sin
+    esto, el modelo recibia 'calcular() missing 1 required positional
+    argument', que le habla de una funcion de Python que el no conoce."""
+    resultado = _ejecutar_tool("calcular", {})
+
+    # Nombra el campo del schema, que es el vocabulario del modelo...
+    assert "expresion" in resultado
+    # ...y no el de la implementacion de Python.
+    assert "positional argument" not in resultado
+    assert "calcular()" not in resultado
+
+
+@pytest.mark.parametrize("argumentos, texto_esperado", [
+    ({}, "Field required"),                              # falta
+    ({"expresion": 42}, "valid string"),                 # tipo incorrecto
+    ({"expresion": "1+" * 150 + "1"}, "at most 200"),    # demasiado largo
+])
+def test_argumentos_invalidos_dan_mensaje_util(argumentos, texto_esperado):
+    """El mensaje debe decirle al modelo QUE arreglar para reintentar
+    bien, no solo que hubo un error."""
+    resultado = _ejecutar_tool("calcular", argumentos)
+
+    assert "no validos" in resultado
+    assert texto_esperado in resultado
+
+
+def test_ficha_de_tool_se_deriva_del_modelo_pydantic():
+    """El motivo de fondo de F5.4: TOOLS ya no se escribe a mano, se
+    genera del modelo. Este test es la red de seguridad contra el
+    'drift' - si alguien renombra el campo en ArgsCalcular pero no en
+    calcular(), o al reves, aqui salta."""
+    ficha = next(t for t in TOOLS if t["function"]["name"] == "calcular")
+    parametros = ficha["function"]["parameters"]
+
+    # El nombre del parametro del schema es el MISMO que el del modelo...
+    assert set(parametros["properties"]) == set(ArgsCalcular.model_fields)
+    # ...y el mismo que el argumento real de la funcion de Python.
+    assert set(parametros["properties"]) == set(
+        inspect.signature(calcular).parameters
+    )
+    assert parametros["required"] == ["expresion"]
+
+
+def test_ficha_de_tool_no_lleva_ruido_de_pydantic():
+    """Pydantic genera claves 'title' a partir de los nombres internos
+    de la clase y de cada campo ('ArgsCalcular', 'Expresion'). No le
+    dicen nada al modelo y viajan en CADA peticion, asi que _ficha_tool
+    las quita. En F5.5 habra muchas tools y esto se multiplica."""
+    parametros = TOOLS[0]["function"]["parameters"]
+
+    assert "title" not in parametros
+    for propiedad in parametros["properties"].values():
+        assert "title" not in propiedad
+
+    # El limite de longitud SI viaja: es informacion util para el modelo,
+    # que antes solo estaba escrita en prosa dentro de la descripcion.
+    assert parametros["properties"]["expresion"]["maxLength"] == 200

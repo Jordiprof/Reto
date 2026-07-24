@@ -15,7 +15,11 @@
 # clase propia por cada uno, un contenedor de atributos sueltos basta.
 from types import SimpleNamespace
 
-from src.llm_client import _ProveedorGemini, _texto_de_gemini
+from src.llm_client import (
+    _limpiar_schema_para_gemini,
+    _ProveedorGemini,
+    _texto_de_gemini,
+)
 
 
 def _parte(text=None, function_call=None):
@@ -133,3 +137,72 @@ def test_texto_de_gemini_con_solo_function_call_devuelve_vacio():
     partes = [_parte(function_call=_function_call("calcular", {"expresion": "1 + 1"}))]
 
     assert _texto_de_gemini(_respuesta(partes)) == ""
+
+
+# --- F5.4: limpieza del schema para Gemini ---------------------------
+# Bug REAL encontrado el 24/07 al verificar contra la API en vivo: el
+# schema generado por Pydantic trae "additionalProperties" (por el
+# extra="forbid" del modelo) y Gemini responde 400 INVALID_ARGUMENT,
+# tumbando la peticion entera. El SDK NO lo detectaba en local - lo
+# aceptaba y lo traducia a snake_case sin quejarse.
+
+
+def test_limpiar_schema_quita_additional_properties():
+    """La clave que rompia la llamada real debe desaparecer."""
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"expresion": {"type": "string"}},
+        "required": ["expresion"],
+    }
+
+    limpio = _limpiar_schema_para_gemini(schema)
+
+    assert "additionalProperties" not in limpio
+    # Lo demas se conserva intacto: es un filtro quirurgico, no un recorte.
+    assert limpio["type"] == "object"
+    assert limpio["required"] == ["expresion"]
+    assert limpio["properties"]["expresion"]["type"] == "string"
+
+
+def test_limpiar_schema_conserva_max_length():
+    """maxLength SI lo acepta Gemini (verificado con llamada real), asi
+    que NO se quita: le dice al modelo cuanto puede mandar como maximo."""
+    schema = {"properties": {"expresion": {"type": "string", "maxLength": 200}}}
+
+    limpio = _limpiar_schema_para_gemini(schema)
+
+    assert limpio["properties"]["expresion"]["maxLength"] == 200
+
+
+def test_limpiar_schema_es_recursivo():
+    """En F5.5 habra tools con objetos anidados: la clave prohibida debe
+    caer tambien dentro de un sub-objeto, no solo en la raiz."""
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "filtro": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"desde": {"type": "string"}},
+            }
+        },
+    }
+
+    limpio = _limpiar_schema_para_gemini(schema)
+
+    assert "additionalProperties" not in limpio
+    assert "additionalProperties" not in limpio["properties"]["filtro"]
+    assert limpio["properties"]["filtro"]["properties"]["desde"]["type"] == "string"
+
+
+def test_limpiar_schema_no_muta_el_original():
+    """TOOLS es compartido por los 3 proveedores: si esta funcion mutara
+    el diccionario en el sitio, Groq y Ollama se quedarian sin la clave
+    (que para ellos SI es valida). Debe devolver una copia."""
+    original = {"additionalProperties": False, "type": "object"}
+
+    _limpiar_schema_para_gemini(original)
+
+    assert "additionalProperties" in original
