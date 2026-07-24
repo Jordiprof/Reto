@@ -42,7 +42,7 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 | RNF-03 | Mantenibilidad | Arquitectura modular; cambiar de proveedor LLM = cambiar configuración (`llm_client.py`) |
 | RNF-04 | Portabilidad | Python 3.13 + venv + `requirements.txt` con versiones fijadas |
 | RNF-05 | Seguridad/privacidad del canal (Telegram) | El bot se identifica por token (`.env`), nunca por el número de teléfono personal — sin self-bot (Telethon/Pyrogram descartados). Telegram sandboxea al bot: sin acceso a fotos, contactos ni otros chats. Filtrado por `message.from_user.id` contra lista blanca antes de cualquier llamada al LLM |
-| RNF-06 | Privacidad de los datos (dato rector del Experto) | Las conversaciones y datos personales NO salen de la máquina de Jordi salvo la llamada mínima e inevitable al LLM. Consecuencias de diseño: vector store LOCAL (ChromaDB), embeddings LOCALES (`sentence-transformers`), observabilidad solo local si la hubiera. Descartadas por incumplir esto: LangSmith (nube), Pinecone (nube), embeddings de API de pago (ver E3 y diario 21/07) |
+| RNF-06 | Privacidad de los datos (dato rector del Experto) | Las conversaciones y datos personales NO salen de la máquina de Jordi salvo la llamada mínima e inevitable al LLM. Consecuencias de diseño: vector store LOCAL (ChromaDB), embeddings LOCALES (`sentence-transformers`), observabilidad solo local si la hubiera. Descartadas por incumplir esto: LangSmith (nube), Pinecone (nube), embeddings de API de pago (ver E3 y diario 21/07). **Cifrado en reposo (auditoría 23/07, AUD-10):** `conversations/*.json` y `conversations.db` se guardan sin cifrar — decisión consciente, no un descuido: es una máquina de un solo usuario y ambos están en `.gitignore` (nunca salen ni siquiera por git). Se reevaluará cifrado (p. ej. `cryptography.Fernet`) solo si en el Experto se empiezan a guardar datos más sensibles que conversaciones propias. `logs/agente.log` registra latencia y tipo de error, nunca la API key ni el contenido completo de una conversación |
 
 ## 5. Casos de uso principales
 
@@ -60,6 +60,7 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 | La documentación de los SDKs cambia | Errores confusos | Usar siempre docs oficiales; fijar versiones en `requirements.txt` |
 | El alcance se dispara | No llegar al Experto | Fases cerradas por nivel; los extras son opcionales |
 | Filtración de la API key | Seguridad | `.gitignore` antes que la key; si ocurre, revocar en el proveedor |
+| Prompt injection vía tools que leen texto externo (noticias RSS, web, correo si se retoma) | El agente podría obedecer instrucciones ocultas en contenido que no controla el usuario | Aislar el contenido no confiable del canal de instrucciones (es dato, nunca orden); tools de solo lectura con allowlist estricta; confirmación humana antes de cualquier acción con efectos (enviar, borrar, modificar); nunca combinar "leer contenido externo" + "actuar" en el mismo agente sin ese paso intermedio (hallazgo de la auditoría de seguridad, 23/07) |
 
 ## 7. Preguntas abiertas
 

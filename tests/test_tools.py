@@ -66,6 +66,17 @@ def test_expresion_de_tipo_incorrecto():
         calcular(2)  # int en vez de str
 
 
+def test_expresion_demasiado_larga_se_rechaza():
+    """F5.0/T6 (AUD-04): una expresion con miles de parentesis anidados
+    podria agotar el limite de recursion de Python al recorrer el arbol.
+    Se rechaza ANTES de parsear, por longitud, con un ValueError claro -
+    no un RecursionError tecnico escapando de _evaluar_nodo()."""
+    expresion_gigante = "(" * 300 + "1" + ")" * 300  # 601 caracteres
+
+    with pytest.raises(ValueError):
+        calcular(expresion_gigante)
+
+
 def test_ejecutar_tool_con_parametro_faltante():
     """F4.4, caso limite real: el modelo llama a 'calcular' sin mandar
     'expresion'. _ejecutar_tool no debe reventar - debe devolver un

@@ -7,9 +7,10 @@ import time
 # json: los argumentos que manda Groq para una tool vienen como texto JSON
 # (no como dict, a diferencia de Ollama) - hay que parsearlos.
 import json
-# TOOLS: la ficha tecnica (JSON Schema) de cada herramienta disponible.
 # HERRAMIENTAS_DISPONIBLES: nombre de cada tool -> funcion real de Python.
-from src.tools import TOOLS, HERRAMIENTAS_DISPONIBLES
+# (TOOLS, la ficha tecnica JSON Schema, ya no se usa aqui - desde F5.0/T4
+# quien decide que tools pasar es Agente, ver src/agent.py).
+from src.tools import HERRAMIENTAS_DISPONIBLES
 # Formas neutras compartidas por los 3 proveedores (F5.0/T1).
 from src.llm_types import RespuestaLLM, ToolCall
 # Excepciones tipadas (F5.0/T2): sustituyen a los strings "⚠️ ..." que se
@@ -427,25 +428,10 @@ _PROVEEDORES = {
 def responder_proveedor(proveedor: str, api_key: str, modelo: str,
                         historial: list, tools: list | None) -> str:
     """Ejecuta el bucle completo en UN proveedor concreto y devuelve el
-    texto final. Es la pieza que usa el router (F5.0/T4) para cada eslabon
-    de la cadena: si este proveedor falla, el router captura el ErrorLLM y
-    decide si reintentar o degradar al siguiente.
+    texto final. Es el UNICO punto de entrada publico desde F5.0/T4: el
+    router (src/llm_router.py) lo llama para cada eslabon de la cadena -
+    si este proveedor falla, el router captura el ErrorLLM y decide si
+    reintentar o degradar al siguiente. Nada mas llama a esto directamente
+    (ni siquiera Agente, que solo conoce al router).
     """
     return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools)
-
-
-def preguntar(historial: list, proveedor: str, api_key: str, modelo: str) -> str:
-    """Punto de entrada SIN herramientas: una llamada, respuesta de texto.
-
-    Recibe el historial COMPLETO en formato canonico. Se usa, p. ej., para
-    el comando /resumen (agent.resumir), donde no hacen falta tools.
-    """
-    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools=None)
-
-
-def preguntar_con_tools(historial: list, proveedor: str, api_key: str, modelo: str) -> str:
-    """Como preguntar(), pero deja al modelo usar las tools de TOOLS
-    (src/tools.py). Todo el tool-calling se resuelve dentro del bucle; quien
-    llama solo recibe el texto final.
-    """
-    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools=TOOLS)

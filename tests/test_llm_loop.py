@@ -10,31 +10,9 @@ import pytest
 from src.llm_client import _ProveedorLLM, _MAX_PASOS_DE_HERRAMIENTAS
 from src.llm_errors import ErrorAutenticacion, ErrorLimitePasos
 from src.llm_types import RespuestaLLM, ToolCall
-
-
-class _ProveedorFalso(_ProveedorLLM):
-    """Proveedor de mentira: se le programa de antemano la lista de
-    respuestas que ira devolviendo, en orden, en cada vuelta del bucle.
-    No toca red ni SDK - solo ejerce la logica del bucle compartido."""
-
-    def __init__(self, respuestas):
-        super().__init__(api_key="x", modelo="fake")
-        self._respuestas = list(respuestas)
-        self.resultados_registrados = []
-
-    def _estado_inicial(self, historial, tools):
-        return {"historial": list(historial)}
-
-    def _llamar(self, estado):
-        # Va soltando las respuestas programadas, una por vuelta.
-        return self._respuestas.pop(0)
-
-    def _registrar_peticion(self, estado, respuesta):
-        pass  # al falso no le hace falta reconstruir el estado del SDK
-
-    def _registrar_resultado(self, estado, llamada, resultado):
-        # Guardamos (nombre, resultado) para poder afirmar sobre ello.
-        self.resultados_registrados.append((llamada.nombre, resultado))
+# F5.0/T6: ProveedorFalso vive en conftest.py (compartido con otros tests
+# que lo necesiten), en vez de duplicado aqui.
+from tests.conftest import ProveedorFalso as _ProveedorFalso
 
 
 def test_bucle_ejecuta_tool_y_devuelve_texto_final():

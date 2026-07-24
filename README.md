@@ -1,6 +1,6 @@
 # Agente de IA en Python — Reto DataQuantum
 
-**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Nivel Intermedio completo (Fase 3)
+**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Nivel Avanzado completo (Fase 4); Fase 5 (Experto) en curso — endurecimiento previo (F5.0) antes del bot de Telegram
 
 Agente de IA ejecutado desde la terminal, construido de forma incremental en 4 niveles:
 chat simple contra un LLM (**Básico**) → conversación con memoria (**Intermedio**) →
@@ -14,8 +14,13 @@ antes de usar abstracciones.
 python -m venv venv
 venv\Scripts\activate          # Windows
 pip install -r requirements.txt
-copy .env.example .env         # y rellenar las claves API (ver ADR-001 para cuales hacen falta)
+copy .env.example .env         # rellenar claves API (ADR-001) y, opcionalmente, *_MODEL
 ```
+
+`.env.example` documenta qué claves hacen falta y por qué (ADR-001). Las variables
+`GROQ_MODEL` / `OLLAMA_MODEL` / `GEMINI_MODEL` son opcionales: fijan el modelo que
+aparece preseleccionado en el menú; si se dejan vacías, el programa usa un valor por
+defecto ya verificado.
 
 ## Uso
 
@@ -27,6 +32,13 @@ Al arrancar, pide elegir proveedor (`groq` / `ollama` / `gemini` — cadena deci
 [ADR-001](docs/ADR/ADR-001-proveedor-llm.md)) y modelo, y entra en un chat por terminal
 **con memoria**: cada turno se reenvía junto con todo el historial anterior, así que el
 agente recuerda lo que ya has hablado (incluso si cambias de proveedor a mitad).
+
+**Failover automático (ADR-004):** el proveedor elegido es el *primario*, pero si falla
+de forma transitoria (límite de peticiones, timeout, sin red), el agente reintenta con
+espera creciente y, si sigue sin responder, degrada solo al siguiente proveedor de la
+cadena ADR-001 que tenga clave configurada — sin que tengas que hacer nada. Si ves una
+respuesta cuando esperabas un error, puede haber sido un fallback; el detalle queda en
+`logs/agente.log`. Solo si **todos** los proveedores configurados fallan, ves un aviso.
 
 Comandos disponibles dentro del chat:
 

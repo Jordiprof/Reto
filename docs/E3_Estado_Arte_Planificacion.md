@@ -68,8 +68,14 @@ en la nube a ciegas. Varias decisiones "se toman solas" en cuanto se aplica el c
 | 2 — Nivel Básico | 17–21/07 | 17/07 | Chat en bucle con errores manejados y logging | `nivel-basico` |
 | 3 — Nivel Intermedio | 22–28/07 | 17–20/07 | Historial + system prompt + persistencia + pytest | `nivel-intermedio` |
 | 4 — Nivel Avanzado | 29/07–04/08 | 21/07 | Tool calling con bucle de agente a mano | `nivel-avanzado` |
-| 5 — Nivel Experto | 05–13/08 | _sin empezar_ | Proyecto final sobre la temática elegida (bot Telegram) | `nivel-experto` |
+| 5 — Nivel Experto | 05–13/08 | **23/07** (adelantada) | F5.0 (endurecimiento: capa de proveedores + router de fallback ADR-004) en curso; resto (bot Telegram, RAG) sigue planificado para 05-13/08 | `nivel-experto` |
 | 6 — Cierre y entrega | 13–14/08 | _sin empezar_ | E4 + diario completo + reflexión final | — |
+
+**Nota sobre el adelanto de Fase 5:** F5.0 no estaba en la planificación original — nació el
+23/07 de una auditoría de seguridad + revisión de código externa hechas a propósito antes de
+tocar el bot de Telegram (ver diario 23/07 y ADR-004). No es que se haya "adelantado trabajo
+por adelantarlo": es la base sobre la que se construye F5.2 (el bot reutiliza directamente el
+router y los adaptadores), así que hacerlo antes evita reescribir el bot después.
 
 **Hito transversal:** ~~decidir la temática del agente experto antes del 28/07~~ — **resuelto
 el 20/07** (bot de Telegram personal, ver E1 v1.2 y diario).

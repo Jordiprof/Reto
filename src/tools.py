@@ -60,6 +60,15 @@ def _evaluar_nodo(nodo):
     raise ValueError(f"Expresión no permitida: {type(nodo).__name__}")
 
 
+# F5.0/T6 (hallazgo AUD-04 de la auditoria del 23/07): sin limite de
+# longitud, una expresion con miles de parentesis anidados agota el limite
+# de recursion de Python al recorrer el arbol en _evaluar_nodo() - un DoS
+# leve (CPU/memoria), aunque quede atrapado por el except generico de
+# _ejecutar_tool y no tire el programa. 200 caracteres sobra para CUALQUIER
+# calculo real y de paso acota la profundidad de anidamiento posible.
+_LONGITUD_MAXIMA_EXPRESION = 200
+
+
 def calcular(expresion: str) -> float:
     """Evalua una expresion aritmetica simple (+-*/) de forma segura.
 
@@ -78,6 +87,11 @@ def calcular(expresion: str) -> float:
     if not isinstance(expresion, str):
         raise ValueError(f"La expresión debe ser texto, no {type(expresion).__name__}")
 
+    if len(expresion) > _LONGITUD_MAXIMA_EXPRESION:
+        raise ValueError(
+            f"Expresión demasiado larga (máximo {_LONGITUD_MAXIMA_EXPRESION} caracteres)."
+        )
+
     try:
         arbol = ast.parse(expresion, mode="eval")
     except SyntaxError:
@@ -89,9 +103,9 @@ def calcular(expresion: str) -> float:
 # que entienden Groq y Ollama (compatible con la convencion de OpenAI,
 # verificado contra la doc oficial de Groq - console.groq.com/docs/
 # tool-use/local-tool-calling). Gemini usa su propio formato de
-# declaracion de tools - ese adaptador se escribe en F4.3, cuando
-# montemos el bucle real y haga falta de verdad (mismo criterio que
-# con _preguntar_gemini en F3.1: no se construye hasta que se necesita).
+# declaracion de tools - la traduccion vive en _ProveedorGemini
+# (src/llm_client.py), no aqui: esta lista es neutra, cada proveedor
+# adapta lo que necesita a partir de ella.
 #
 # Es una lista porque en el futuro habra mas de una tool - cada
 # diccionario de la lista describe una funcion distinta.
