@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 # Cada eslabon de la cadena necesita SU proveedor + clave + modelo. El
 # router los prueba en orden.
-from src.config import obtener_api_key, obtener_modelo_por_defecto, ClaveApiNoConfigurada
+from src.config import ClaveApiNoConfigurada, obtener_api_key, obtener_modelo_por_defecto
 from src.llm_client import responder_proveedor
 from src.llm_errors import ErrorLLM
 

@@ -3,10 +3,13 @@
 # logica de reintentos/degradacion sin red y sin esperas reales.
 import pytest
 
-from src.llm_router import LLMRouter, Eslabon
 from src.llm_errors import (
-    ErrorLimitePeticiones, ErrorTimeout, ErrorAutenticacion, ErrorPeticionInvalida,
+    ErrorAutenticacion,
+    ErrorLimitePeticiones,
+    ErrorPeticionInvalida,
+    ErrorTimeout,
 )
+from src.llm_router import Eslabon, LLMRouter
 
 
 def _eslabones(*nombres):

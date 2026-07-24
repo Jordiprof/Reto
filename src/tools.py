@@ -6,6 +6,7 @@
 # funcion, nombres de variable, atributos...) se rechaza antes de
 # calcular nada.
 import ast
+
 # operator: funciones equivalentes a +, -, *, / pero como funciones
 # normales (operator.add(2, 3) == 5). Las usamos en un diccionario para
 # no escribir un if/elif largo por cada operador.

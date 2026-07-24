@@ -1,14 +1,16 @@
 # F5.0/T4: el Agente ya no habla con UN proveedor, sino con un router que
 # prueba la cadena ADR-001 (primario + fallbacks) con reintentos.
-from src.llm_router import construir_cadena
-# TOOLS: herramientas disponibles; se pasan al router en cada turno normal.
-from src.tools import TOOLS
 # Excepcion base de fallos al hablar con un proveedor (F5.0/T2) - antes se
 # detectaba un fallo mirando si el texto empezaba por "⚠️". La lanza el
 # router cuando TODOS los proveedores de la cadena han fallado.
 from src.llm_errors import ErrorLLM
+from src.llm_router import construir_cadena
+
 # Traemos de storage.py la funcion que guarda la conversacion en disco.
 from src.storage import guardar_conversacion
+
+# TOOLS: herramientas disponibles; se pasan al router en cada turno normal.
+from src.tools import TOOLS
 
 
 class Agente:

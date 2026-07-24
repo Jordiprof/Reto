@@ -1,10 +1,10 @@
 import pytest
 
-from src.tools import calcular
 # _ejecutar_tool vive en llm_client.py (no en tools.py): es la pieza
 # que sabe despachar por nombre y capturar errores de CUALQUIER tool,
 # no algo propio de la calculadora.
 from src.llm_client import _ejecutar_tool
+from src.tools import calcular
 
 
 def test_operaciones_basicas():

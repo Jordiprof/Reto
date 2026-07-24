@@ -1,24 +1,32 @@
 # logging: para registrar cada llamada y cada error en logs/agente.log
 # (la configuracion real vive en config.py, aqui solo lo usamos).
-import logging
-# time: perf_counter() es un cronometro de alta precision, para medir
-# cuanto tarda cada llamada.
-import time
 # json: los argumentos que manda Groq para una tool vienen como texto JSON
 # (no como dict, a diferencia de Ollama) - hay que parsearlos.
 import json
+import logging
+
+# time: perf_counter() es un cronometro de alta precision, para medir
+# cuanto tarda cada llamada.
+import time
+
+# Excepciones tipadas (F5.0/T2): sustituyen a los strings "⚠️ ..." que se
+# detectaban con .startswith() - ver src/llm_errors.py para el porque.
+from src.llm_errors import (
+    ErrorAutenticacion,
+    ErrorConexion,
+    ErrorLimitePasos,
+    ErrorLimitePeticiones,
+    ErrorPeticionInvalida,
+    ErrorTimeout,
+)
+
+# Formas neutras compartidas por los 3 proveedores (F5.0/T1).
+from src.llm_types import RespuestaLLM, ToolCall
+
 # HERRAMIENTAS_DISPONIBLES: nombre de cada tool -> funcion real de Python.
 # (TOOLS, la ficha tecnica JSON Schema, ya no se usa aqui - desde F5.0/T4
 # quien decide que tools pasar es Agente, ver src/agent.py).
 from src.tools import HERRAMIENTAS_DISPONIBLES
-# Formas neutras compartidas por los 3 proveedores (F5.0/T1).
-from src.llm_types import RespuestaLLM, ToolCall
-# Excepciones tipadas (F5.0/T2): sustituyen a los strings "⚠️ ..." que se
-# detectaban con .startswith() - ver src/llm_errors.py para el porque.
-from src.llm_errors import (
-    ErrorAutenticacion, ErrorConexion, ErrorLimitePasos,
-    ErrorLimitePeticiones, ErrorPeticionInvalida, ErrorTimeout,
-)
 
 # Limite de vueltas del bucle LLM -> tool -> resultado -> LLM. Sin esto, si
 # el modelo se quedara pidiendo la misma tool una y otra vez (un bug suyo,
@@ -187,8 +195,11 @@ class _ProveedorGroq(_ProveedorLLM):
         # APITimeoutError hereda de APIConnectionError (verificado en el SDK) -
         # por eso se captura ANTES: si fuera despues, nunca se alcanzaria.
         from groq import (
-            AuthenticationError, APIConnectionError, APITimeoutError,
-            RateLimitError, APIError,
+            APIConnectionError,
+            APIError,
+            APITimeoutError,
+            AuthenticationError,
+            RateLimitError,
         )
 
         client = estado["client"]

@@ -1,10 +1,13 @@
 # json: para serializar el historial (lista de diccionarios) a disco.
 import json
+
 # sqlite3: viene con Python, no hace falta instalar nada. Nos da un motor
 # de base de datos relacional que vive en un solo fichero (.db).
 import sqlite3
+
 # datetime: para generar la fecha/hora que va en el nombre del fichero.
 from datetime import datetime
+
 # Path: manejo de rutas multiplataforma, igual que en config.py.
 from pathlib import Path
 

@@ -1,11 +1,13 @@
-import os
 # logging: modulo estandar de Python para registrar eventos (errores,
 # informacion) en un fichero permanente, en vez de solo con print()
 # que desaparece al cerrar la terminal.
 import logging
+import os
+
 # pathlib.Path: forma moderna de manejar rutas de ficheros/carpetas.
 # Funciona igual en Windows, Linux y Mac (evita liarte con "\" vs "/").
 from pathlib import Path
+
 # dotenv: libreria externa (python-dotenv, instalada con pip) que sabe
 # leer el fichero .env (texto plano tipo CLAVE=valor) y meter esas
 # lineas dentro de las variables de entorno del sistema (os.environ).
@@ -72,7 +74,7 @@ MODELOS = {
     # ya no existe en la API - la version "qwen3.6-27b" sigue viva).
     "groq": [
         "llama-3.3-70b-versatile",  # el que veniamos usando de default
-        "openai/gpt-oss-120b",      # mismo modelo que en Ollama - sirve para comparar proveedor vs modelo
+        "openai/gpt-oss-120b",      # mismo modelo que en Ollama, para comparar proveedor
         "qwen/qwen3.6-27b",         # modelo de razonamiento, bueno con JSON/multilenguaje
     ],
     # Ollama Cloud: los mismos 6 modelos probados el 16-17/07, RENOMBRADOS
@@ -94,7 +96,7 @@ MODELOS = {
         "models/gemini-3.5-flash",       # El mejor, más moderno y recomendado (Rápido y lógico)
         "models/gemini-3.1-flash-lite",  # El más ligero, ideal si haces muchas llamadas seguidas
         "models/gemini-2.5-flash",       # Versión Flash anterior, totalmente operativa y gratuita
-        "models/gemma-4-31b-it",          # El modelo abierto de Google más potente, libre de cuotas estrictas
+        "models/gemma-4-31b-it",    # Modelo abierto de Google, sin cuotas estrictas
     ],
 }
 

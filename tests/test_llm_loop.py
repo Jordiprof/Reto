@@ -7,9 +7,10 @@
 # proveedor FALSO, sin gastar llamadas reales ni depender de ningun SDK.
 import pytest
 
-from src.llm_client import _ProveedorLLM, _MAX_PASOS_DE_HERRAMIENTAS
+from src.llm_client import _MAX_PASOS_DE_HERRAMIENTAS, _ProveedorLLM
 from src.llm_errors import ErrorAutenticacion, ErrorLimitePasos
 from src.llm_types import RespuestaLLM, ToolCall
+
 # F5.0/T6: ProveedorFalso vive en conftest.py (compartido con otros tests
 # que lo necesiten), en vez de duplicado aqui.
 from tests.conftest import ProveedorFalso as _ProveedorFalso

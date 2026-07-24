@@ -1,6 +1,7 @@
 # sys: para forzar la codificacion de la salida estandar a UTF-8 (ver
 # comentario justo debajo).
 import sys
+
 # questionary: libreria para menus interactivos en terminal (flechas + Enter).
 import questionary
 
@@ -17,16 +18,22 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # Traemos de config.py: la funcion para leer la clave del proveedor
 # elegido, el diccionario PROVEEDORES (nombres de proveedor) y MODELOS
 # (lista de modelos disponibles por proveedor).
-from src.config import (
-    obtener_api_key, obtener_modelo_por_defecto,
-    PROVEEDORES, MODELOS, ClaveApiNoConfigurada,
-)
 # F4.5: toda la logica de la conversacion (historial, tools, resumen,
 # guardado) vive ahora en agent.py - main.py solo habla con un Agente
 # a traves de sus metodos, no conoce ni un detalle de como funciona
 # por dentro. Esto es lo que permitira reutilizar Agente con Telegram
 # en Fase 5, sin tocar nada de su logica interna.
-from src.agent import Agente
+# noqa: E402 en las dos siguientes - van DESPUES de sys.stdout.reconfigure()
+# a proposito (ver comentario de arriba): si un import disparara un print()
+# con un caracter raro antes de reconfigurar stdout, el programa reventaria.
+from src.agent import Agente  # noqa: E402
+from src.config import (  # noqa: E402
+    MODELOS,
+    PROVEEDORES,
+    ClaveApiNoConfigurada,
+    obtener_api_key,
+    obtener_modelo_por_defecto,
+)
 
 # SYSTEM PROMPT: instrucciones ESTABLES del asistente (quien es, como
 # habla, que limites tiene). Va una sola vez al principio del historial
@@ -39,15 +46,23 @@ from src.agent import Agente
 # recibia todo el prompt como un unico parrafo aplastado (mismo bug que
 # ya se documento en el diario el 17/07, F2.6b - coleado aqui tambien).
 # Con """ los saltos de linea son literales y no hay forma de que pase.
-SYSTEM_PROMPT = """Eres el asistente personal de Jordi. Hablas siempre en español, de tú, con tono cercano y con chispa - como un amigo que sabe de lo que habla, no como un bot corporativo. Se te permite tener opinión y personalidad propia; no tienes que sonar neutro todo el rato.
+SYSTEM_PROMPT = """Eres el asistente personal de Jordi. Hablas siempre en español, de tú, \
+con tono cercano y con chispa - como un amigo que sabe de lo que habla, no como un bot \
+corporativo. Se te permite tener opinión y personalidad propia; no tienes que sonar \
+neutro todo el rato.
 
 Cómo respondes:
-- Ve al grano, pero sin cortar de más: si la pregunta pide una respuesta corta, que sea corta; si pide explicación, tómate el espacio que haga falta. No fuerces la brevedad cuando resta claridad.
-- Si no sabes algo o no estás seguro, dilo explícitamente en vez de inventar una respuesta que suene convincente.
-- En temas normales puedes opinar con soltura; en política o religión evita mojarte, esquívalo con humor y redirige, sin sermonear.
+- Ve al grano, pero sin cortar de más: si la pregunta pide una respuesta corta, que sea \
+corta; si pide explicación, tómate el espacio que haga falta. No fuerces la brevedad \
+cuando resta claridad.
+- Si no sabes algo o no estás seguro, dilo explícitamente en vez de inventar una \
+respuesta que suene convincente.
+- En temas normales puedes opinar con soltura; en política o religión evita mojarte, \
+esquívalo con humor y redirige, sin sermonear.
 
 Para qué sirves:
-- Recordar tareas, pendientes y cosas que Jordi te cuente sobre su vida, y usarlas cuando vengan a cuento más adelante.
+- Recordar tareas, pendientes y cosas que Jordi te cuente sobre su vida, y usarlas \
+cuando vengan a cuento más adelante.
 - Responder con precisión, ayudar a planificar el día, tomar notas, resumir.
 - Charlar sin más, cuando lo que se busca es compañía, no una tarea.
 
@@ -100,7 +115,10 @@ def main():
     agente = Agente(SYSTEM_PROMPT, proveedor, api_key, modelo)
 
     print(f"Agente listo con {proveedor} ({modelo}).")
-    print("Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar, '/resumen' para resumir.")
+    print(
+        "Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar, "
+        "'/resumen' para resumir."
+    )
 
     # try/finally alrededor de TODO el bucle: asi la conversacion se
     # guarda tanto si sales escribiendo "salir" (break normal) como si

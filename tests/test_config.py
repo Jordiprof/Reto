@@ -5,8 +5,12 @@
 import pytest
 
 from src.config import (
-    obtener_api_key, obtener_modelo_por_defecto,
-    ClaveApiNoConfigurada, PROVEEDORES, MODELOS_ENV, MODELOS,
+    MODELOS,
+    MODELOS_ENV,
+    PROVEEDORES,
+    ClaveApiNoConfigurada,
+    obtener_api_key,
+    obtener_modelo_por_defecto,
 )
 
 
