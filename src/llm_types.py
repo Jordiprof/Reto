@@ -8,6 +8,13 @@
 # RESPUESTA del modelo cuando pide funciones.
 from dataclasses import dataclass, field
 
+# SEG-03: el contador vive aqui (no en llm_router.py ni en llm_client.py)
+# porque lo usan LOS DOS - llm_router.py lo crea una vez por turno,
+# llm_client.py lo consulta en cada vuelta del bucle de tools. Ponerlo en
+# cualquiera de los dos modulos crearia un import circular (llm_router.py ya
+# importa de llm_client.py).
+from src.llm_errors import ErrorPresupuestoAgotado
+
 
 @dataclass
 class ToolCall:
@@ -49,3 +56,27 @@ class RespuestaLLM:
     def pide_tools(self) -> bool:
         """True si el modelo pidio herramientas en vez de responder."""
         return len(self.tool_calls) > 0
+
+
+class PresupuestoLlamadas:
+    """Cuenta cuantas llamadas de red al LLM van gastadas en UN turno de
+    usuario (SEG-03), COMPARTIDO entre todos los eslabones de la cadena del
+    router (proveedores + sus fallbacks) y todos sus reintentos - no es un
+    presupuesto por proveedor, es del turno completo.
+
+    Se crea UNA vez por llamada a LLMRouter.responder() y viaja por todo el
+    camino (router -> responder_proveedor -> _ProveedorLLM.responder) para
+    que la cuenta sea una sola, no una por cada intento.
+    """
+
+    def __init__(self, maximo: int):
+        self.maximo = maximo
+        self.gastadas = 0
+
+    def gastar(self, proveedor: str) -> None:
+        """Se llama justo ANTES de cada llamada real de red. Si ya no queda
+        presupuesto, lanza SIN dejar que esa llamada llegue a hacerse - la
+        llamada que agotaria el presupuesto no se hace, se corta antes."""
+        if self.gastadas >= self.maximo:
+            raise ErrorPresupuestoAgotado(proveedor)
+        self.gastadas += 1

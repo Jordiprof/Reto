@@ -16,11 +16,25 @@ from dataclasses import dataclass
 # router los prueba en orden.
 from src.config import ClaveApiNoConfigurada, obtener_api_key, obtener_modelo_por_defecto
 from src.llm_client import responder_proveedor
-from src.llm_errors import ErrorLLM
+from src.llm_errors import ErrorLLM, ErrorPresupuestoAgotado
+from src.llm_types import PresupuestoLlamadas
 
 # ADR-001: orden oficial de la cadena de proveedores. Anthropic queda fuera
 # porque todavia no esta implementado como proveedor.
 _ORDEN_ADR001 = ["groq", "ollama", "gemini"]
+
+# SEG-03 (hallazgo de la auditoria del 27/07): sin este tope, un solo
+# mensaje del usuario podia disparar hasta 45 llamadas reales al LLM -
+# 3 proveedores x 3 intentos (max_reintentos=2 + el primero) x 5 rondas de
+# tools (_MAX_PASOS_DE_HERRAMIENTAS) cada uno, porque ese limite de 5 es POR
+# INTENTO y se reinicia entero en cada reintento y en cada fallback. El
+# numero elegido (15) es un tercio del peor caso: dentro cabe de sobra un
+# turno normal con varias tools (hasta 5 llamadas) MAS un reintento
+# transitorio MAS un fallback a un segundo proveedor, pero ya no cabe la
+# combinatoria completa de los 3 proveedores agotando reintentos y pasos a
+# la vez. No es limite de seguridad frente a terceros (la allowlist del bot
+# ya cubre eso) sino de COSTE Y CUOTA por turno.
+_MAX_LLAMADAS_POR_TURNO = 15
 
 
 @dataclass
@@ -31,11 +45,12 @@ class Eslabon:
     modelo: str
 
 
-def _llamar_real(eslabon: Eslabon, historial: list, tools: list | None) -> str:
+def _llamar_real(eslabon: Eslabon, historial: list, tools: list | None,
+                 presupuesto: PresupuestoLlamadas) -> str:
     """Como se llama de verdad a un eslabon (se inyecta otra en los tests
     para no tocar la red)."""
     return responder_proveedor(
-        eslabon.proveedor, eslabon.api_key, eslabon.modelo, historial, tools,
+        eslabon.proveedor, eslabon.api_key, eslabon.modelo, historial, tools, presupuesto,
     )
 
 
@@ -48,12 +63,17 @@ class LLMRouter:
     """
 
     def __init__(self, eslabones: list[Eslabon], max_reintentos: int = 2,
-                 backoff_base: float = 1.0, _dormir=time.sleep, _llamar=_llamar_real):
+                 backoff_base: float = 1.0,
+                 max_llamadas_por_turno: int = _MAX_LLAMADAS_POR_TURNO,
+                 _dormir=time.sleep, _llamar=_llamar_real):
         if not eslabones:
             raise ValueError("La cadena del router no puede estar vacia.")
         self.eslabones = eslabones
         self.max_reintentos = max_reintentos
         self.backoff_base = backoff_base
+        # SEG-03: tope compartido por TODOS los eslabones y reintentos de UN
+        # turno - ver PresupuestoLlamadas en src/llm_types.py.
+        self.max_llamadas_por_turno = max_llamadas_por_turno
         # _dormir y _llamar son "costuras" para los tests: se pueden inyectar
         # versiones falsas que ni duermen ni tocan la red.
         self._dormir = _dormir
@@ -64,6 +84,10 @@ class LLMRouter:
 
     def responder(self, historial: list, tools: list | None) -> str:
         ultimo_error = None
+        # Un presupuesto NUEVO por cada turno (cada llamada a responder()) -
+        # se agota junto con este turno, el siguiente mensaje del usuario
+        # empieza con el tope entero otra vez.
+        presupuesto = PresupuestoLlamadas(self.max_llamadas_por_turno)
 
         for indice, eslabon in enumerate(self.eslabones):
             es_primario = (indice == 0)
@@ -71,7 +95,14 @@ class LLMRouter:
             # Bucle de reintentos DENTRO del mismo proveedor.
             for intento in range(self.max_reintentos + 1):
                 try:
-                    texto = self._llamar(eslabon, historial, tools)
+                    texto = self._llamar(eslabon, historial, tools, presupuesto)
+                except ErrorPresupuestoAgotado:
+                    # SEG-03: el presupuesto es del TURNO, no de este
+                    # proveedor - ni reintentar el mismo ni degradar al
+                    # siguiente ayudaria, solo gastarian mas presupuesto sin
+                    # ninguna llamada real de por medio (ver gastar() en
+                    # PresupuestoLlamadas). Se corta en seco.
+                    raise
                 except ErrorLLM as error:
                     ultimo_error = error
                     quedan_reintentos = intento < self.max_reintentos

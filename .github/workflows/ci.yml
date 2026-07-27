@@ -16,7 +16,15 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # SEG-11 (hallazgo de la auditoria del 27/07): antes instalaba
+        # requirements.txt (solo las dependencias directas, sin fijar las
+        # transitivas) mientras requirements-lock.txt -generado aparte con
+        # las 105 versiones exactas- existia pero nadie lo instalaba. El CI
+        # corria con versiones distintas a las que se probaron en local
+        # (drift real medido: huggingface-hub, onnxruntime, certifi...) - el
+        # lockfile no protegia de nada. Ahora el CI instala EXACTAMENTE lo
+        # que esta fijado.
+        run: pip install -r requirements-lock.txt
 
       - name: Lint with ruff
         run: ruff check src tests
@@ -30,5 +38,17 @@ jobs:
         run: python -m pytest -q
 
       - name: Audit dependencies
-        run: pip install pip-audit && pip-audit -r requirements.txt
-        continue-on-error: true
+        # SEG-10 (hallazgo de la auditoria del 27/07): "continue-on-error:
+        # true" hacia que este paso SIEMPRE saliera en verde, incluso
+        # encontrando una CVE real (DEP-01: CVE-2026-45829 / GHSA-f4j7-r4q5-
+        # qw2c en chromadb 1.5.9) - la unica forma de enterarse era leer el
+        # log a mano. Se quita continue-on-error (una CVE nueva SI tumba el
+        # CI) y se ignora, con su ID explicito y documentado, SOLO la que ya
+        # esta evaluada: es una inyeccion de codigo pre-autenticacion en el
+        # endpoint HTTP del SERVIDOR de Chroma, y este proyecto usa
+        # PersistentClient (modo embebido) sin abrir ningun puerto -
+        # verificado, no supuesto (ver Tareas_Pendientes.md, DEP-01). Sin
+        # parche todavia: si alguna vez lo publican, quitar esta linea.
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements-lock.txt --ignore-vuln CVE-2026-45829

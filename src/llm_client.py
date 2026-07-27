@@ -30,7 +30,9 @@ from src.llm_errors import (
 )
 
 # Formas neutras compartidas por los 3 proveedores (F5.0/T1).
-from src.llm_types import RespuestaLLM, ToolCall
+# PresupuestoLlamadas (SEG-03): el contador de llamadas del turno, ver
+# src/llm_types.py para el porque vive ahi.
+from src.llm_types import PresupuestoLlamadas, RespuestaLLM, ToolCall
 
 # HERRAMIENTAS: registro unico de tools (funcion + modelo de args +
 # descripcion). Desde F5.4 no basta con la funcion: hace falta tambien su
@@ -230,18 +232,29 @@ class _ProveedorLLM:
         self.api_key = api_key
         self.modelo = modelo
 
-    def responder(self, historial: list, tools: list | None) -> str:
+    def responder(self, historial: list, tools: list | None,
+                  presupuesto: PresupuestoLlamadas | None = None) -> str:
         """El bucle unico. Recibe el historial canonico y, opcionalmente, la
         lista de tools disponibles (None = modo sin herramientas). Devuelve
         el texto final de la respuesta - todo el ir y venir de tool-calling
         queda resuelto aqui dentro.
+
+        presupuesto (SEG-03): lo crea LLMRouter.responder() una vez por
+        turno y viaja hasta aqui - None cuando se llama a este metodo
+        directamente (p.ej. los tests del bucle en tests/test_llm_loop.py),
+        en cuyo caso no hay limite compartido que comprobar.
         """
         estado = self._estado_inicial(historial, tools)
 
         for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
-            # _llamar() puede lanzar ErrorLLM (auth, conexion, limite...) -
-            # NO se atrapa aqui: sube tal cual a quien llamo a responder(),
-            # que decide que hacer (agent.py, y mas adelante el router T4).
+            # Se gasta ANTES de llamar, no despues: si ya no queda
+            # presupuesto, esta llamada real ni se hace.
+            if presupuesto is not None:
+                presupuesto.gastar(self._nombre)
+            # _llamar() puede lanzar ErrorLLM (auth, conexion, limite,
+            # presupuesto agotado...) - NO se atrapa aqui: sube tal cual a
+            # quien llamo a responder(), que decide que hacer (agent.py, y
+            # el router T4).
             respuesta = self._llamar(estado)
 
             if not respuesta.pide_tools:
@@ -603,12 +616,16 @@ _PROVEEDORES = {
 
 
 def responder_proveedor(proveedor: str, api_key: str, modelo: str,
-                        historial: list, tools: list | None) -> str:
+                        historial: list, tools: list | None,
+                        presupuesto: PresupuestoLlamadas | None = None) -> str:
     """Ejecuta el bucle completo en UN proveedor concreto y devuelve el
     texto final. Es el UNICO punto de entrada publico desde F5.0/T4: el
     router (src/llm_router.py) lo llama para cada eslabon de la cadena -
     si este proveedor falla, el router captura el ErrorLLM y decide si
     reintentar o degradar al siguiente. Nada mas llama a esto directamente
     (ni siquiera Agente, que solo conoce al router).
+
+    presupuesto (SEG-03): se reenvia tal cual - lo crea el router una vez
+    por turno y es el mismo objeto para todos los eslabones que se prueben.
     """
-    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools)
+    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools, presupuesto)

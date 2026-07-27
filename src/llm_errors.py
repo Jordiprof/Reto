@@ -78,3 +78,22 @@ class ErrorLimitePasos(ErrorLLM):
     plantilla_usuario = (
         "el agente no llegó a una respuesta final tras varios pasos de herramientas."
     )
+
+
+class ErrorPresupuestoAgotado(ErrorLLM):
+    """Se agoto el presupuesto de llamadas al LLM de ESTE turno (SEG-03,
+    hallazgo de la auditoria del 27/07): sin este limite, un solo mensaje
+    podia disparar hasta 45 llamadas reales (3 proveedores x 3 intentos x 5
+    rondas de tools) porque el presupuesto de pasos (_MAX_PASOS_DE_HERRAMIENTAS)
+    es POR PROVEEDOR, y el router lo reinicia entero en cada reintento y en
+    cada fallback. No es un riesgo frente a terceros (la allowlist del bot
+    ya lo cubre) sino de COSTE Y CUOTA: un turno mal encaminado podia agotar
+    la cuota diaria de un proveedor entero.
+
+    NO reintentable: el presupuesto es del turno completo, no de un
+    proveedor - reintentar el mismo o degradar al siguiente solo gastaria
+    mas presupuesto sin sentido (ver LLMRouter.responder)."""
+    plantilla_usuario = (
+        "se alcanzó el límite de llamadas al modelo en este turno; "
+        "intenta reformular la pregunta en un mensaje nuevo."
+    )

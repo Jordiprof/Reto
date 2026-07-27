@@ -8,8 +8,8 @@
 import pytest
 
 from src.llm_client import _MAX_PASOS_DE_HERRAMIENTAS, _ProveedorLLM
-from src.llm_errors import ErrorAutenticacion, ErrorLimitePasos
-from src.llm_types import RespuestaLLM, ToolCall
+from src.llm_errors import ErrorAutenticacion, ErrorLimitePasos, ErrorPresupuestoAgotado
+from src.llm_types import PresupuestoLlamadas, RespuestaLLM, ToolCall
 
 # F5.0/T6: ProveedorFalso vive en conftest.py (compartido con otros tests
 # que lo necesiten), en vez de duplicado aqui.
@@ -95,3 +95,36 @@ def test_tool_call_con_error_de_args_no_ejecuta_la_tool():
 
     assert final == "Vale, hubo un error con los argumentos."
     assert prov.resultados_registrados == [("calcular", "Error: argumentos no válidos")]
+
+
+# --- SEG-03: presupuesto de llamadas compartido por turno --------------
+
+def test_presupuesto_agotado_corta_el_bucle_antes_de_la_llamada():
+    """Aunque el modelo siga pidiendo tools sin parar, el bucle NO hace mas
+    llamadas reales de las que quedan en el presupuesto del turno - se
+    corta con ErrorPresupuestoAgotado en vez de seguir hasta
+    _MAX_PASOS_DE_HERRAMIENTAS (SEG-03)."""
+    respuestas = [
+        RespuestaLLM(tool_calls=[ToolCall(nombre="calcular", argumentos={"expresion": "1 + 1"})])
+        for _ in range(_MAX_PASOS_DE_HERRAMIENTAS)
+    ]
+    prov = _ProveedorFalso(respuestas)
+    presupuesto = PresupuestoLlamadas(maximo=2)
+
+    with pytest.raises(ErrorPresupuestoAgotado):
+        prov.responder(historial=[], tools=["hay tools"], presupuesto=presupuesto)
+
+    assert presupuesto.gastadas == 2
+    # Solo se consumieron 2 de las respuestas programadas: la 3a llamada
+    # real ni se llego a hacer.
+    assert len(prov._respuestas) == _MAX_PASOS_DE_HERRAMIENTAS - 2
+
+
+def test_sin_presupuesto_no_hay_limite_compartido():
+    """presupuesto=None (el default) es el comportamiento de siempre: sin
+    limite compartido, solo manda _MAX_PASOS_DE_HERRAMIENTAS - asi los
+    tests del bucle de mas arriba, que no pasan presupuesto, siguen
+    funcionando igual que antes de SEG-03."""
+    prov = _ProveedorFalso([RespuestaLLM(texto="Hola")])
+
+    assert prov.responder(historial=[], tools=None) == "Hola"
