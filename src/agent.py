@@ -72,6 +72,14 @@ class Agente:
         self.historial.append({"role": "assistant", "content": respuesta})
         return respuesta
 
+    def limpiar_historial(self) -> None:
+        """Comandos CLI (F5): borra la conversacion en curso pero MANTIENE el system
+        prompt (historial[0]). Para el comando /limpiar: empezar de cero
+        sin reiniciar el programa ni perder quien es el asistente.
+        OJO: no toca lo ya guardado en disco ni la memoria semantica -
+        solo el historial de ESTA sesion en memoria."""
+        self.historial = self.historial[:1]
+
     def resumir(self) -> str:
         """F3.6: pide al modelo un resumen de la conversacion hasta
         ahora, SIN guardar ni la peticion ni el resumen en el historial
@@ -86,7 +94,8 @@ class Agente:
         except ErrorLLM as error:
             return error.mensaje_usuario
 
-    def guardar(self):
+    def guardar(self, nombre: str | None = None):
         """Delega en storage.py - devuelve la ruta del fichero, o None
-        si no habia nada real que guardar (ver storage.py)."""
-        return guardar_conversacion(self.historial, self.proveedor, self.modelo)
+        si no habia nada real que guardar (ver storage.py). "nombre" es la
+        etiqueta opcional que Jordi pone al guardar (F5.3+)."""
+        return guardar_conversacion(self.historial, self.proveedor, self.modelo, nombre)

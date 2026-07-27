@@ -148,6 +148,49 @@ def calcular(expresion: str) -> float:
     return _evaluar_nodo(arbol)
 
 
+# F5.3: tool de memoria semantica. Deja que el agente busque en las
+# conversaciones pasadas por SIGNIFICADO ("¿que me dijo sobre X?").
+_LONGITUD_MAXIMA_CONSULTA = 300
+
+
+class ArgsBuscarRecuerdos(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    consulta: str = Field(
+        description=(
+            "Lo que quieres recordar de conversaciones anteriores, en "
+            "lenguaje natural. Ej.: 'la cita del médico' o 'lo que dije "
+            "sobre el proyecto'. Busca por significado, no por palabras exactas."
+        ),
+        max_length=_LONGITUD_MAXIMA_CONSULTA,
+    )
+
+
+def buscar_en_recuerdos(consulta: str) -> str:
+    """Busca en la memoria semantica (RAG local) y formatea los resultados
+    para que los lea el modelo.
+
+    Import perezoso de rag: arrastra fastembed/chromadb, que son pesados -
+    no queremos pagarlos solo por importar tools.py (p. ej. en los tests de
+    la calculadora, que no tocan el RAG).
+    """
+    from src.rag import buscar
+
+    resultados = buscar(consulta)
+    if not resultados:
+        return "No encontré nada relevante en conversaciones anteriores."
+
+    lineas = []
+    for recuerdo in resultados:
+        fecha = recuerdo["fecha"][:10] if recuerdo["fecha"] else "fecha desconocida"
+        quien = "JIM dijo" if recuerdo["rol"] == "user" else "tú respondiste"
+        # Si la conversacion tenia nombre, se añade como contexto: ayuda al
+        # modelo a situar de que charla salio el recuerdo (F5.3+).
+        titulo = f' (conversación "{recuerdo["nombre"]}")' if recuerdo.get("nombre") else ""
+        lineas.append(f"[{fecha}]{titulo} {quien}: {recuerdo['texto']}")
+    return "\n".join(lineas)
+
+
 # F5.4: UNA entrada por herramienta, con las tres cosas que la definen
 # juntas: la funcion real, el modelo que valida sus argumentos y la
 # descripcion que lee el LLM. Antes la ficha de TOOLS se escribia a mano
@@ -172,6 +215,15 @@ HERRAMIENTAS = {
             "Evalua una expresion aritmetica (suma, resta, multiplicacion, "
             "division). Usala siempre que el usuario pida un calculo, en vez "
             "de inventar el resultado de memoria."
+        ),
+    ),
+    "buscar_en_recuerdos": Herramienta(
+        funcion=buscar_en_recuerdos,
+        args=ArgsBuscarRecuerdos,
+        descripcion=(
+            "Busca en las conversaciones anteriores con JIM por significado. "
+            "Usala cuando pregunte por algo que os contó o hablasteis antes "
+            "(citas, tareas, datos de su vida), en vez de decir que no lo sabes."
         ),
     ),
 }

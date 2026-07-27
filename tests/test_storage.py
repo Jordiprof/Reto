@@ -17,6 +17,7 @@ from src.storage import (
     cargar_conversacion,
     cifrado_activo,
     guardar_conversacion,
+    leer_metadatos,
     listar_conversaciones,
 )
 
@@ -177,6 +178,43 @@ def test_cifrado_activo_refleja_la_configuracion(con_clave, monkeypatch):
 
     monkeypatch.delenv("CONVERSATIONS_KEY")
     assert cifrado_activo() is False
+
+
+# --- F5.3+: nombre de conversacion y lectura de metadatos ------------
+
+
+def test_el_nombre_se_guarda_en_metadatos(entorno_aislado, sin_clave):
+    """El nombre que pone Jordi al guardar queda en los metadatos, en
+    claro (no en el historial, que puede ir cifrado)."""
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m", nombre="Ideas de herramientas")
+
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    assert datos["nombre"] == "Ideas de herramientas"
+
+
+def test_leer_metadatos_no_necesita_la_clave(entorno_aislado, con_clave, monkeypatch):
+    """/historial debe listar las sesiones aunque NO haya clave: los
+    metadatos (fecha, nombre, proveedor) van en claro. Se guarda cifrado,
+    se quita la clave, y aun asi leer_metadatos funciona."""
+    ruta = guardar_conversacion(HISTORIAL, "gemini", "m", nombre="Cita médico")
+    monkeypatch.delenv("CONVERSATIONS_KEY")  # ya no hay clave
+
+    meta = leer_metadatos(ruta)
+
+    assert meta["nombre"] == "Cita médico"
+    assert meta["proveedor"] == "gemini"
+    assert meta["cifrado"] is True
+    # cargar_conversacion SI fallaria (necesita la clave); leer_metadatos no.
+    with pytest.raises(ConversacionNoDescifrable):
+        cargar_conversacion(ruta)
+
+
+def test_nombre_vacio_si_no_se_pone(entorno_aislado, sin_clave):
+    """Sin nombre, el campo queda como cadena vacia (no None), para que
+    /historial pueda mostrar '(sin nombre)' sin casos especiales."""
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m")
+
+    assert leer_metadatos(ruta)["nombre"] == ""
 
 
 def test_listar_conversaciones_ordena_cronologicamente(entorno_aislado, sin_clave):

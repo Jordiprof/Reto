@@ -146,13 +146,21 @@ def _indexar_en_sqlite(ruta_json: Path, proveedor: str, modelo: str, num_mensaje
         )
 
 
-def guardar_conversacion(historial: list, proveedor: str, modelo: str) -> Path | None:
+def guardar_conversacion(
+    historial: list, proveedor: str, modelo: str, nombre: str | None = None
+) -> Path | None:
     """Guarda la conversacion en un .json con fecha/hora en el nombre.
 
     Devuelve la ruta del fichero creado, o None si no habia nada real que
     guardar (el usuario escribio "salir" sin llegar a preguntar nada: el
     historial solo tiene el system prompt, ni un turno de conversacion).
     Evita llenar conversations/ de ficheros basura de sesiones vacias.
+
+    F5.3+: "nombre" es una etiqueta opcional que pone Jordi al guardar (ej.
+    "Ideas de herramientas"). Se guarda en los METADATOS en claro, no en el
+    nombre del fichero (que sigue siendo la marca de tiempo, para ordenar y
+    no chocar). Sirve para que /historial liste las sesiones con un titulo
+    reconocible; la busqueda semantica sigue yendo por el CONTENIDO.
     """
     # historial[0] es siempre el system prompt (ver main.py); si no hay
     # nada mas, no hubo conversacion que merezca guardarse.
@@ -162,7 +170,12 @@ def guardar_conversacion(historial: list, proveedor: str, modelo: str) -> Path |
     # strftime con "-" en vez de ":" (Windows no permite ":" en nombres de
     # fichero) y en orden año-mes-dia_hora-min-seg: ordena alfabeticamente
     # igual que cronologicamente.
-    marca_tiempo = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # "-%f" (microsegundos) al final: F5.3 destapo que dos guardados en el
+    # MISMO segundo generaban el mismo nombre y el segundo pisaba al primero
+    # (perdida de datos silenciosa). Raro en la CLI, pero posible con el bot
+    # de Telegram (F5.2) o un uso rapido. Los microsegundos siguen ordenando
+    # bien y hacen la colision practicamente imposible.
+    marca_tiempo = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     ruta = CONVERSATIONS_DIR / f"{marca_tiempo}.json"
 
     # Envolvemos el historial con metadatos. OJO: proveedor/modelo son los
@@ -186,6 +199,10 @@ def guardar_conversacion(historial: list, proveedor: str, modelo: str) -> Path |
         "fecha": datetime.now().isoformat(),
         "proveedor": proveedor,
         "modelo": modelo,
+        # nombre en claro (como fecha/proveedor): asi /historial puede
+        # listarlo SIN necesitar la clave de descifrado. Si Jordi no puso
+        # ninguno, queda cadena vacia.
+        "nombre": (nombre or "").strip(),
         # El marcador es lo que hace posible convivir con los ficheros
         # antiguos (guardados antes de F5.3, sin esta clave) y saber si un
         # fallo al leer es "clave mala" o "fichero en claro de siempre".
@@ -236,6 +253,27 @@ def cargar_conversacion(ruta: Path) -> dict:
 
     datos["historial"] = _descifrar_historial(datos["historial"], clave)
     return datos
+
+
+def leer_metadatos(ruta: Path) -> dict:
+    """Lee SOLO los metadatos de una conversacion (fecha, nombre, proveedor,
+    modelo), sin tocar el historial. Pensada para /historial: lista las
+    sesiones pasadas SIN necesitar la clave de cifrado (los metadatos van
+    en claro) ni cargar/descifrar todo el contenido.
+
+    Devuelve tambien "cifrado" por si quien llame quiere avisar de cuales
+    podra abrir. num_mensajes NO se incluye: sacarlo obligaria a descifrar.
+    """
+    with open(ruta, encoding="utf-8") as fichero:
+        datos = json.load(fichero)
+    return {
+        "ruta": ruta,
+        "fecha": datos.get("fecha", ""),
+        "nombre": datos.get("nombre", ""),
+        "proveedor": datos.get("proveedor", ""),
+        "modelo": datos.get("modelo", ""),
+        "cifrado": datos.get("cifrado", False),
+    }
 
 
 def listar_conversaciones() -> list[Path]:

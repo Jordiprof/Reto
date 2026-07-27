@@ -45,3 +45,20 @@ def test_turno_normal_si_se_guarda_en_historial():
 
     assert respuesta == "Hola, ¿en qué te ayudo?"
     assert [m["role"] for m in agente.historial] == ["system", "user", "assistant"]
+
+
+# --- Comandos CLI (F5): comando /limpiar -----------------------------
+
+
+def test_limpiar_historial_conserva_el_system_prompt():
+    """/limpiar borra la conversacion pero NO quien es el asistente: el
+    system prompt (historial[0]) tiene que seguir ahi, o el agente
+    'olvidaria' su personalidad y sus reglas de honestidad."""
+    agente = Agente(system_prompt="Eres un tutor.", proveedor="groq", api_key="x", modelo="fake")
+    agente.router = _RouterFalso(texto="ok")
+    agente.preguntar("Hola")
+    agente.preguntar("¿Qué tal?")
+
+    agente.limpiar_historial()
+
+    assert agente.historial == [{"role": "system", "content": "Eres un tutor."}]
