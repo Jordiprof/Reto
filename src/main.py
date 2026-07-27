@@ -1,3 +1,6 @@
+# logging: para dejar constancia si la memoria semantica no carga (F5.3).
+import logging
+
 # sys: para forzar la codificacion de la salida estandar a UTF-8 (ver
 # comentario justo debajo).
 import sys
@@ -35,10 +38,16 @@ from src.config import (  # noqa: E402
     obtener_modelo_por_defecto,
 )
 
-# cifrado_activo: para avisar al arrancar si las conversaciones se van a
-# guardar sin cifrar (F5.3). main.py es la capa que habla con el usuario;
-# storage.py solo expone el dato, no imprime nada.
-from src.storage import cifrado_activo  # noqa: E402
+# storage: cifrado_activo (avisar si se guarda sin cifrar), y para el
+# comando /historial, listar/leer los metadatos de sesiones pasadas SIN
+# descifrarlas. main.py es la capa que habla con el usuario.
+from src.storage import (  # noqa: E402
+    ConversacionNoDescifrable,
+    cargar_conversacion,
+    cifrado_activo,
+    leer_metadatos,
+    listar_conversaciones,
+)
 
 # SYSTEM PROMPT: instrucciones ESTABLES del asistente (quien es, como
 # habla, que limites tiene). Va una sola vez al principio del historial
@@ -51,23 +60,33 @@ from src.storage import cifrado_activo  # noqa: E402
 # recibia todo el prompt como un unico parrafo aplastado (mismo bug que
 # ya se documento en el diario el 17/07, F2.6b - coleado aqui tambien).
 # Con """ los saltos de linea son literales y no hay forma de que pase.
-SYSTEM_PROMPT = """Eres el asistente personal de Jordi. Hablas siempre en español, de tú, \
-con tono cercano y con chispa - como un amigo que sabe de lo que habla, no como un bot \
-corporativo. Se te permite tener opinión y personalidad propia; no tienes que sonar \
-neutro todo el rato.
+SYSTEM_PROMPT = """Eres el asistente personal de JIM, y JIM es el jefe: sus \
+indicaciones mandan siempre. Hablas en español, de tú, con tono cercano, cálido y con \
+chispa - como un amigo de confianza que sabe de lo que habla, no como un bot \
+corporativo. Tienes personalidad propia y puedes opinar; no suenes neutro todo el rato.
+
+Honestidad (esto es lo más importante de todo):
+- NUNCA te inventes nada: ni nombres, ni fechas, ni datos, ni hechos. Si no lo sabes, \
+dilo claro y sin rodeos ("no lo sé", "eso no lo tengo guardado").
+- Antes de decir que no sabes algo que JIM te contó, BÚSCALO en tu memoria con la \
+herramienta buscar_en_recuerdos. Solo si ahí tampoco aparece, admítelo con honestidad.
+- Quedar bien inventando una respuesta que suene convincente es el PEOR error que \
+puedes cometer. Siempre es mejor un "no lo sé" sincero que un dato falso.
 
 Cómo respondes:
-- Ve al grano, pero sin cortar de más: si la pregunta pide una respuesta corta, que sea \
-corta; si pide explicación, tómate el espacio que haga falta. No fuerces la brevedad \
-cuando resta claridad.
-- Si no sabes algo o no estás seguro, dilo explícitamente en vez de inventar una \
-respuesta que suene convincente.
-- En temas normales puedes opinar con soltura; en política o religión evita mojarte, \
-esquívalo con humor y redirige, sin sermonear.
+- Ve al grano, pero sin cortar de más: respuesta corta si la pregunta es corta; \
+tómate el espacio que haga falta si pide explicación. No fuerces la brevedad si resta \
+claridad.
+- En temas normales opina con soltura; en política o religión no te mojes, esquívalo \
+con humor y redirige, sin sermonear.
+
+Tu memoria:
+- Tienes memoria de TODAS las conversaciones anteriores con JIM, no solo de esta, a \
+través de buscar_en_recuerdos. Úsala siempre que pregunte por algo de antes (su \
+nombre, un dato suyo, una cita, algo que hablasteis) en vez de inventar o suponer.
 
 Para qué sirves:
-- Recordar tareas, pendientes y cosas que Jordi te cuente sobre su vida, y usarlas \
-cuando vengan a cuento más adelante.
+- Recordar tareas, pendientes y cosas que JIM te cuente, y usarlas más adelante.
 - Responder con precisión, ayudar a planificar el día, tomar notas, resumir.
 - Charlar sin más, cuando lo que se busca es compañía, no una tarea.
 
@@ -78,6 +97,93 @@ Cómo actúas:
 Siempre en español, aunque te escriban en otro idioma."""
 
 
+# Comandos CLI (F5): colores ANSI para distinguir de un vistazo quien habla. Windows 11
+# + PowerShell moderno los soporta. Si algun terminal no los entendiera, se
+# verian los codigos como texto - por eso se aislan aqui, faciles de quitar.
+_AZUL = "\033[96m"    # etiqueta "Tú:"
+_VERDE = "\033[92m"   # etiqueta "Agente:"
+_RESET = "\033[0m"    # vuelve al color normal
+
+# Centinela para la opcion "Volver" en los menus encadenados (proveedor ->
+# modelo). Un object() y no un string ("__volver__"): un string PODRIA
+# colisionar algun dia con un id de modelo real; un object() nunca.
+VOLVER = object()
+
+
+# Comandos CLI (F5): registro UNICO de comandos (nombre -> descripcion). Es la fuente de
+# verdad tanto del menu navegable (/comandos) como de la referencia rapida.
+# Todos empiezan por "/" (peticion de Jordi): asi un comando nunca se
+# confunde con una pregunta normal al agente.
+COMANDOS = {
+    "/modelo": "Cambiar el modelo (mismo proveedor)",
+    "/proveedor": "Cambiar de proveedor (y modelo)",
+    "/historial": "Ver tus conversaciones guardadas (con fecha y nombre)",
+    "/resumen": "Pedir un resumen de la conversación",
+    "/limpiar": "Borrar esta conversación y empezar de cero",
+    "/guardar": "Guardar la conversación ahora, sin salir",
+    "/salir": "Terminar (te preguntaré si guardar)",
+}
+
+
+def menu_comandos() -> str | None:
+    """Menu navegable con flechas (como /modelo y /proveedor) que lista los
+    comandos. Devuelve el elegido, o None si se cancela (Esc)."""
+    return questionary.select(
+        "Comandos disponibles:",
+        choices=[
+            questionary.Choice(f"{nombre}  —  {desc}", value=nombre)
+            for nombre, desc in COMANDOS.items()
+        ],
+    ).ask()
+
+
+def pedir_nombre_conversacion() -> str | None:
+    """F5.3+: pide una etiqueta opcional al guardar (ej. "Ideas de
+    herramientas"). Enter sin escribir = sin nombre. Sirve para reconocer
+    la conversacion luego en /historial."""
+    nombre = questionary.text("Ponle un nombre (Enter para omitir):").ask()
+    return (nombre or "").strip() or None
+
+
+def elegir_conversacion(rutas: list) -> object | None:
+    """Menu navegable (flechas + Enter, idea de Jordi 25/07) con las
+    conversaciones guardadas, fecha+nombre+proveedor por opcion, de la mas
+    reciente a la mas antigua. Devuelve la Path elegida, o None si se
+    cancela (Esc) - mismo patron que elegir_proveedor/elegir_modelo."""
+    opciones = []
+    for ruta in reversed(rutas):
+        meta = leer_metadatos(ruta)
+        fecha = meta["fecha"][:16].replace("T", " ") or "sin fecha"
+        titulo = meta["nombre"] or "(sin nombre)"
+        candado = " 🔒" if meta["cifrado"] else ""
+        etiqueta = f"{fecha} · {titulo} · {meta['proveedor']}{candado}"
+        opciones.append(questionary.Choice(etiqueta, value=ruta))
+
+    return questionary.select(
+        f"Tienes {len(rutas)} conversación(es) guardada(s):",
+        choices=opciones,
+    ).ask()
+
+
+def mostrar_conversacion(ruta) -> None:
+    """Abre una conversacion guardada y la imprime turno a turno.
+
+    Descifra sola si hace falta (via cargar_conversacion) - si falta la
+    clave o no es la correcta, avisa con claridad en vez de reventar
+    (RNF-02), sin tocar el resto del programa.
+    """
+    try:
+        datos = cargar_conversacion(ruta)
+    except ConversacionNoDescifrable as error:
+        print(f"⚠️ {error}")
+        return
+
+    # historial[0] es el system prompt: no es parte de "lo que se dijo".
+    for mensaje in datos["historial"][1:]:
+        quien = f"{_AZUL}Tú:{_RESET}" if mensaje["role"] == "user" else f"{_VERDE}Agente:{_RESET}"
+        print(f"  {quien} {mensaje['content']}")
+
+
 def elegir_proveedor() -> str:
     """Muestra un menu de flechas con los proveedores disponibles."""
     return questionary.select(
@@ -86,34 +192,74 @@ def elegir_proveedor() -> str:
     ).ask()
 
 
-def elegir_modelo(proveedor: str) -> str:
+def elegir_modelo(proveedor: str, permitir_volver: bool = False) -> str | object | None:
     """Muestra un menu de flechas con los modelos del proveedor ya elegido.
 
     F5.0/T5: el modelo por defecto del .env aparece YA preseleccionado (basta
     pulsar Enter para usarlo). questionary exige que 'default' sea uno de los
     choices, asi que si el modelo del .env no esta en el catalogo, no se pasa
-    (queda seleccionado el primero de la lista)."""
+    (queda seleccionado el primero de la lista).
+
+    permitir_volver (25/07): si True, añade al FINAL una opcion "Volver" que
+    devuelve el centinela VOLVER (no un modelo real) - asi quien llame puede
+    reabrir el menu de proveedor sin que Esc/Ctrl+C sea la unica salida.
+    Desde /modelo no tiene sentido (no hay "proveedor" al que volver), por
+    eso el flag es False por defecto y no un comportamiento fijo."""
+    # Copia, no el catalogo original: igual que _limpiar_schema_para_gemini
+    # con TOOLS, no se muta una lista compartida por todo el programa.
     catalogo = MODELOS[proveedor]
+    opciones = list(catalogo)
+    if permitir_volver:
+        opciones.append(questionary.Choice("⬅ Volver a elegir proveedor", value=VOLVER))
+
     por_defecto = obtener_modelo_por_defecto(proveedor)
     return questionary.select(
         "¿Qué modelo quieres usar?",
-        choices=catalogo,
+        choices=opciones,
         default=por_defecto if por_defecto in catalogo else None,
     ).ask()
 
 
+def elegir_proveedor_y_modelo() -> tuple[str, str, str] | None:
+    """Bucle proveedor -> modelo -> api_key, con "volver" real (25/07): si
+    en el menu de modelo eliges "Volver", se reabre el de proveedor en vez
+    de dejarte tirado. Devuelve (proveedor, modelo, api_key), o None si se
+    cancela con Ctrl+C en cualquier punto - CANCELAR no es lo mismo que
+    VOLVER: cancelar aborta todo, volver reabre el paso anterior.
+
+    questionary.ask() ATRAPA el Ctrl+C el solo (no llega como
+    KeyboardInterrupt normal) y devuelve None en su lugar - por eso hay que
+    comprobarlo a mano en cada paso. Bug real encontrado el 25/07: sin esto,
+    un Ctrl+C en el menu seguia adelante y creaba un Agente con modelo=None
+    ("Agente listo con groq (None)").
+    """
+    while True:
+        proveedor = elegir_proveedor()
+        if proveedor is None:
+            return None
+        modelo = elegir_modelo(proveedor, permitir_volver=True)
+        if modelo is None:
+            return None
+        if modelo is VOLVER:
+            continue
+        # F5.0/T2 (AUD-06): si falta la API key en .env, avisar con claridad
+        # en vez de reventar (RNF-02). Antes esto mataba el programa entero;
+        # ahora vuelve al menu de proveedor - se puede elegir otro sin
+        # reiniciar.
+        try:
+            api_key = obtener_api_key(proveedor)
+        except ClaveApiNoConfigurada as error:
+            print(f"⚠️ {error}")
+            continue
+        return proveedor, modelo, api_key
+
+
 def main():
-    # Primero se elige el proveedor...
-    proveedor = elegir_proveedor()
-    # ...y con ese proveedor ya sabido, se elige uno de sus 3 modelos.
-    modelo = elegir_modelo(proveedor)
-    # F5.0/T2 (AUD-06): si falta la API key en .env, avisar con claridad y
-    # salir - NO reventar con un traceback (RNF-02).
-    try:
-        api_key = obtener_api_key(proveedor)
-    except ClaveApiNoConfigurada as error:
-        print(f"⚠️ {error}")
+    eleccion = elegir_proveedor_y_modelo()
+    if eleccion is None:
+        print("Cancelado.")
         return
+    proveedor, modelo, api_key = eleccion
 
     # El Agente es quien lleva de verdad la conversacion (historial,
     # tools, resumen, guardado) - main.py solo lo crea y le pregunta.
@@ -129,10 +275,29 @@ def main():
             "⚠️ Las conversaciones se guardaran SIN CIFRAR "
             "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
         )
-    print(
-        "Escribe 'salir' para terminar, '/modelo' o '/proveedor' para cambiar, "
-        "'/resumen' para resumir."
-    )
+    # F5.3: carga la memoria semantica de conversaciones pasadas para que el
+    # agente pueda "recordar" dias anteriores (tool buscar_en_recuerdos)
+    # desde el primer mensaje. La primera vez descarga el modelo (~220MB) y
+    # tarda; las siguientes solo indexa lo nuevo. Si algo falla (deps,
+    # indice), se avisa pero el agente SIGUE VIVO (RNF-02): la memoria
+    # semantica es un extra, no un requisito para conversar.
+    print("Cargando memoria semántica...", end=" ", flush=True)
+    try:
+        from src.rag import indexar_conversaciones
+
+        nuevos = indexar_conversaciones()
+        print(f"{nuevos} recuerdo(s) nuevo(s) indexado(s).")
+    except Exception as error:
+        logging.warning("No se pudo cargar la memoria semantica: %s", error)
+        print("no disponible (el agente funciona igual).")
+
+    print("Escribe /comandos para ver todo lo que puedo hacer, o /salir para terminar.")
+
+    # F5.3: marca si se salio con "salir" (limpio) o con Ctrl+C. Solo tras
+    # una salida limpia se PREGUNTA si guardar (ver el finally); tras un
+    # Ctrl+C se guarda por defecto, sin preguntar - el usuario ya corto de
+    # golpe y mejor no arriesgarse a perder la conversacion.
+    salida_limpia = False
 
     # try/finally alrededor de TODO el bucle: asi la conversacion se
     # guarda tanto si sales escribiendo "salir" (break normal) como si
@@ -140,16 +305,63 @@ def main():
     # ejecuta siempre, pase lo que pase dentro del bucle.
     try:
         while True:
-            pregunta = input("Tú: ")
+            pregunta = input(f"{_AZUL}Tú:{_RESET} ")
             comando = pregunta.strip().lower()
 
-            if comando == "salir":
-                print("Agente: ¡Hasta luego!")
+            # Comandos CLI (F5): /comandos (o /ayuda) abre el menu navegable con flechas y
+            # devuelve el comando elegido; a partir de ahi se maneja igual que
+            # si Jordi lo hubiera escrito. Esc en el menu = None -> se ignora.
+            if comando in ("/comandos", "/ayuda", "/help"):
+                elegido = menu_comandos()
+                if elegido is None:
+                    continue
+                comando = elegido
+
+            if comando in ("/salir", "salir"):
+                print(f"{_VERDE}Agente:{_RESET} ¡Hasta luego!")
+                salida_limpia = True
                 break
+
+            # F5.3+: /historial lista las CONVERSACIONES PASADAS guardadas,
+            # con su fecha y el nombre que les pusiste. Es un menu NAVEGABLE
+            # (idea de Jordi, 25/07): eliges una con las flechas y se abre
+            # entera (descifrandola si hace falta - ver mostrar_conversacion).
+            if comando == "/historial":
+                rutas = listar_conversaciones()
+                if not rutas:
+                    print("(aún no hay conversaciones guardadas)")
+                    continue
+                elegida = elegir_conversacion(rutas)
+                if elegida is not None:
+                    mostrar_conversacion(elegida)
+                continue
+
+            # Comandos CLI (F5): borrar la conversacion en curso, manteniendo quien es el
+            # asistente (el system prompt). No toca lo ya guardado en disco.
+            if comando == "/limpiar":
+                agente.limpiar_historial()
+                print("Conversación borrada. Empezamos de cero.")
+                continue
+
+            # Comandos CLI (F5): guardar ahora mismo, sin salir del programa.
+            if comando == "/guardar":
+                ruta = agente.guardar(pedir_nombre_conversacion())
+                if ruta:
+                    print(f"Guardado en conversations/{ruta.name}")
+                else:
+                    print("No hay nada que guardar todavía.")
+                continue
 
             # Comando para cambiar solo el modelo, sin tocar el proveedor.
             if comando == "/modelo":
-                modelo = elegir_modelo(proveedor)
+                nuevo_modelo = elegir_modelo(proveedor)
+                # Esc (o Ctrl+C dentro del menu) devuelve None sin avisar -
+                # mismo bug que en el arranque (ver comentario en main()).
+                # "atras" en questionary ES Esc: cancela y vuelve aqui.
+                if nuevo_modelo is None:
+                    print("Cancelado, sigues con el modelo anterior.")
+                    continue
+                modelo = nuevo_modelo
                 agente.cambiar_modelo(modelo)
                 print(f"Modelo cambiado a: {modelo}")
                 continue  # vuelve al principio del bucle, no manda nada al LLM
@@ -160,17 +372,13 @@ def main():
             # tal cual (formato canonico, ver F3.1). Puedes empezar a hablar
             # con Groq y seguir la MISMA charla con Gemini.
             if comando == "/proveedor":
-                nuevo_proveedor = elegir_proveedor()
-                nuevo_modelo = elegir_modelo(nuevo_proveedor)
-                # Si falta la API key de este proveedor, avisamos y
-                # seguimos con el proveedor/modelo que ya teniamos (RNF-02:
-                # avisa y sigue vivo, en vez de perder la sesion en curso).
-                try:
-                    api_key = obtener_api_key(nuevo_proveedor)
-                except ClaveApiNoConfigurada as error:
-                    print(f"⚠️ {error}")
+                # elegir_proveedor_y_modelo() ya incluye el "volver" (25/07)
+                # y el aviso de clave ausente sin salirse del bucle.
+                eleccion = elegir_proveedor_y_modelo()
+                if eleccion is None:
+                    print("Cancelado, sigues con el proveedor anterior.")
                     continue
-                proveedor, modelo = nuevo_proveedor, nuevo_modelo
+                proveedor, modelo, api_key = eleccion
                 agente.cambiar_proveedor(proveedor, modelo, api_key)
                 print(f"Proveedor cambiado a: {proveedor} ({modelo})")
                 continue
@@ -183,19 +391,42 @@ def main():
             # Un turno completo (historial, tools, guardado del turno) lo
             # resuelve el Agente por dentro - main.py solo imprime.
             respuesta = agente.preguntar(pregunta)
-            print(f"Agente: {respuesta}")
+            print(f"{_VERDE}Agente:{_RESET} {respuesta}")
     except KeyboardInterrupt:
         # Ctrl+C dispara esta excepcion en vez de reventar con un
         # traceback feo. La atrapamos solo para avisar con un mensaje
         # limpio - el guardado real pasa en el finally de abajo.
         print("\nAgente: interrumpido, guardando la conversación...")
     finally:
-        # Se ejecuta SIEMPRE: tanto tras el break de "salir" como tras el
-        # except de arriba. agente.guardar() ya decide por dentro si hay
-        # algo real que guardar (ver storage.py).
-        ruta = agente.guardar()
-        if ruta:
-            print(f"Conversación guardada en conversations/{ruta.name}")
+        # F5.3 (idea de Jordi): preguntar si guardar. NO es solo comodidad -
+        # una conversacion no guardada tampoco entra en la memoria semantica
+        # (RAG), asi que decir "no" es un "modo efimero" de privacidad
+        # (RNF-06): hablar de algo sin que el agente lo recuerde despues.
+        #
+        # Solo se pregunta si (a) hubo conversacion real -mas que el system
+        # prompt- y (b) se salio limpiamente. Tras un Ctrl+C se guarda sin
+        # preguntar (ver comentario de salida_limpia).
+        hay_conversacion = len(agente.historial) > 1
+        if hay_conversacion and salida_limpia:
+            respuesta = questionary.confirm(
+                "¿Guardar esta conversación?", default=True
+            ).ask()
+            # ask() devuelve None si se aborta el propio prompt (otro Ctrl+C):
+            # en la duda, guardar. Solo un "no" explicito descarta.
+            if respuesta is not False:
+                # F5.3+: al guardar por salida limpia, se ofrece ponerle nombre.
+                ruta = agente.guardar(pedir_nombre_conversacion())
+                if ruta:
+                    print(f"Conversación guardada en conversations/{ruta.name}")
+            else:
+                print("Conversación NO guardada (no quedará en la memoria).")
+        else:
+            # Ctrl+C (o sin conversación real): se guarda por defecto y sin
+            # preguntar nombre - el usuario ya corto de golpe. Si no habia
+            # nada que guardar, guardar() devuelve None y no pasa nada.
+            ruta = agente.guardar()
+            if ruta:
+                print(f"Conversación guardada en conversations/{ruta.name}")
 
 
 if __name__ == "__main__":
