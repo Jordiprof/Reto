@@ -136,3 +136,38 @@ def test_clave_ausente_vuelve_al_menu_en_vez_de_abortar(monkeypatch, capsys):
 
     assert resultado == ("groq", "un-modelo", "clave-buena")
     assert "Falta GEMINI_API_KEY" in capsys.readouterr().out
+
+
+# --- 27/07: convencion "Volver/Cancelar en TODO menu de flechas" ------
+# Pedido explicito de Jordi: no vale solo con proveedor->modelo, cualquier
+# menu nuevo (aqui: /comandos y /historial) debe tener una opcion visible
+# de salir sin usar Ctrl+C. Estos tests fijan esa convencion en codigo,
+# no solo en comentario.
+
+
+def test_menu_comandos_incluye_cancelar_al_final(monkeypatch):
+    falso = _SelectFalso(valor=m.VOLVER)
+    monkeypatch.setattr(questionary, "select", falso)
+
+    resultado = m.menu_comandos()
+
+    ultima = falso.kwargs["choices"][-1]
+    assert "Cancelar" in ultima.title
+    assert ultima.value is m.VOLVER
+    assert resultado is m.VOLVER
+
+
+def test_elegir_conversacion_incluye_volver_al_final(monkeypatch, tmp_path):
+    falso = _SelectFalso(valor=m.VOLVER)
+    monkeypatch.setattr(questionary, "select", falso)
+    meta_falsa = {
+        "fecha": "2026-07-27T10:00:00", "nombre": "x",
+        "proveedor": "groq", "cifrado": False,
+    }
+    monkeypatch.setattr(m, "leer_metadatos", lambda ruta: meta_falsa)
+
+    resultado = m.elegir_conversacion([tmp_path / "una.json"])
+
+    ultima = falso.kwargs["choices"][-1]
+    assert ultima.value is m.VOLVER
+    assert resultado is m.VOLVER

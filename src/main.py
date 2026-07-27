@@ -104,9 +104,21 @@ _AZUL = "\033[96m"    # etiqueta "Tú:"
 _VERDE = "\033[92m"   # etiqueta "Agente:"
 _RESET = "\033[0m"    # vuelve al color normal
 
-# Centinela para la opcion "Volver" en los menus encadenados (proveedor ->
-# modelo). Un object() y no un string ("__volver__"): un string PODRIA
-# colisionar algun dia con un id de modelo real; un object() nunca.
+# Centinela para la opcion "Volver"/"Cancelar" en CUALQUIER menu de flechas.
+# Un object() y no un string ("__volver__"): un string PODRIA colisionar
+# algun dia con un id de modelo real o un nombre de fichero; un object()
+# nunca. OJO: Choice(..., value=None) NO sirve para esto - questionary
+# ignora un value=None explicito y usa el titulo como value en su lugar
+# (comprobado a mano); por eso hace falta un centinela de verdad.
+#
+# CONVENCION DEL PROYECTO (pedido por Jordi el 27/07, vale para SIEMPRE):
+# todo menu de questionary.select() que se escriba a partir de ahora debe
+# incluir una opcion visible de "Volver"/"Cancelar" con este mismo VOLVER,
+# salvo que ya sea el primer paso de un flujo (ahi no hay "atras" al que
+# ir). Motivo: Esc no esta vinculado a nada en questionary.select (ver el
+# comentario de elegir_proveedor_y_modelo() mas abajo), asi que sin una
+# opcion visible la unica salida es Ctrl+C - que cancela TODO el menu, no
+# permite "volver" un paso.
 VOLVER = object()
 
 
@@ -125,16 +137,17 @@ COMANDOS = {
 }
 
 
-def menu_comandos() -> str | None:
+def menu_comandos() -> str | object | None:
     """Menu navegable con flechas (como /modelo y /proveedor) que lista los
-    comandos. Devuelve el elegido, o None si se cancela (Esc)."""
-    return questionary.select(
-        "Comandos disponibles:",
-        choices=[
-            questionary.Choice(f"{nombre}  —  {desc}", value=nombre)
-            for nombre, desc in COMANDOS.items()
-        ],
-    ).ask()
+    comandos. Devuelve el comando elegido, VOLVER si se elige "Cancelar",
+    o None si se cancela con Ctrl+C - los tres casos hacen lo mismo en el
+    bucle (seguir charlando), pero se distinguen por claridad."""
+    opciones = [
+        questionary.Choice(f"{nombre}  —  {desc}", value=nombre)
+        for nombre, desc in COMANDOS.items()
+    ]
+    opciones.append(questionary.Choice("⬅ Cancelar", value=VOLVER))
+    return questionary.select("Comandos disponibles:", choices=opciones).ask()
 
 
 def pedir_nombre_conversacion() -> str | None:
@@ -148,8 +161,11 @@ def pedir_nombre_conversacion() -> str | None:
 def elegir_conversacion(rutas: list) -> object | None:
     """Menu navegable (flechas + Enter, idea de Jordi 25/07) con las
     conversaciones guardadas, fecha+nombre+proveedor por opcion, de la mas
-    reciente a la mas antigua. Devuelve la Path elegida, o None si se
-    cancela (Esc) - mismo patron que elegir_proveedor/elegir_modelo."""
+    reciente a la mas antigua. Devuelve la Path elegida, VOLVER si se elige
+    "Cancelar" (27/07, pedido explicito de Jordi), o None si se cancela con
+    Ctrl+C - NADA se borra en ninguno de los dos casos, solo se cierra el
+    menu y se vuelve a la conversacion, igual que /historial no tocaba
+    nada antes tampoco."""
     opciones = []
     for ruta in reversed(rutas):
         meta = leer_metadatos(ruta)
@@ -158,6 +174,7 @@ def elegir_conversacion(rutas: list) -> object | None:
         candado = " 🔒" if meta["cifrado"] else ""
         etiqueta = f"{fecha} · {titulo} · {meta['proveedor']}{candado}"
         opciones.append(questionary.Choice(etiqueta, value=ruta))
+    opciones.append(questionary.Choice("⬅ Volver", value=VOLVER))
 
     return questionary.select(
         f"Tienes {len(rutas)} conversación(es) guardada(s):",
@@ -310,10 +327,11 @@ def main():
 
             # Comandos CLI (F5): /comandos (o /ayuda) abre el menu navegable con flechas y
             # devuelve el comando elegido; a partir de ahi se maneja igual que
-            # si Jordi lo hubiera escrito. Esc en el menu = None -> se ignora.
+            # si Jordi lo hubiera escrito. None (Ctrl+C) o VOLVER ("Cancelar",
+            # 27/07) se ignoran igual - nada se pierde, se sigue charlando.
             if comando in ("/comandos", "/ayuda", "/help"):
                 elegido = menu_comandos()
-                if elegido is None:
+                if elegido is None or elegido is VOLVER:
                     continue
                 comando = elegido
 
@@ -332,7 +350,10 @@ def main():
                     print("(aún no hay conversaciones guardadas)")
                     continue
                 elegida = elegir_conversacion(rutas)
-                if elegida is not None:
+                # None (Ctrl+C) o VOLVER ("⬅ Volver", 27/07): en los dos
+                # casos se vuelve a la conversacion sin abrir nada - NADA
+                # se borra, solo se cierra el menu.
+                if elegida is not None and elegida is not VOLVER:
                     mostrar_conversacion(elegida)
                 continue
 
