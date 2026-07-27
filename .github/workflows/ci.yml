@@ -22,7 +22,12 @@ jobs:
         run: ruff check src tests
 
       - name: Test with pytest
-        run: pytest -q
+        # "python -m pytest" (NO "pytest" a secas): con -m, Python añade la
+        # raiz del proyecto a donde busca modulos, y "from src... import"
+        # funciona. Sin -m, pytest usa tests/ como raiz (no tiene
+        # __init__.py) y "src" no se encuentra - bug real, reproducido
+        # el 25/07 en un worktree limpio: mismo fallo exacto que en el CI.
+        run: python -m pytest -q
 
       - name: Audit dependencies
         run: pip install pip-audit && pip-audit -r requirements.txt
