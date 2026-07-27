@@ -1,6 +1,6 @@
 # Agente de IA en Python — Reto DataQuantum
 
-**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Nivel Avanzado completo (Fase 4); Fase 5 (Experto) en curso — endurecimiento previo (F5.0) antes del bot de Telegram
+**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Niveles Básico, Intermedio y Avanzado completos (Fases 2–4, con tag). **Nivel Experto (Fase 5) en curso:** memoria semántica con RAG local, validación de herramientas con Pydantic y **bot de Telegram** ya funcionando; pendiente el catálogo completo de herramientas
 
 Agente de IA ejecutado desde la terminal, construido de forma incremental en 4 niveles:
 chat simple contra un LLM (**Básico**) → conversación con memoria (**Intermedio**) →
@@ -70,6 +70,42 @@ el contenido** de tus mensajes ni de lo que devuelven las herramientas, ni siqui
 `buscar_en_recuerdos`. Si necesitas depurar con el contenido real, activa
 `DEBUG_LOG_CONTENIDO=1` en el `.env`: escribe aparte, en `logs/debug_contenido.log`, y
 verás un aviso en pantalla mientras esté activo.
+
+## Bot de Telegram
+
+El mismo agente, accesible desde el móvil. **Reutiliza la clase `Agente` sin modificarla**:
+solo cambia quién le hace las preguntas (ver [ADR-005](docs/ADR/ADR-005-seguridad-bot-telegram.md)).
+
+```bash
+python -m src.telegram_bot
+```
+
+Antes hay que rellenar dos variables en el `.env`:
+
+| Variable | Cómo se obtiene |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Creando el bot con [@BotFather](https://t.me/BotFather) en Telegram |
+| `TELEGRAM_USER_IDS_PERMITIDOS` | Tu `user_id`, escribiendo a [@userinfobot](https://t.me/userinfobot) |
+
+**El bot es estrictamente privado.** Solo responde a los `user_id` de la lista blanca y
+comprueba esa lista **antes** de llamar al modelo; a cualquier otro lo ignora en silencio,
+sin contestar (responder confirmaría que el bot existe y gastaría cuota). **Sin lista
+blanca configurada, el bot no arranca** — es deliberado: un bot abierto no solo gastaría
+tu cuota, es que la herramienta `buscar_en_recuerdos` le entregaría tus conversaciones a
+un desconocido con solo preguntar.
+
+Por el mismo motivo **solo se admite un `user_id`**: la memoria semántica es común a todo
+el histórico y todavía no distingue de quién es cada recuerdo, así que dos usuarios
+autorizados se leerían mutuamente. Con más de uno, el bot se niega a arrancar.
+
+Comandos dentro del chat de Telegram: `/start`, `/ayuda`, `/limpiar` (empezar de cero) y
+`/resumen`. Las respuestas largas se parten automáticamente en varios mensajes, porque
+Telegram corta a 4096 caracteres y si te pasas no llega nada.
+
+**Sobre privacidad:** los mensajes que envías a un bot de Telegram **no van cifrados de
+extremo a extremo** — pasan por los servidores de Telegram. Es una consecuencia de usar
+ese canal, no del código, pero conviene saberlo: matiza el requisito RNF-06 del proyecto
+(ver [E1 §4.1](docs/E1_Especificacion_Requisitos.md)).
 
 ## Documentación
 

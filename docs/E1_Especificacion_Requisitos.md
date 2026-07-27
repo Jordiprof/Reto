@@ -1,7 +1,7 @@
 # E1 — Especificación de Requisitos
 
 **Proyecto:** Agente de IA en terminal (nombre provisional)
-**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1) → 20/07/2026 (v1.2, temática Experto) → 21/07/2026 (v1.3, RAG semántico + privacidad rectora) → 27/07/2026 (v1.4, RNF-06 detallado en §4.1 + incidencia de privacidad registrada) · **Versión:** 1.4 — documento vivo, evolucionará con el proyecto
+**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1) → 20/07/2026 (v1.2, temática Experto) → 21/07/2026 (v1.3, RAG semántico + privacidad rectora) → 27/07/2026 (v1.5, RNF-06 detallado en §4.1, incidencia de privacidad registrada y límite del canal de Telegram documentado) · **Versión:** 1.5 — documento vivo, evolucionará con el proyecto
 
 ## 1. Propósito
 
@@ -69,6 +69,20 @@ salen de la máquina salvo la llamada al LLM**. Este criterio decide buena parte
 El texto solo existe en claro **en memoria**, mientras se responde a una consulta: `rag.py`
 descifra bajo demanda el mensaje concreto que ha encontrado, lo usa y no lo persiste en
 ningún otro sitio.
+
+**Límite del requisito: el canal de Telegram (documentado el 27/07).** Este requisito dice
+que los datos no salen de la máquina *salvo la llamada al LLM*. Al añadir el bot (F5.2) esa
+frase deja de ser exacta: **los mensajes enviados a un bot de Telegram no van cifrados de
+extremo a extremo** — viajan por los servidores de Telegram, que técnicamente puede leerlos.
+No es un defecto del código ni algo que el proyecto pueda mitigar: es una propiedad de la
+Bot API, y el cifrado extremo a extremo de Telegram (*chats secretos*) no está disponible
+para bots. Se documenta explícitamente para que el requisito no prometa más de lo que cumple.
+
+La redacción exacta del requisito pasa a ser: *los datos no salen de la máquina salvo (a) la
+llamada al LLM y (b) los mensajes intercambiados por el canal de Telegram, cuando se usa el
+bot*. La CLI (`python -m src.main`) no tiene esta limitación. Alternativas descartadas: usar
+un cliente de usuario en vez de un bot (self-bot con Telethon/Pyrogram) incumpliría los
+términos de servicio y expondría el número personal — ver RNF-05.
 
 **Modo de depuración.** Cuando hace falta depurar con el contenido real, la variable
 `DEBUG_LOG_CONTENIDO` lo activa — pero escribe en un fichero **aparte**
