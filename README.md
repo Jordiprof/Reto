@@ -46,7 +46,7 @@ Comandos disponibles dentro del chat:
 |---|---|
 | `salir` | Termina y guarda la conversación (también se guarda si cortas con `Ctrl+C`) |
 | `/modelo` | Cambia de modelo sin tocar el proveedor actual |
-| `/proveedor` | Cambia de proveedor (y de modelo); la conversación sigue igual |
+| `/proveedor` | Cambia de proveedor (y de modelo); la conversación sigue igual. En el menú de modelo hay una opción "⬅ Volver" para reabrir el de proveedor sin cancelar |
 | `/resumen` | Pide al modelo un resumen de la conversación hasta ahora, sin guardarlo como turno |
 
 Cada conversación queda guardada en `conversations/<fecha>_<hora>.json` (contenido
