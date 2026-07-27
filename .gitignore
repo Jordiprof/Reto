@@ -17,3 +17,14 @@ conversations.db
 
 # Cache de pytest (se regenera solo en cada ejecucion)
 .pytest_cache/
+
+# F5.3: indice vectorial de ChromaDB (datos DERIVADOS de las conversaciones
+# personales - NUNCA a git, RNF-06) y cache del modelo de embeddings (pesa
+# ~220MB, se descarga solo la primera vez).
+chroma_db/
+.modelos_cache/
+
+# Copias de seguridad al "empezar de cero" (contienen conversaciones
+# personales igual que los originales - nunca a git).
+*.bak
+*.bak/
