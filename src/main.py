@@ -34,6 +34,7 @@ from src.config import (  # noqa: E402
     MODELOS,
     PROVEEDORES,
     ClaveApiNoConfigurada,
+    depuracion_contenido_activa,
     obtener_api_key,
     obtener_modelo_por_defecto,
 )
@@ -292,6 +293,17 @@ def main():
             "⚠️ Las conversaciones se guardaran SIN CIFRAR "
             "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
         )
+    # F5.2: mismo razonamiento que el aviso de arriba - una degradacion de
+    # seguridad que nadie ve en pantalla es como si no existiera. Si
+    # DEBUG_LOG_CONTENIDO esta encendida, el contenido de tools (incluidas
+    # conversaciones descifradas) se escribe en claro en
+    # logs/debug_contenido.log - hay que saberlo mientras se usa el programa,
+    # no descubrirlo despues leyendo el log.
+    if depuracion_contenido_activa():
+        print(
+            "⚠️ MODO DEPURACIÓN: se está guardando el contenido de tus "
+            "mensajes en claro en logs/debug_contenido.log."
+        )
     # F5.3: carga la memoria semantica de conversaciones pasadas para que el
     # agente pueda "recordar" dias anteriores (tool buscar_en_recuerdos)
     # desde el primer mensaje. La primera vez descarga el modelo (~220MB) y
@@ -305,7 +317,10 @@ def main():
         nuevos = indexar_conversaciones()
         print(f"{nuevos} recuerdo(s) nuevo(s) indexado(s).")
     except Exception as error:
-        logging.warning("No se pudo cargar la memoria semantica: %s", error)
+        # F5.2 (27/07): tipo, no texto - indexar_conversaciones() descifra
+        # conversaciones para indexarlas; un error aqui podria arrastrar
+        # contenido o rutas. El tipo basta para saber que fallo.
+        logging.warning("No se pudo cargar la memoria semantica (%s)", type(error).__name__)
         print("no disponible (el agente funciona igual).")
 
     print("Escribe /comandos para ver todo lo que puedo hacer, o /salir para terminar.")

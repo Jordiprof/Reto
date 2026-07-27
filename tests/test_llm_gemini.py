@@ -13,13 +13,17 @@
 # estandar): _ProveedorGemini solo LEE atributos (respuesta.candidates[0]
 # .content.parts, cada parte .text/.function_call) - no hace falta una
 # clase propia por cada uno, un contenedor de atributos sueltos basta.
+import logging
 from types import SimpleNamespace
+
+import pytest
 
 from src.llm_client import (
     _limpiar_schema_para_gemini,
     _ProveedorGemini,
     _texto_de_gemini,
 )
+from src.llm_errors import ErrorPeticionInvalida
 
 
 def _parte(text=None, function_call=None):
@@ -51,6 +55,32 @@ def _estado_gemini(respuesta_programada):
     """El 'estado' minimo que _llamar() necesita, sin pasar por
     _estado_inicial() (que montaria el cliente real de Gemini)."""
     return {"client": _cliente_falso(respuesta_programada), "contents": [], "config": None}
+
+
+# --- F5.2 (27/07): el log de errores no debe arrastrar texto del SDK ---
+
+def test_gemini_no_loguea_el_texto_crudo_del_error(caplog):
+    """AUD-07 (mitad log): el str() de un error de Gemini puede traer el
+    cuerpo de la peticion - con INVALID_ARGUMENT tipicamente
+    "contents[N].parts[0].text = '...'", que es texto que escribio JIM.
+    Se registra el TIPO de la excepcion (basta para depurar), no el texto."""
+
+    def revienta(**kwargs):
+        raise RuntimeError(
+            "400 INVALID_ARGUMENT: contents[1].parts[0].text = 'mi cita del medico'"
+        )
+
+    cliente_que_revienta = SimpleNamespace(
+        models=SimpleNamespace(generate_content=revienta)
+    )
+    estado = {"client": cliente_que_revienta, "contents": [], "config": None}
+    proveedor = _ProveedorGemini(api_key="x", modelo="fake")
+
+    with caplog.at_level(logging.ERROR), pytest.raises(ErrorPeticionInvalida):
+        proveedor._llamar(estado)
+
+    assert "cita del medico" not in caplog.text  # el contenido NO
+    assert "RuntimeError" in caplog.text  # el tipo SI (auditabilidad)
 
 
 # --- Bucle completo: _ProveedorGemini._llamar() ---

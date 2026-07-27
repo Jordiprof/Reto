@@ -40,20 +40,36 @@ cadena ADR-001 que tenga clave configurada — sin que tengas que hacer nada. Si
 respuesta cuando esperabas un error, puede haber sido un fallback; el detalle queda en
 `logs/agente.log`. Solo si **todos** los proveedores configurados fallan, ves un aviso.
 
-Comandos disponibles dentro del chat:
+Comandos disponibles dentro del chat (también `/comandos`, `/ayuda` o `/help` para verlos
+sin salir de la conversación):
 
 | Comando | Qué hace |
 |---|---|
-| `salir` | Termina y guarda la conversación (también se guarda si cortas con `Ctrl+C`) |
 | `/modelo` | Cambia de modelo sin tocar el proveedor actual |
-| `/proveedor` | Cambia de proveedor (y de modelo); la conversación sigue igual. En el menú de modelo hay una opción "⬅ Volver" para reabrir el de proveedor sin cancelar |
+| `/proveedor` | Cambia de proveedor (y de modelo); la conversación sigue igual |
+| `/historial` | Muestra tus conversaciones guardadas (fecha y nombre) para volver a leerlas |
 | `/resumen` | Pide al modelo un resumen de la conversación hasta ahora, sin guardarlo como turno |
+| `/limpiar` | Borra la conversación actual y empieza de cero (no toca lo ya guardado) |
+| `/guardar` | Guarda la conversación ahora mismo, sin salir, con nombre opcional |
+| `/salir` (o `salir`) | Termina; pregunta si quieres guardar (también se guarda si cortas con `Ctrl+C`) |
 
-Cada conversación queda guardada en `conversations/<fecha>_<hora>.json` (contenido
-completo) y también indexada en `conversations.db` (SQLite, una fila por conversación —
-ver [E2 §2](docs/E2_Arquitectura.md)). **Nota:** el programa no recarga conversaciones
-anteriores al arrancar; cada ejecución empieza con historial vacío. Cada llamada al LLM
-queda además registrada en `logs/agente.log` (latencia, errores).
+Todo menú de flechas (`/proveedor`→modelo, `/comandos`, `/historial`) tiene una opción
+"⬅ Volver"/"Cancelar" para no perder el paso anterior sin cerrar el menú entero.
+
+Cada conversación queda guardada en `conversations/<fecha>_<hora>.json` — **cifrada con
+Fernet** si configuraste `CONVERSATIONS_KEY` en el `.env` (ver `.env.example`; si no, se
+guarda en claro y el programa avisa al arrancar) — y también indexada en
+`conversations.db` (SQLite, una fila por conversación — ver [E2 §2](docs/E2_Arquitectura.md)).
+Al arrancar, el agente indexa tus conversaciones pasadas en un índice de memoria
+semántica local (ChromaDB) para poder buscarlas por significado con la tool
+`buscar_en_recuerdos` — pregúntale algo que le contaste antes y la usará.
+
+**Logs (`logs/agente.log`):** registra latencia, tipo de error y, por cada llamada a una
+herramienta, metadatos (nombre, si funcionó, nombres de los campos, tamaños) — **nunca
+el contenido** de tus mensajes ni de lo que devuelven las herramientas, ni siquiera de
+`buscar_en_recuerdos`. Si necesitas depurar con el contenido real, activa
+`DEBUG_LOG_CONTENIDO=1` en el `.env`: escribe aparte, en `logs/debug_contenido.log`, y
+verás un aviso en pantalla mientras esté activo.
 
 ## Documentación
 

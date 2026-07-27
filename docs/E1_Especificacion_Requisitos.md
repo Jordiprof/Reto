@@ -1,7 +1,7 @@
 # E1 — Especificación de Requisitos
 
 **Proyecto:** Agente de IA en terminal (nombre provisional)
-**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1) → 20/07/2026 (v1.2, temática Experto) → 21/07/2026 (v1.3, RAG semántico + privacidad rectora) · **Versión:** 1.3 — documento vivo, evolucionará con el proyecto
+**Autor:** Jordi · **Fecha:** 15/07/2026 (v1.0) → 17/07/2026 (v1.1) → 20/07/2026 (v1.2, temática Experto) → 21/07/2026 (v1.3, RAG semántico + privacidad rectora) → 27/07/2026 (v1.4, RNF-06 detallado en §4.1 + incidencia de privacidad registrada) · **Versión:** 1.4 — documento vivo, evolucionará con el proyecto
 
 ## 1. Propósito
 
@@ -42,7 +42,65 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 | RNF-03 | Mantenibilidad | Arquitectura modular; cambiar de proveedor LLM = cambiar configuración (`llm_client.py`) |
 | RNF-04 | Portabilidad | Python 3.13 + venv + `requirements.txt` con versiones fijadas |
 | RNF-05 | Seguridad/privacidad del canal (Telegram) | El bot se identifica por token (`.env`), nunca por el número de teléfono personal — sin self-bot (Telethon/Pyrogram descartados). Telegram sandboxea al bot: sin acceso a fotos, contactos ni otros chats. Filtrado por `message.from_user.id` contra lista blanca antes de cualquier llamada al LLM |
-| RNF-06 | Privacidad de los datos (dato rector del Experto) | Las conversaciones y datos personales NO salen de la máquina de Jordi salvo la llamada mínima e inevitable al LLM. Consecuencias de diseño: vector store LOCAL (ChromaDB), embeddings LOCALES (`sentence-transformers`), observabilidad solo local si la hubiera. Descartadas por incumplir esto: LangSmith (nube), Pinecone (nube), embeddings de API de pago (ver E3 y diario 21/07). **Cifrado en reposo (auditoría 23/07, AUD-10):** `conversations/*.json` y `conversations.db` se guardan sin cifrar — decisión consciente, no un descuido: es una máquina de un solo usuario y ambos están en `.gitignore` (nunca salen ni siquiera por git). Se reevaluará cifrado (p. ej. `cryptography.Fernet`) solo si en el Experto se empiezan a guardar datos más sensibles que conversaciones propias. `logs/agente.log` registra latencia y tipo de error, nunca la API key ni el contenido completo de una conversación |
+| RNF-06 | Privacidad de los datos (dato rector del Experto) | Las conversaciones y datos personales NO salen de la máquina de Jordi salvo la llamada mínima e inevitable al LLM. Se detalla en **§4.1** por ser el requisito rector del nivel Experto |
+
+### 4.1 RNF-06 en detalle — privacidad de los datos
+
+Requisito rector del nivel Experto: el bot es personal y confidencial, así que **los datos no
+salen de la máquina salvo la llamada al LLM**. Este criterio decide buena parte del stack.
+
+**Decisiones que se derivan de él**
+
+| Decisión | Alternativa descartada | Motivo |
+|---|---|---|
+| Vector store local (ChromaDB) | Pinecone (nube) | El índice viviría en un tercero |
+| Embeddings locales (fastembed/ONNX) | Embeddings de API de pago | Cada mensaje viajaría al proveedor para vectorizarse |
+| Observabilidad solo local (`logs/`) | LangSmith | Manda las trazas completas a la nube |
+
+**Cómo se protege el dato en cada sitio donde vive**
+
+| Dónde | Protección | Qué queda expuesto (a propósito) |
+|---|---|---|
+| `conversations/*.json` | Cifrado **Fernet** (`cryptography`), F5.3 | Metadatos (fecha, proveedor, modelo, nombre): los necesita el índice |
+| `conversations.db` (SQLite) | Solo índice, nunca contenido | Los mismos metadatos |
+| `chroma_db/` (índice vectorial) | Solo vectores + punteros, **nunca el texto** | Los embeddings filtran algo de semántica (limitación asumida) |
+| `logs/agente.log` | Solo metadatos de cada tool: nombre, estado, nombres de campos, tamaño, ms | Ni contenido, ni argumentos, ni claves |
+
+El texto solo existe en claro **en memoria**, mientras se responde a una consulta: `rag.py`
+descifra bajo demanda el mensaje concreto que ha encontrado, lo usa y no lo persiste en
+ningún otro sitio.
+
+**Modo de depuración.** Cuando hace falta depurar con el contenido real, la variable
+`DEBUG_LOG_CONTENIDO` lo activa — pero escribe en un fichero **aparte**
+(`logs/debug_contenido.log`, mediante un logger con `propagate=False`) y avisa en pantalla
+mientras está activo. Así `agente.log` conserva una garantía que se puede verificar con un
+test: *este fichero no contiene contenido, nunca*.
+
+**Incidencia registrada — fuga de datos personales en logs (24 → 27/07/2026)**
+
+Se documenta aquí, y no solo en el diario, porque afecta a la garantía que da este requisito.
+
+- **Qué pasó.** La tarea F5.0/T8 (24/07) añadió trazas de auditoría por cada llamada a
+  herramienta, registrando los argumentos y el resultado completos. Como la herramienta
+  `buscar_en_recuerdos` devuelve mensajes **descifrados** de conversaciones anteriores, esos
+  mensajes acababan en texto plano en `logs/agente.log` — anulando en la práctica el cifrado
+  Fernet de F5.3 y el diseño sin-texto de ChromaDB, porque el mismo dato salía en claro por
+  otro canal.
+- **Por qué se coló.** No por falta de criterio: la regla estaba escrita **tres veces** — en
+  este mismo RNF-06, en el requisito de la propia tarea T8 (*"sin datos sensibles"*) y en el
+  acuerdo de diseño de F5.2. Ninguna de las tres se comprobaba automáticamente. **Tres reglas
+  escritas y cero controles ejecutables.**
+- **Alcance real.** Limitado a la máquina de desarrollo: `logs/` está en `.gitignore` y se
+  verificó (`git log --all -- logs/`) que ningún log llegó nunca al repositorio. El fichero
+  afectado se eliminó.
+- **Corrección (27/07).** Política de **solo metadatos** en las trazas de herramientas; modo
+  de depuración opt-in en fichero separado; rotación con tope de tamaño (~4 MB) para que
+  cualquier dato que se cuele caduque solo; y registro del *tipo* de excepción en vez del
+  texto crudo del SDK, que también podía arrastrar fragmentos de la petición.
+- **Lección aplicada.** El arreglo incluye **tests de privacidad** que reproducen la fuga y
+  fallan si vuelve a abrirse — el control que faltaba. Se siguió el patrón que ya existía
+  para ChromaDB (`test_chromadb_no_guarda_el_texto_en_claro`), extendiéndolo a un canal que
+  nadie había auditado. Análisis completo en `docs/diario_decisiones.md` (27/07).
 
 ## 5. Casos de uso principales
 
@@ -61,6 +119,8 @@ Construir de forma incremental, durante ~1 mes, un agente de IA ejecutado desde 
 | El alcance se dispara | No llegar al Experto | Fases cerradas por nivel; los extras son opcionales |
 | Filtración de la API key | Seguridad | `.gitignore` antes que la key; si ocurre, revocar en el proveedor |
 | Prompt injection vía tools que leen texto externo (noticias RSS, web, correo si se retoma) | El agente podría obedecer instrucciones ocultas en contenido que no controla el usuario | Aislar el contenido no confiable del canal de instrucciones (es dato, nunca orden); tools de solo lectura con allowlist estricta; confirmación humana antes de cualquier acción con efectos (enviar, borrar, modificar); nunca combinar "leer contenido externo" + "actuar" en el mismo agente sin ese paso intermedio (hallazgo de la auditoría de seguridad, 23/07) |
+| Un requisito de seguridad escrito pero sin control automático que lo verifique | Se incumple sin que nadie lo note, y la documentación pasa a afirmar una garantía falsa (ocurrió: ver §4.1, incidencia del 24-27/07) | Todo requisito de privacidad que se pueda expresar como invariante lleva un test que lo comprueba y falla si se rompe. Los tres existentes: el texto no aparece en el índice vectorial, no aparece en los logs, y el modo de depuración no contamina el log principal |
+| Log injection: el nombre de una herramienta o de sus argumentos lo elige el modelo, no el programa | Un nombre con saltos de línea permitiría **falsificar entradas del registro de auditoría**, que es justo el fichero donde se comprueba qué hizo el agente | Saneado a caracteres de identificador y longitud acotada antes de escribir cualquier valor de origen no confiable en el log (`_nombre_seguro`/`_campos_seguros`), con tests que reproducen el intento (27/07) |
 
 ## 7. Preguntas abiertas
 

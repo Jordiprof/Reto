@@ -1,8 +1,12 @@
 # logging: modulo estandar de Python para registrar eventos (errores,
 # informacion) en un fichero permanente, en vez de solo con print()
 # que desaparece al cerrar la terminal.
+# RotatingFileHandler: variante de logging que corta el fichero al llegar
+# a un tamaño y se queda solo con las N copias mas recientes (F5.2, ver
+# mas abajo el porque).
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 
 # pathlib.Path: forma moderna de manejar rutas de ficheros/carpetas.
 # Funciona igual en Windows, Linux y Mac (evita liarte con "\" vs "/").
@@ -25,15 +29,44 @@ LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 # si la carpeta ya estaba creada de antes.
 LOGS_DIR.mkdir(exist_ok=True)
 
-# Configura el sistema de logging global del programa:
-# - filename: donde se escriben los mensajes.
-# - level: a partir de que gravedad se registra (INFO incluye INFO y ERROR).
-# - format: como se ve cada linea (fecha, nivel, mensaje).
+# Configura el sistema de logging global del programa.
+#
+# F5.2 (27/07): antes era basicConfig(filename=...), que escribe sin limite
+# - el fichero solo crecia (117 KB y subiendo). Con el bot 24/7 de F5.2 eso
+# se dispara, y un tope duro ademas hace que cualquier linea que se cuele
+# mal (un dato sensible por error) CADUQUE SOLA en vez de quedarse para
+# siempre. RotatingFileHandler corta al llegar a maxBytes y se queda con
+# backupCount copias antiguas (agente.log, agente.log.1, agente.log.2,
+# agente.log.3) - tope total de unos 4 MB.
+#
+# encoding="utf-8" no es cosmetico: sin el, Windows usa cp1252 por defecto
+# y el programa loguea "⚠️" (ver main.py) - revienta o escribe simbolos
+# rotos. Gotcha real: basicConfig NO acepta "filename" y "handlers" a la
+# vez (lanza ValueError), por eso se sustituye entero en vez de añadir.
 logging.basicConfig(
-    filename=LOGS_DIR / "agente.log",
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        RotatingFileHandler(
+            LOGS_DIR / "agente.log",
+            maxBytes=1_000_000,
+            backupCount=3,
+            encoding="utf-8",
+            # delay=True: no abre el fichero al importar config.py, sino
+            # en el primer mensaje. En uso normal no cambia nada (el
+            # primer log llega enseguida), pero evita dejar un agente.log
+            # vacio cada vez que se importa el modulo sin llegar a
+            # loguear - por ejemplo, en la bateria de tests.
+            delay=True,
+        )
+    ],
 )
+
+# httpx (usado por Ollama/Gemini por debajo) loguea cada peticion HTTP con
+# su URL en cuanto el nivel es INFO - no es un dato de JIM, pero es ruido
+# que compite con las lineas de auditoria de _ejecutar_tool y engorda la
+# rotacion de arriba sin aportar nada.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Nombre de la variable de entorno donde vive la CLAVE de cada proveedor.
 # Solo guardamos el NOMBRE de la variable, no el valor - el valor se lee
@@ -153,3 +186,61 @@ def obtener_modelo_por_defecto(proveedor: str) -> str:
     nombre_variable = MODELOS_ENV[proveedor]
     # os.environ.get devuelve None si no existe; el "or" tambien cubre "".
     return os.environ.get(nombre_variable) or MODELOS[proveedor][0]
+
+
+# F5.2 (27/07): variable que activa el modo depuracion de contenido.
+# Nombre elegido A PROPOSITO para que asuste: no se llama DEBUG ni
+# VERBOSE, porque alguien la encenderia creyendo que solo sube el detalle
+# tecnico y acabaria escribiendo PII sin saberlo. Que el nombre sea claro
+# es parte del control.
+DEPURACION_ENV = "DEBUG_LOG_CONTENIDO"
+
+# Allowlist de valores que ENCIENDEN el modo, no blacklist de los que lo
+# apagan. Con blacklist, cualquier valor no previsto ("banana", un typo)
+# encenderia el modo por accidente. Con allowlist, cualquier cosa que no
+# sea explicitamente un "si" se queda apagada.
+_VALORES_ENCENDIDO = {"1", "true", "si", "sí", "yes", "on"}
+
+
+def depuracion_contenido_activa() -> bool:
+    """True SOLO si la variable esta puesta a un valor afirmativo
+    explicito. Apagado por defecto y apagado ante cualquier duda: ausente,
+    vacia, "0", "false" o cualquier texto raro -> False. La unica forma de
+    encenderlo es escribirlo a proposito en el .env."""
+    return os.environ.get(DEPURACION_ENV, "").strip().lower() in _VALORES_ENCENDIDO
+
+
+# Logger APARTE para el modo depuracion, con su propio fichero
+# (logs/debug_contenido.log). La pieza clave es propagate=False: sin ella,
+# todo lo que se escriba aqui subiria al logger raiz y acabaria en
+# agente.log - justo lo que este diseño impide. Con propagate=False es
+# IMPOSIBLE que se cuele, no una convencion que haya que recordar. Asi
+# agente.log gana una invariante comprobable: "este fichero no contiene
+# contenido, nunca".
+_LOGGER_DEPURACION = "agente.depuracion"
+_RUTA_DEPURACION = LOGS_DIR / "debug_contenido.log"
+
+
+def logger_depuracion() -> logging.Logger:
+    """Devuelve el logger del modo depuracion, montando su handler la
+    primera vez que se llama (perezoso: si el modo nunca se enciende,
+    logs/debug_contenido.log no llega a existir).
+
+    Se comprueba si YA existe un handler NUESTRO (RotatingFileHandler), no
+    si la lista de handlers esta vacia: cualquier otra herramienta puede
+    haber enganchado el suyo a este logger, y con un "if not log.handlers"
+    daríamos el nuestro por montado sin estarlo - el modo depuracion se
+    quedaria sin escribir en silencio. Encontrado el 27/07 al revisar: es
+    justo lo que hace pytest, que engancha su handler de captura a todo
+    logger con propagate=False.
+    """
+    log = logging.getLogger(_LOGGER_DEPURACION)
+    if not any(isinstance(h, RotatingFileHandler) for h in log.handlers):
+        log.propagate = False
+        log.setLevel(logging.DEBUG)
+        handler = RotatingFileHandler(
+            _RUTA_DEPURACION, maxBytes=1_000_000, backupCount=1, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        log.addHandler(handler)
+    return log
