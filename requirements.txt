@@ -11,3 +11,4 @@ chromadb==1.5.9
 fastembed==0.8.0
 pytest==9.1.1
 ruff==0.14.4
+python-telegram-bot==22.8

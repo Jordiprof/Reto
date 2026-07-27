@@ -4,8 +4,13 @@
 # RotatingFileHandler: variante de logging que corta el fichero al llegar
 # a un tamaño y se queda solo con las N copias mas recientes (F5.2, ver
 # mas abajo el porque).
+import hashlib
 import logging
 import os
+
+# secrets: generador criptograficamente seguro (no "random", que es
+# predecible). Se usa para la sal del hash de identificadores en el log.
+import secrets
 from logging.handlers import RotatingFileHandler
 
 # pathlib.Path: forma moderna de manejar rutas de ficheros/carpetas.
@@ -244,3 +249,97 @@ def logger_depuracion() -> logging.Logger:
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         log.addHandler(handler)
     return log
+
+
+# ---------------------------------------------------------------------------
+# F5.2 - Bot de Telegram
+# ---------------------------------------------------------------------------
+# Solo los NOMBRES de las variables, igual que PROVEEDORES: el valor se lee
+# cuando hace falta, no al importar.
+TELEGRAM_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+TELEGRAM_PERMITIDOS_ENV = "TELEGRAM_USER_IDS_PERMITIDOS"
+TELEGRAM_SAL_ENV = "TELEGRAM_LOG_SAL"
+
+
+class ConfiguracionTelegramInvalida(Exception):
+    """Falta la configuracion del bot o esta mal escrita (F5.2).
+
+    Es una excepcion propia, distinta de ClaveApiNoConfigurada, porque el
+    tratamiento es OPUESTO: sin clave de un proveedor el programa puede
+    seguir con otro (RNF-02), pero sin lista blanca el bot NO debe
+    arrancar bajo ningun concepto.
+    """
+
+
+def obtener_token_telegram() -> str:
+    """Token del bot (BotFather). Nunca se loguea ni se imprime."""
+    token = os.environ.get(TELEGRAM_TOKEN_ENV, "").strip()
+    if not token:
+        raise ConfiguracionTelegramInvalida(
+            f"Falta {TELEGRAM_TOKEN_ENV} en el .env (te lo da @BotFather en Telegram)."
+        )
+    return token
+
+
+def obtener_usuarios_permitidos() -> frozenset[int]:
+    """Lista blanca de user_id de Telegram autorizados (RNF-05, AUD-A1).
+
+    FALLA CERRADO en todos los casos raros: si la variable no esta, esta
+    vacia o contiene algo que no es un numero, LANZA. Nunca devuelve un
+    conjunto vacio en silencio (dejaria el bot mudo sin explicar por que)
+    y nunca interpreta la ausencia como "permitir a todos" - que es el
+    modo de fallo que convierte un control de acceso en decoracion.
+
+    Se relee en CADA update en vez de cachearse: cuesta un os.environ y
+    hace que un .env roto en caliente CIERRE el bot en vez de abrirlo.
+    """
+    crudo = os.environ.get(TELEGRAM_PERMITIDOS_ENV, "").strip()
+    if not crudo:
+        raise ConfiguracionTelegramInvalida(
+            f"Falta {TELEGRAM_PERMITIDOS_ENV} en el .env: el bot NO arranca sin lista blanca."
+        )
+    try:
+        permitidos = frozenset(int(t) for t in crudo.split(",") if t.strip())
+    except ValueError:
+        raise ConfiguracionTelegramInvalida(
+            f"{TELEGRAM_PERMITIDOS_ENV} debe ser una lista de numeros separados por comas."
+        ) from None
+    if not permitidos:
+        raise ConfiguracionTelegramInvalida(
+            f"{TELEGRAM_PERMITIDOS_ENV} no contiene ningun id valido."
+        )
+    return permitidos
+
+
+# Sal para el hash de los user_id rechazados (ver telegram_bot._huella).
+# Si no se configura una en el .env se genera una ALEATORIA por proceso.
+# Eso es deliberado y es la opcion MAS privada: dentro de una misma
+# ejecucion sigue distinguiendo "el mismo desconocido 40 veces" de "40
+# desconocidos distintos" (que es toda la informacion operativa que hace
+# falta), pero los hashes dejan de ser correlacionables entre reinicios.
+# Quien quiera esa correlacion -para vigilar sondeos a lo largo de dias-
+# solo tiene que fijar la variable.
+_SAL_POR_PROCESO = secrets.token_bytes(16)
+
+
+def obtener_sal_log() -> bytes:
+    """Sal del hash de identificadores en el log. Nunca vacia: sin sal, el
+    espacio de user_id de Telegram es enumerable por fuerza bruta y el
+    hash no protegeria nada.
+
+    SIEMPRE devuelve exactamente 32 bytes, pase lo que pase en el .env.
+    Esto NO es cosmetico (auditoria del 27/07, hallazgo critico): blake2s
+    -que es quien usa esta sal, en telegram_bot._huella- acepta claves de
+    32 bytes COMO MUCHO y lanza ValueError si te pasas. Y esa excepcion
+    saltaba dentro del control de acceso, ANTES de su
+    ApplicationHandlerStop, con lo que la puerta dejaba pasar al
+    desconocido. Una sal larga en el .env (una frase, o un token_hex(32))
+    apagaba el control de acceso EN SILENCIO y solo para los no
+    autorizados - imposible de notar probando con tu propia cuenta.
+    Pasarla por SHA-256 la normaliza a 32 bytes exactos sea cual sea su
+    longitud, asi que la excepcion ya no puede darse.
+    """
+    configurada = os.environ.get(TELEGRAM_SAL_ENV, "").strip()
+    if not configurada:
+        return _SAL_POR_PROCESO
+    return hashlib.sha256(configurada.encode("utf-8")).digest()

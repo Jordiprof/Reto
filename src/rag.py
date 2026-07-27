@@ -79,7 +79,17 @@ def _coleccion():
     if _coleccion_cache is None:
         import chromadb
 
-        cliente = chromadb.PersistentClient(path=str(_CHROMA_DIR))
+        # anonymized_telemetry=False (auditoria del 27/07): ChromaDB trae la
+        # telemetria ACTIVADA por defecto. En la version instalada (1.5.9) su
+        # metodo capture() esta vacio y no envia nada -verificado leyendo el
+        # paquete-, pero depender de eso es depender de que no cambie en una
+        # actualizacion futura. Con RNF-06 ("los datos no salen de la
+        # maquina") como requisito rector, se desactiva explicitamente en vez
+        # de confiar en un detalle de implementacion ajeno.
+        cliente = chromadb.PersistentClient(
+            path=str(_CHROMA_DIR),
+            settings=chromadb.Settings(anonymized_telemetry=False),
+        )
         # get_or_create: no falla si ya existia de una ejecucion anterior.
         # OJO: NO se le pasa embedding_function - los vectores los calculamos
         # nosotros con fastembed y se los damos ya hechos, para que Chroma no
