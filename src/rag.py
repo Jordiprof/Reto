@@ -255,6 +255,28 @@ def indexar_conversaciones() -> int:
         return _añadir_al_indice(coleccion, ids_nuevos, metadatos_nuevos, textos_nuevos)
 
 
+def olvidar_conversacion(ruta: Path) -> int:
+    """Quita del indice vectorial TODOS los mensajes de una conversacion.
+
+    La otra mitad de storage.borrar_conversacion: borrar el JSON sin esto
+    dejaria los vectores huerfanos en ChromaDB. No serian legibles (el texto
+    nunca se guarda ahi, solo el puntero), pero seguirian saliendo como
+    resultados de busqueda que luego se descartan al no poder abrir el
+    fichero - o sea, ocupando sitio y empeorando los resultados en silencio.
+
+    Devuelve cuantos se quitaron. Se filtra por el metadato "fichero", que
+    es justo como se indexaron (ver _recolectar_nuevos).
+    """
+    with _cerrojo:
+        coleccion = _coleccion()
+        ids = coleccion.get(where={"fichero": ruta.name}, include=[])["ids"]
+        if not ids:
+            return 0
+        coleccion.delete(ids=ids)
+        logging.info("RAG: %d mensajes olvidados", len(ids))
+        return len(ids)
+
+
 def buscar(consulta: str, n: int = 3) -> list[dict]:
     """Busca los n mensajes mas parecidos por SIGNIFICADO a la consulta.
 

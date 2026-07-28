@@ -44,11 +44,17 @@ from src.config import (  # noqa: E402
 # descifrarlas. main.py es la capa que habla con el usuario.
 from src.storage import (  # noqa: E402
     ConversacionNoDescifrable,
+    borrar_conversacion,
     cargar_conversacion,
     cifrado_activo,
     leer_metadatos,
     listar_conversaciones,
 )
+
+# Cuantos recuerdos enseña /recuerdo. Mas que los 3 que usa la tool por
+# dentro: aqui los lee una persona, que sabe descartar los que no valen.
+# Mismo criterio (y mismo numero) que en telegram_bot.py.
+_RECUERDOS_MOSTRADOS = 5
 
 # SYSTEM PROMPT: instrucciones ESTABLES del asistente (quien es, como
 # habla, que limites tiene). Va una sola vez al principio del historial
@@ -137,6 +143,14 @@ COMANDOS = {
     "/modelo": "Cambiar el modelo (mismo proveedor)",
     "/proveedor": "Cambiar de proveedor (y modelo)",
     "/historial": "Ver tus conversaciones guardadas (con fecha y nombre)",
+    # F5.2+ (28/07): los dos nacieron en el bot de Telegram y se traen aqui
+    # por SIMETRIA. El motivo no es estetico: la CLI y el bot comparten la
+    # MISMA memoria (conversations/ + chroma_db/), asi que una operacion que
+    # se puede hacer sobre ella desde un lado tiene que poder hacerse desde
+    # el otro - si no, acabas con datos que solo puedes gestionar segun por
+    # donde entres.
+    "/recuerdo": "Buscar en la memoria de conversaciones pasadas",
+    "/borrar": "Borrar una conversación guardada (del disco y de la memoria)",
     "/resumen": "Pedir un resumen de la conversación",
     "/limpiar": "Borrar esta conversación y empezar de cero",
     "/guardar": "Guardar la conversación ahora, sin salir",
@@ -376,6 +390,73 @@ def main():
                 # se borra, solo se cierra el menu.
                 if elegida is not None and elegida is not VOLVER:
                     mostrar_conversacion(elegida)
+                continue
+
+            # F5.2+ (28/07, idea de Jordi probando el bot): busca a mano en
+            # la memoria y enseña lo que hay EN CRUDO. El agente ya decide
+            # solo cuando usar buscar_en_recuerdos, pero esa decision la toma
+            # EL MODELO y a veces no la toma. Ademas es la herramienta de
+            # diagnostico que faltaba: el bug de "el bot no indexaba al
+            # arrancar" se habria visto con esto en 10 segundos.
+            if comando == "/recuerdo":
+                consulta = input("¿Qué quieres que busque? ").strip()
+                if not consulta:
+                    print("Cancelado.")
+                    continue
+                from src.rag import buscar
+
+                try:
+                    recuerdos = buscar(consulta, _RECUERDOS_MOSTRADOS)
+                except Exception as error:
+                    logging.error("CLI: fallo al buscar recuerdos (%s)", type(error).__name__)
+                    print("⚠️ No he podido consultar la memoria.")
+                    continue
+                if not recuerdos:
+                    print("No encuentro nada sobre eso en la memoria.")
+                    continue
+                for recuerdo in recuerdos:
+                    fecha = (recuerdo.get("fecha") or "")[:10]
+                    quien = "Tú" if recuerdo["rol"] == "user" else "Agente"
+                    print(f"  [{fecha}] {quien}: {recuerdo['texto']}")
+                continue
+
+            # F5.2+ (28/07): borra una conversacion guardada de LOS DOS
+            # sitios - el JSON (+ su fila en SQLite) y los vectores de
+            # ChromaDB. Solo el JSON dejaria vectores huerfanos que siguen
+            # saliendo en las busquedas y luego se descartan al no poder
+            # abrir el fichero; solo el indice dejaria el contenido cifrado
+            # en disco. Aqui no hace falta validar la ruta (a diferencia del
+            # bot): questionary devuelve el propio objeto Path de la lista,
+            # no un texto que venga de fuera.
+            if comando == "/borrar":
+                rutas = listar_conversaciones()
+                if not rutas:
+                    print("(aún no hay conversaciones guardadas)")
+                    continue
+                elegida = elegir_conversacion(rutas)
+                if elegida is None or elegida is VOLVER:
+                    continue
+                if not questionary.confirm(
+                    f"¿Borrar «{leer_metadatos(elegida)['nombre'] or elegida.name}»? "
+                    "No hay vuelta atrás.",
+                    default=False,  # en la duda, NO borrar
+                ).ask():
+                    print("Cancelado, no se ha borrado nada.")
+                    continue
+                from src.rag import olvidar_conversacion
+
+                try:
+                    olvidar_conversacion(elegida)
+                    borrada = borrar_conversacion(elegida)
+                except Exception as error:
+                    logging.error("CLI: fallo al borrar (%s)", type(error).__name__)
+                    print("⚠️ No he podido borrarla del todo.")
+                    continue
+                print(
+                    "Borrada del disco y de la memoria."
+                    if borrada
+                    else "Esa conversación ya no estaba."
+                )
                 continue
 
             # Comandos CLI (F5): borrar la conversacion en curso, manteniendo quien es el

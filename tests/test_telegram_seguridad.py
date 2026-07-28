@@ -868,3 +868,251 @@ def test_los_botones_pasan_por_la_allowlist():
         if any(h.callback is telegram_bot.manejar_boton for h in hs)
     ]
     assert grupos_con_botones and min(grupos_con_botones) > grupo
+
+
+# --- F5.2+: /recuerdo y /salir (peticion de Jordi al probar en real) ----
+
+
+def test_recuerdo_ensena_lo_que_hay_en_memoria(monkeypatch):
+    """El agente decide SOLO cuando usar buscar_en_recuerdos, y a veces no
+    la usa (el 28/07 contesto 'no lo tengo guardado' con el dato indexado).
+    Este comando salta al modelo y enseña la memoria en crudo."""
+    monkeypatch.setattr(
+        "src.rag.buscar",
+        lambda consulta, n=3: [
+            {"texto": "el plato hondo cabe mas comida", "rol": "user",
+             "fecha": "2026-07-28T12:45", "nombre": "chiste_malo", "distancia": 0.1}
+        ],
+    )
+    enviados = []
+    contexto = _context()
+    contexto.args = ["plato"]
+
+    asyncio.run(telegram_bot.cmd_recuerdo(_update(enviados=enviados), contexto))
+
+    assert "plato hondo" in " ".join(enviados)
+
+
+def test_recuerdo_sin_texto_explica_como_se_usa():
+    enviados = []
+    contexto = _context()
+    contexto.args = []
+
+    asyncio.run(telegram_bot.cmd_recuerdo(_update(enviados=enviados), contexto))
+
+    assert "/recuerdo" in " ".join(enviados)
+
+
+def test_recuerdo_sin_resultados_lo_dice(monkeypatch):
+    monkeypatch.setattr("src.rag.buscar", lambda consulta, n=3: [])
+    enviados = []
+    contexto = _context()
+    contexto.args = ["algo", "que", "no", "existe"]
+
+    asyncio.run(telegram_bot.cmd_recuerdo(_update(enviados=enviados), contexto))
+
+    assert "No encuentro nada" in " ".join(enviados)
+
+
+def test_salir_sin_conversacion_abierta_lo_dice():
+    enviados = []
+
+    asyncio.run(telegram_bot.cmd_salir(_update(enviados=enviados), _context()))
+
+    assert "No hay ninguna conversación" in " ".join(enviados)
+
+
+def test_descartar_borra_del_disco_Y_del_indice(monkeypatch, tmp_path):
+    """LAS DOS COSAS. Borrar solo el JSON dejaria vectores huerfanos en
+    ChromaDB; borrar solo del indice dejaria el contenido cifrado en disco."""
+    ruta = tmp_path / "conv.json"
+    telegram_bot._rutas[111] = ruta
+    olvidados, borrados = [], []
+    monkeypatch.setattr(telegram_bot, "olvidar_conversacion", lambda r: olvidados.append(r))
+    monkeypatch.setattr(
+        telegram_bot, "borrar_conversacion", lambda r: borrados.append(r) or True
+    )
+
+    editado = []
+    asyncio.run(telegram_bot.manejar_boton(
+        _update_boton(telegram_bot._DESCARTAR, editado=editado), _context()
+    ))
+
+    assert olvidados == [ruta]
+    assert borrados == [ruta]
+    assert "borrado" in " ".join(editado)
+
+
+def test_conservar_cierra_la_charla_sin_borrar_nada(monkeypatch, tmp_path):
+    """Caso de control: 'guardar y cerrar' no debe tocar el disco."""
+    telegram_bot._rutas[111] = tmp_path / "conv.json"
+    borrados = []
+    monkeypatch.setattr(telegram_bot, "olvidar_conversacion", lambda r: borrados.append(r))
+    monkeypatch.setattr(telegram_bot, "borrar_conversacion", lambda r: borrados.append(r))
+
+    editado = []
+    asyncio.run(telegram_bot.manejar_boton(
+        _update_boton(telegram_bot._CONSERVAR, editado=editado), _context()
+    ))
+
+    assert borrados == []
+    assert "Guardada" in " ".join(editado)
+
+
+@pytest.mark.parametrize("dato", ["salir:conservar", "salir:descartar"])
+def test_salir_cierra_la_charla_en_los_dos_casos(monkeypatch, tmp_path, dato):
+    """Guardando o descartando, la conversacion se CIERRA: se olvida el
+    contexto y se suelta el fichero, para que el mensaje siguiente estrene
+    conversacion en vez de seguir escribiendo en la anterior."""
+    telegram_bot._rutas[111] = tmp_path / "conv.json"
+    telegram_bot._nombres[111] = "una etiqueta"
+    telegram_bot._agentes[111] = SimpleNamespace(historial=[])
+    monkeypatch.setattr(telegram_bot, "olvidar_conversacion", lambda r: 0)
+    monkeypatch.setattr(telegram_bot, "borrar_conversacion", lambda r: True)
+
+    asyncio.run(telegram_bot.manejar_boton(_update_boton(dato), _context()))
+
+    assert 111 not in telegram_bot._rutas
+    assert 111 not in telegram_bot._agentes
+    assert 111 not in telegram_bot._nombres
+
+
+def test_los_botones_de_salir_no_crean_un_agente(monkeypatch, tmp_path):
+    """/salir es lo unico que no necesita un Agente vivo - de hecho lo que
+    hace es cerrarlo. Crear uno solo por pulsar el boton llamaria al
+    proveedor (lee la API key) sin ninguna necesidad."""
+    telegram_bot._rutas[111] = tmp_path / "conv.json"
+    creados = []
+    monkeypatch.setattr(
+        telegram_bot, "_agente_de", lambda uid: creados.append(uid) or SimpleNamespace()
+    )
+    monkeypatch.setattr(telegram_bot, "olvidar_conversacion", lambda r: 0)
+    monkeypatch.setattr(telegram_bot, "borrar_conversacion", lambda r: True)
+
+    asyncio.run(telegram_bot.manejar_boton(_update_boton(telegram_bot._DESCARTAR), _context()))
+
+    assert creados == []
+
+
+# --- F5.2+: /borrar (el comando mas peligroso del bot) -----------------
+# El nombre del fichero viaja a Telegram dentro del callback_data y vuelve:
+# dato NO confiable usado para BORRAR FICHEROS. Se valida por ALLOWLIST
+# (buscarlo en la lista real de conversaciones), no saneando el texto.
+
+
+@pytest.fixture
+def conversaciones_falsas(monkeypatch, tmp_path):
+    """Dos conversaciones de mentira en una carpeta temporal."""
+    rutas = []
+    for nombre in ("2026-07-27_10-00-00.json", "2026-07-28_12-45-10.json"):
+        ruta = tmp_path / nombre
+        ruta.write_text("{}", encoding="utf-8")
+        rutas.append(ruta)
+    monkeypatch.setattr(telegram_bot, "listar_conversaciones", lambda: rutas)
+    monkeypatch.setattr(
+        telegram_bot, "leer_metadatos",
+        lambda r: {"fecha": "2026-07-28T12:45", "nombre": "charla", "cifrado": True},
+    )
+    return rutas
+
+
+@pytest.mark.parametrize("malicioso", [
+    "../../.env",
+    "../../src/main.py",
+    r"..\..\.env",
+    "/etc/passwd",
+    "no-existe.json",
+])
+def test_un_nombre_manipulado_no_borra_nada(monkeypatch, conversaciones_falsas, malicioso):
+    """EL TEST QUE IMPORTA DE ESTE COMANDO. El callback_data se puede
+    fabricar a mano; si la ruta se construyera concatenando, un '../../.env'
+    borraria la configuracion. Se valida contra la lista REAL, asi que un
+    nombre que no este en ella no llega a tocar el disco."""
+    borrados = []
+    monkeypatch.setattr(telegram_bot, "_borrar_del_todo", lambda r: borrados.append(r) or True)
+    editado = []
+
+    boton = _update_boton(f"bc:{malicioso}", editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    assert borrados == []
+    assert "ya no existe" in " ".join(editado)
+
+
+def test_una_conversacion_real_si_se_borra(monkeypatch, conversaciones_falsas):
+    """Caso de control: sin esto, 'no borrar nunca' pasaria el test anterior
+    y el comando no serviria para nada."""
+    borrados = []
+    monkeypatch.setattr(telegram_bot, "_borrar_del_todo", lambda r: borrados.append(r) or True)
+    objetivo = conversaciones_falsas[1]
+    editado = []
+
+    boton = _update_boton(f"bc:{objetivo.name}", editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    assert borrados == [objetivo]
+    assert "Borrada" in " ".join(editado)
+
+
+def test_borrar_pide_confirmacion_antes(monkeypatch, conversaciones_falsas):
+    """Paso 1 (elegir) NO borra: solo pregunta. Es irreversible, no hay
+    papelera."""
+    borrados = []
+    monkeypatch.setattr(telegram_bot, "_borrar_del_todo", lambda r: borrados.append(r))
+    editado = []
+
+    boton = _update_boton(f"b:{conversaciones_falsas[0].name}", editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    assert borrados == []
+    assert "¿Seguro?" in " ".join(editado)
+
+
+def test_cancelar_no_borra_nada(monkeypatch, conversaciones_falsas):
+    borrados = []
+    monkeypatch.setattr(telegram_bot, "_borrar_del_todo", lambda r: borrados.append(r))
+    editado = []
+
+    asyncio.run(telegram_bot.manejar_boton(
+        _update_boton(telegram_bot._CANCELAR, editado=editado), _context()
+    ))
+
+    assert borrados == []
+    assert "no toco nada" in " ".join(editado)
+
+
+def test_borrar_la_conversacion_abierta_la_suelta(monkeypatch, conversaciones_falsas):
+    """Si se borra la charla EN CURSO hay que soltar su ruta: si no, el
+    turno siguiente volveria a escribir en ella y la RESUCITARIA
+    (guardar_conversacion con ruta= crea el fichero aunque ya no exista)."""
+    abierta = conversaciones_falsas[1]
+    telegram_bot._rutas[111] = abierta
+    telegram_bot._nombres[111] = "etiqueta"
+    monkeypatch.setattr(telegram_bot, "_borrar_del_todo", lambda r: True)
+
+    asyncio.run(telegram_bot.manejar_boton(_update_boton(f"bc:{abierta.name}"), _context()))
+
+    assert 111 not in telegram_bot._rutas
+    assert 111 not in telegram_bot._nombres
+
+
+def test_borrar_otra_conversacion_no_toca_la_abierta(monkeypatch, conversaciones_falsas):
+    """Caso de control del anterior: borrar una charla vieja no debe cerrar
+    la que estas teniendo ahora."""
+    abierta = conversaciones_falsas[1]
+    otra = conversaciones_falsas[0]
+    telegram_bot._rutas[111] = abierta
+    monkeypatch.setattr(telegram_bot, "_borrar_del_todo", lambda r: True)
+
+    asyncio.run(telegram_bot.manejar_boton(_update_boton(f"bc:{otra.name}"), _context()))
+
+    assert telegram_bot._rutas[111] == abierta
+
+
+def test_borrar_sin_conversaciones_lo_dice(monkeypatch):
+    monkeypatch.setattr(telegram_bot, "listar_conversaciones", lambda: [])
+    enviados = []
+
+    asyncio.run(telegram_bot.cmd_borrar(_update(enviados=enviados), _context()))
+
+    assert "No hay ninguna" in " ".join(enviados)

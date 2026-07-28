@@ -290,3 +290,29 @@ def test_al_reescribir_se_actualiza_el_numero_de_mensajes(entorno_aislado, sin_c
         ).fetchone()[0]
 
     assert num == 4
+
+
+def test_borrar_conversacion_quita_json_y_fila(entorno_aislado, sin_clave):
+    """F5.2+: con el guardado automatico de Telegram TODO acaba en memoria,
+    asi que hace falta poder tirar lo que no vale."""
+    import sqlite3
+
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m")
+    assert ruta.exists()
+
+    assert storage.borrar_conversacion(ruta) is True
+
+    assert not ruta.exists()
+    with sqlite3.connect(storage.DB_PATH) as conexion:
+        filas = conexion.execute(
+            "SELECT COUNT(*) FROM conversaciones WHERE ruta_json = ?", (str(ruta),)
+        ).fetchone()[0]
+    assert filas == 0
+
+
+def test_borrar_algo_que_ya_no_esta_no_es_un_error(entorno_aislado, sin_clave):
+    """Que el fichero ya no exista no es un fallo para quien pide borrarlo:
+    el objetivo ('que no exista') ya se cumple."""
+    fantasma = storage.CONVERSATIONS_DIR / "no-existe.json"
+
+    assert storage.borrar_conversacion(fantasma) is False

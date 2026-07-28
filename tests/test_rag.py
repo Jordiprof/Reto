@@ -216,3 +216,29 @@ def test_indexar_conversacion_inexistente_no_revienta(rag_aislado):
     fantasma = storage.CONVERSATIONS_DIR / "no-existe.json"
 
     assert rag.indexar_conversacion(fantasma) == 0
+
+
+def test_olvidar_conversacion_la_saca_del_indice(rag_aislado):
+    """La otra mitad de borrar: sin esto quedarian vectores huerfanos en
+    ChromaDB, saliendo como resultados que luego se descartan al no poder
+    abrir el fichero - ocupando sitio y empeorando la busqueda en silencio."""
+    ruta = _guardar(CONV_MEDICO)
+    rag.indexar_conversacion(ruta)
+    assert rag._coleccion().count() == 2
+
+    assert rag.olvidar_conversacion(ruta) == 2
+
+    assert rag._coleccion().count() == 0
+    assert rag.buscar("cita del medico") == []
+
+
+def test_olvidar_solo_afecta_a_esa_conversacion(rag_aislado):
+    """Borrar una charla no puede llevarse por delante las demas."""
+    ruta_medico = _guardar(CONV_MEDICO)
+    _guardar(CONV_PYTHON)
+    rag.indexar_conversaciones()
+
+    rag.olvidar_conversacion(ruta_medico)
+
+    assert rag._coleccion().count() == 1  # queda el de python
+    assert rag.buscar("python", n=1)[0]["texto"].lower().count("python") >= 1

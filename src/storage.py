@@ -305,6 +305,30 @@ def leer_metadatos(ruta: Path) -> dict:
     }
 
 
+def borrar_conversacion(ruta: Path) -> bool:
+    """Borra una conversacion guardada: el JSON y su fila del indice SQLite.
+
+    F5.2+ (peticion de Jordi al probar el bot): con el guardado automatico
+    de Telegram, TODO acaba en memoria - hasta un "hola". Sin una forma de
+    tirar lo que no vale, la memoria se llena de ruido, que ademas empeora
+    la busqueda semantica (mas paja contra la que competir).
+
+    Devuelve True si habia algo que borrar. NO borra del indice vectorial:
+    de eso se encarga rag.olvidar_conversacion, porque storage.py no sabe
+    -ni debe saber- que existe ChromaDB. Quien borre de verdad tiene que
+    llamar a los dos (ver telegram_bot._descartar).
+
+    missing_ok=True: que el fichero ya no este no es un error para quien
+    pide borrarlo; el objetivo ("que no exista") ya se cumple.
+    """
+    existia = ruta.exists()
+    ruta.unlink(missing_ok=True)
+    _inicializar_db()
+    with sqlite3.connect(DB_PATH) as conexion:
+        conexion.execute("DELETE FROM conversaciones WHERE ruta_json = ?", (str(ruta),))
+    return existia
+
+
 def listar_conversaciones() -> list[Path]:
     """Rutas de todas las conversaciones guardadas, de mas antigua a mas
     reciente.

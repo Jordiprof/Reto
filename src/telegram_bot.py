@@ -49,9 +49,10 @@ from src.main import SYSTEM_PROMPT
 # indexar_conversacion se importa aqui arriba (no perezoso) a proposito: si
 # faltara chromadb, mejor enterarse al arrancar el bot que a mitad del
 # primer turno.
-from src.rag import indexar_conversacion, indexar_conversaciones
+from src.rag import indexar_conversacion, indexar_conversaciones, olvidar_conversacion
 from src.storage import (
     ConversacionNoDescifrable,
+    borrar_conversacion,
     guardar_conversacion,
     leer_metadatos,
     listar_conversaciones,
@@ -86,6 +87,10 @@ _MAX_HISTORIAL = 15
 # Tope del nombre de /guardar. Va a los metadatos EN CLARO del JSON, asi
 # que ademas de caber en la lista conviene que no sea un texto libre largo.
 _MAX_NOMBRE = 60
+
+# Cuantos recuerdos enseña /recuerdo. Mas que los 3 que usa la tool por
+# dentro: aqui los lee una persona, que sabe descartar los que no valen.
+_RECUERDOS_MOSTRADOS = 5
 
 
 # --- Estado en memoria -----------------------------------------------------
@@ -467,14 +472,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
         await update.effective_message.reply_text(
+            "/recuerdo <algo> — buscar en mi memoria y enseñarte lo que hay\n"
+            "/historial — ver tus conversaciones guardadas\n"
+            "/borrar — borrar una conversación guardada, del disco y de mi memoria\n"
+            "/guardar <nombre> — ponerle nombre a esta charla\n"
+            "/salir — cerrar la charla: guardarla o descartarla\n"
+            "/limpiar — empezar de cero (la guarda y olvida el contexto)\n"
+            "/resumen — resumir lo hablado hasta ahora\n"
             "/modelo — cambiar el modelo (mismo proveedor)\n"
             "/proveedor — cambiar de proveedor (y modelo)\n"
-            "/historial — ver tus conversaciones guardadas\n"
-            "/guardar <nombre> — ponerle nombre a esta charla\n"
-            "/resumen — resumir lo hablado hasta ahora\n"
-            "/limpiar — empezar de cero (olvida esta conversación)\n"
             "/ayuda — esto\n\n"
-            "Voy guardando solo según hablamos, no hace falta que me lo pidas.\n"
+            "Voy guardando solo según hablamos, así que no se pierde nada aunque "
+            "me apaguen. Si una charla no merece la pena, ciérrala con /salir y "
+            "elige «descartar».\n"
             "Para todo lo demás, escríbeme normal."
         )
 
@@ -594,6 +604,193 @@ async def cmd_guardar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await mensaje.reply_text(f'Guardada como "{nombre}".')
 
 
+async def cmd_recuerdo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Busca A MANO en la memoria y enseña lo que hay, en crudo.
+
+    Peticion de Jordi (28/07). El agente ya decide solo cuando usar
+    buscar_en_recuerdos, pero esa decision la toma EL MODELO y a veces no la
+    toma: hoy mismo contesto "no lo tengo guardado" teniendo el dato
+    indexado. Este comando salta al modelo entero y enseña lo que hay de
+    verdad en la memoria.
+
+    Ademas es la herramienta de diagnostico que hoy faltaba: con esto, el
+    bug de "el bot no indexaba al arrancar" se habria visto en 10 segundos
+    en vez de deducirlo del log.
+    """
+    mensaje = update.effective_message
+    if mensaje is None:
+        return
+
+    consulta = " ".join(context.args).strip() if context.args else ""
+    if not consulta:
+        await mensaje.reply_text(
+            "Dime qué quieres que busque, por ejemplo:\n/recuerdo el chiste del plato"
+        )
+        return
+
+    try:
+        # buscar() es sincrona y bloqueante (calcula el vector de la
+        # consulta y descifra los JSON): a un hilo, como todo lo demas.
+        from src.rag import buscar
+
+        resultados = await asyncio.to_thread(buscar, consulta, _RECUERDOS_MOSTRADOS)
+    except Exception as error:
+        logging.error("Telegram: fallo al buscar recuerdos (%s)", type(error).__name__)
+        await mensaje.reply_text("⚠️ No he podido consultar la memoria.")
+        return
+
+    if not resultados:
+        await mensaje.reply_text("No encuentro nada sobre eso en mi memoria.")
+        return
+
+    lineas = []
+    for recuerdo in resultados:
+        fecha = (recuerdo.get("fecha") or "")[:10]
+        quien = "tú" if recuerdo["rol"] == "user" else "yo"
+        lineas.append(f"[{fecha}] {quien}: {recuerdo['texto']}")
+
+    # Se trocea igual que una respuesta normal: un recuerdo largo puede
+    # pasarse del limite de Telegram.
+    for trozo in _trocear("Esto es lo que tengo:\n\n" + "\n\n".join(lineas)):
+        await mensaje.reply_text(trozo)
+
+
+# --- /salir: cerrar la charla decidiendo si se queda o se tira -------------
+# Peticion de Jordi (28/07): por Telegram se guarda TODO automaticamente -
+# hasta un "hola" suelto-, asi que sin una forma de descartar, la memoria se
+# llena de ruido y la busqueda semantica empeora (mas paja contra la que
+# competir). En la CLI esa decision se toma al salir; aqui no habia salida.
+#
+# Se mantiene el guardado automatico y se añade el DESCARTE, en vez de
+# guardar solo al salir: un bot puede morirse en cualquier momento (se cae
+# la red, se reinicia el PC) y no se le pide "cerrar sesion" a un chat.
+# Guardar siempre y poder tirar es seguro; guardar solo al final, no.
+
+_DESCARTAR = "salir:descartar"
+_CONSERVAR = "salir:conservar"
+
+
+async def cmd_salir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cierra la conversacion en curso preguntando que hacer con ella."""
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+
+    if usuario.id not in _rutas:
+        await mensaje.reply_text("No hay ninguna conversación abierta que cerrar.")
+        return
+
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Guardar y cerrar", callback_data=_CONSERVAR)],
+        [InlineKeyboardButton("Descartar y cerrar", callback_data=_DESCARTAR)],
+    ])
+    await mensaje.reply_text("¿Qué hago con esta conversación?", reply_markup=teclado)
+
+
+def _descartar(user_id: int) -> bool:
+    """Borra del disco Y del indice la conversacion en curso.
+
+    Las dos cosas, no una: borrar solo el JSON dejaria los vectores
+    huerfanos en ChromaDB (ver rag.olvidar_conversacion), y borrar solo del
+    indice dejaria el contenido cifrado en disco. Sincrona y bloqueante:
+    llamar con asyncio.to_thread.
+    """
+    ruta = _rutas.get(user_id)
+    if ruta is None:
+        return False
+    return _borrar_del_todo(ruta)
+
+
+# --- /borrar: tirar una conversacion CONCRETA del historial ---------------
+# Peticion de Jordi (28/07). /salir solo puede descartar la charla EN CURSO;
+# esto permite entrar al historial y tirar cualquiera.
+#
+# SEGURIDAD (lo delicado de este comando): el nombre del fichero viaja a
+# Telegram dentro del callback_data y vuelve, o sea que es DATO NO CONFIABLE
+# usado para BORRAR FICHEROS - la combinacion mas peligrosa que hay en todo
+# el bot. Un "b:../../.env" borraria la configuracion; un "b:../../src/
+# main.py", el programa. Por eso NO se construye la ruta concatenando: se
+# busca el nombre en la lista REAL de conversaciones (allowlist) y se usa el
+# Path que devuelve el propio sistema. Si no esta en esa lista, no se toca
+# nada. Validar por lista es lo unico que cierra la clase entera; comprobar
+# "que no lleve .." solo cierra los casos que se te ocurran.
+
+_PREFIJO_BORRAR = "b:"
+_PREFIJO_BORRAR_OK = "bc:"
+# Centinela de "no hagas nada", equivalente al VOLVER/Cancelar que en la CLI
+# lleva TODO menu de flechas (convencion de F5.5, ver main.py).
+_CANCELAR = "cancelar"
+
+
+def _conversacion_valida(nombre: str) -> Path | None:
+    """Devuelve la ruta REAL si "nombre" es una conversacion guardada.
+
+    Allowlist, no saneado: se compara contra lo que devuelve
+    listar_conversaciones() y se usa SU objeto Path. Asi el nombre que llega
+    de fuera nunca se convierte en una ruta - solo sirve para BUSCAR en una
+    lista que hemos hecho nosotros.
+    """
+    for ruta in listar_conversaciones():
+        if ruta.name == nombre:
+            return ruta
+    return None
+
+
+async def cmd_borrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Enseña el historial con un boton por conversacion, para borrarla."""
+    mensaje = update.effective_message
+    if mensaje is None:
+        return
+
+    try:
+        rutas = await asyncio.to_thread(listar_conversaciones)
+    except Exception as error:
+        logging.error("Telegram: fallo al listar para borrar (%s)", type(error).__name__)
+        await mensaje.reply_text("⚠️ No he podido leer el historial.")
+        return
+
+    if not rutas:
+        await mensaje.reply_text("No hay ninguna conversación guardada.")
+        return
+
+    botones = []
+    for ruta in reversed(rutas[-_MAX_HISTORIAL:]):
+        try:
+            meta = await asyncio.to_thread(leer_metadatos, ruta)
+        except (OSError, ValueError, ConversacionNoDescifrable):
+            continue
+        fecha = (meta.get("fecha") or "")[:10]
+        nombre = meta.get("nombre") or "(sin nombre)"
+        # El TEXTO del boton puede ser largo y bonito; el callback_data lleva
+        # solo el nombre del fichero (Telegram lo limita a 64 bytes, y una
+        # marca de tiempo cabe de sobra).
+        botones.append([InlineKeyboardButton(
+            f"{fecha} — {nombre}"[:60],
+            callback_data=f"{_PREFIJO_BORRAR}{ruta.name}",
+        )])
+
+    if not botones:
+        await mensaje.reply_text("No hay ninguna conversación que pueda listar.")
+        return
+
+    await mensaje.reply_text(
+        "¿Cuál quieres borrar? (te lo preguntaré otra vez antes de hacerlo)",
+        reply_markup=InlineKeyboardMarkup(botones),
+    )
+
+
+def _borrar_del_todo(ruta: Path) -> bool:
+    """Borra una conversacion de LOS DOS SITIOS: el indice vectorial y el
+    disco. Ver el porque en telegram_bot._descartar."""
+    try:
+        olvidar_conversacion(ruta)
+        return borrar_conversacion(ruta)
+    except Exception as error:
+        logging.error("Telegram: fallo al borrar (%s)", type(error).__name__)
+        return False
+
+
 # --- /modelo y /proveedor: menus con BOTONES -------------------------------
 # En la CLI son menus de flechas (questionary). En Telegram no existe tal
 # cosa: el equivalente son los "inline keyboards", botones bajo el mensaje
@@ -675,6 +872,77 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # cliente de Telegram deja el boton girando unos segundos.
     await consulta.answer()
     dato = consulta.data or ""
+
+    # /salir va primero: es el unico que no necesita un Agente vivo (de
+    # hecho lo que hace es cerrarlo), asi que no se crea uno solo por
+    # pulsar el boton.
+    if dato in (_CONSERVAR, _DESCARTAR):
+        async with _cerrojo_de(usuario.id):
+            if dato == _DESCARTAR:
+                borrado = await asyncio.to_thread(_descartar, usuario.id)
+                texto = (
+                    "Descartada: la he borrado del disco y de mi memoria."
+                    if borrado
+                    else "No he encontrado nada que borrar."
+                )
+            else:
+                texto = "Guardada. Empezamos conversación nueva."
+            # En los dos casos se cierra la charla: se olvida el contexto en
+            # curso y se suelta el fichero, para que el mensaje siguiente
+            # estrene conversacion.
+            _agentes.pop(usuario.id, None)
+            _rutas.pop(usuario.id, None)
+            _nombres.pop(usuario.id, None)
+        await consulta.edit_message_text(texto)
+        return
+
+    # /borrar, paso 1: se ha elegido una conversacion -> se PIDE CONFIRMACION.
+    # Dos pasos y no uno porque esto es irreversible: no hay papelera.
+    # "bc:" NO empieza por "b:" (el 2o caracter ya difiere), asi que los dos
+    # prefijos no chocan y no hace falta desambiguar.
+    if dato.startswith(_PREFIJO_BORRAR):
+        nombre = dato[len(_PREFIJO_BORRAR):]
+        if await asyncio.to_thread(_conversacion_valida, nombre) is None:
+            await consulta.edit_message_text("Esa conversación ya no existe.")
+            return
+        await consulta.edit_message_text(
+            "¿Seguro? Esto la borra del disco y de mi memoria, sin vuelta atrás.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "Sí, bórrala", callback_data=f"{_PREFIJO_BORRAR_OK}{nombre}"
+                )],
+                [InlineKeyboardButton("Cancelar", callback_data=_CANCELAR)],
+            ]),
+        )
+        return
+
+    # /borrar, paso 2: confirmado.
+    if dato.startswith(_PREFIJO_BORRAR_OK):
+        nombre = dato[len(_PREFIJO_BORRAR_OK):]
+        # Se REVALIDA aqui, no se confia en que el paso 1 ya lo hiciera: este
+        # callback_data llega de fuera igual que el otro y podria mandarse
+        # directamente, sin pasar por el primer boton.
+        ruta = await asyncio.to_thread(_conversacion_valida, nombre)
+        if ruta is None:
+            await consulta.edit_message_text("Esa conversación ya no existe.")
+            return
+        borrado = await asyncio.to_thread(_borrar_del_todo, ruta)
+        # Si era la conversacion ABIERTA, hay que soltarla: si no, el
+        # siguiente turno la volveria a escribir en la misma ruta y la
+        # resucitaria (guardar_conversacion con ruta= crea el fichero
+        # aunque ya no exista).
+        if _rutas.get(usuario.id) == ruta:
+            _rutas.pop(usuario.id, None)
+            _nombres.pop(usuario.id, None)
+        await consulta.edit_message_text(
+            "Borrada del disco y de mi memoria." if borrado else "No he podido borrarla."
+        )
+        return
+
+    if dato == _CANCELAR:
+        await consulta.edit_message_text("Vale, no toco nada.")
+        return
+
     agente = _agente_de(usuario.id)
 
     if dato.startswith(_PREFIJO_MODELO):
@@ -818,6 +1086,9 @@ def construir_aplicacion() -> Application:
     aplicacion.add_handler(CommandHandler("guardar", cmd_guardar))
     aplicacion.add_handler(CommandHandler("modelo", cmd_modelo))
     aplicacion.add_handler(CommandHandler("proveedor", cmd_proveedor))
+    aplicacion.add_handler(CommandHandler("recuerdo", cmd_recuerdo))
+    aplicacion.add_handler(CommandHandler("salir", cmd_salir))
+    aplicacion.add_handler(CommandHandler("borrar", cmd_borrar))
     # Los botones de /modelo y /proveedor vuelven como CallbackQuery. Pasan
     # por la allowlist igual que todo lo demas (TypeHandler del grupo -1).
     aplicacion.add_handler(CallbackQueryHandler(manejar_boton))
@@ -870,7 +1141,15 @@ def main_bot() -> None:
         "ℹ️ Comparto memoria con la CLI (conversations/ + chroma_db/). "
         "NO ejecutes 'python -m src.main' a la vez que el bot."
     )
-    aplicacion.run_polling()
+    try:
+        aplicacion.run_polling()
+    except KeyboardInterrupt:
+        # PTB ya atrapa el PRIMER Ctrl+C y hace un apagado ordenado. Pero si
+        # se pulsa OTRA vez mientras esta apagando (justo lo que paso el
+        # 28/07 probando), el segundo KeyboardInterrupt cae en mitad del
+        # cierre y sale un traceback de 30 lineas que parece un fallo grave
+        # y no lo es. Se atrapa para despedirse en una linea.
+        print("\nBot parado.")
 
 
 if __name__ == "__main__":
