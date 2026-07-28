@@ -130,26 +130,54 @@ def _inicializar_db() -> None:
 
 
 def _indexar_en_sqlite(ruta_json: Path, proveedor: str, modelo: str, num_mensajes: int) -> None:
-    """Inserta una fila en conversaciones.db apuntando al JSON real.
+    """Deja UNA fila en conversaciones.db por cada JSON real.
 
     Con "?" como placeholder (nunca con f-strings) se evita SQL injection:
     sqlite3 se encarga de escapar el valor, aunque aqui el dato venga de
     variables internas del programa, no de un usuario externo - es la
     forma correcta de hacerlo siempre, por costumbre segura.
+
+    F5.2+ (memoria compartida): antes esto INSERTABA siempre. Con el bot de
+    Telegram, que reescribe el MISMO fichero despues de cada turno, eso
+    dejaba una fila nueva por turno y /historial acababa mostrando la misma
+    conversacion 30 veces. Ahora primero mira si ya hay fila para esa ruta:
+    si la hay, la ACTUALIZA (num_mensajes crece con la charla).
     """
     _inicializar_db()
     with sqlite3.connect(DB_PATH) as conexion:
-        conexion.execute(
-            "INSERT INTO conversaciones (fecha, proveedor, modelo, ruta_json, num_mensajes) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (datetime.now().isoformat(), proveedor, modelo, str(ruta_json), num_mensajes),
-        )
+        fila = conexion.execute(
+            "SELECT id FROM conversaciones WHERE ruta_json = ?", (str(ruta_json),)
+        ).fetchone()
+        if fila is None:
+            conexion.execute(
+                "INSERT INTO conversaciones (fecha, proveedor, modelo, ruta_json, num_mensajes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (datetime.now().isoformat(), proveedor, modelo, str(ruta_json), num_mensajes),
+            )
+        else:
+            conexion.execute(
+                "UPDATE conversaciones SET fecha = ?, proveedor = ?, modelo = ?, "
+                "num_mensajes = ? WHERE id = ?",
+                (datetime.now().isoformat(), proveedor, modelo, num_mensajes, fila[0]),
+            )
 
 
 def guardar_conversacion(
-    historial: list, proveedor: str, modelo: str, nombre: str | None = None
+    historial: list, proveedor: str, modelo: str, nombre: str | None = None,
+    ruta: Path | None = None,
 ) -> Path | None:
     """Guarda la conversacion en un .json con fecha/hora en el nombre.
+
+    F5.2+ (memoria compartida CLI <-> Telegram): "ruta" permite REESCRIBIR
+    un fichero concreto en vez de crear uno nuevo. Lo necesita el bot, que
+    guarda despues de CADA turno para no perder nada si el proceso se para:
+    sin esto crearia un fichero por turno, cada uno superconjunto del
+    anterior, y el RAG indexaria la misma frase una vez por fichero (el id
+    de cada mensaje es "fichero:indice", ver rag._id_mensaje).
+
+    Reescribiendo el mismo fichero, en cambio, los ids se mantienen
+    estables: los mensajes ya indexados conservan el suyo y solo los nuevos
+    estrenan id. La reindexacion sigue siendo idempotente sin tocar el RAG.
 
     Devuelve la ruta del fichero creado, o None si no habia nada real que
     guardar (el usuario escribio "salir" sin llegar a preguntar nada: el
@@ -175,8 +203,9 @@ def guardar_conversacion(
     # (perdida de datos silenciosa). Raro en la CLI, pero posible con el bot
     # de Telegram (F5.2) o un uso rapido. Los microsegundos siguen ordenando
     # bien y hacen la colision practicamente imposible.
-    marca_tiempo = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
-    ruta = CONVERSATIONS_DIR / f"{marca_tiempo}.json"
+    if ruta is None:
+        marca_tiempo = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+        ruta = CONVERSATIONS_DIR / f"{marca_tiempo}.json"
 
     # Envolvemos el historial con metadatos. OJO: proveedor/modelo son los
     # ULTIMOS usados en la conversacion - si se cambio con /proveedor a

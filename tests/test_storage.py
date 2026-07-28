@@ -227,3 +227,66 @@ def test_listar_conversaciones_ordena_cronologicamente(entorno_aislado, sin_clav
     nombres = [ruta.stem for ruta in listar_conversaciones()]
 
     assert nombres == ["2026-07-20_10-00-00", "2026-07-21_23-59-59", "2026-07-22_09-00-00"]
+
+
+# --- F5.2+: reescritura del mismo fichero (memoria compartida) ---------
+# El bot de Telegram guarda despues de CADA turno. Sin poder reescribir el
+# mismo fichero, cada turno dejaria un JSON nuevo (superconjunto del
+# anterior) y el RAG indexaria la misma frase una vez por fichero, porque el
+# id de un mensaje es "fichero:indice".
+
+
+def test_guardar_con_ruta_reescribe_en_vez_de_crear(entorno_aislado, sin_clave):
+    """Segunda llamada con ruta= no crea un fichero nuevo: pisa el mismo."""
+    primera = guardar_conversacion(HISTORIAL, "groq", "m")
+
+    ampliado = HISTORIAL + [{"role": "user", "content": "y el viernes dentista"}]
+    segunda = guardar_conversacion(ampliado, "groq", "m", ruta=primera)
+
+    assert segunda == primera
+    assert len(listar_conversaciones()) == 1
+    # El contenido es el ampliado, no el viejo.
+    assert len(cargar_conversacion(primera)["historial"]) == 4
+
+
+def test_sin_ruta_se_sigue_creando_uno_nuevo(entorno_aislado, sin_clave):
+    """El comportamiento de siempre (la CLI) no cambia: sin ruta=, cada
+    guardado estrena fichero."""
+    primera = guardar_conversacion(HISTORIAL, "groq", "m")
+    segunda = guardar_conversacion(HISTORIAL, "groq", "m")
+
+    assert primera != segunda
+    assert len(listar_conversaciones()) == 2
+
+
+def test_reescribir_no_duplica_la_fila_del_indice_sqlite(entorno_aislado, sin_clave):
+    """Antes _indexar_en_sqlite INSERTABA siempre. Con el bot guardando cada
+    turno, /historial acabaria mostrando la misma conversacion 30 veces."""
+    import sqlite3
+
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m")
+    for _ in range(4):
+        guardar_conversacion(HISTORIAL, "groq", "m", ruta=ruta)
+
+    with sqlite3.connect(storage.DB_PATH) as conexion:
+        filas = conexion.execute(
+            "SELECT COUNT(*) FROM conversaciones WHERE ruta_json = ?", (str(ruta),)
+        ).fetchone()[0]
+
+    assert filas == 1
+
+
+def test_al_reescribir_se_actualiza_el_numero_de_mensajes(entorno_aislado, sin_clave):
+    """La fila no solo no se duplica: refleja el estado ACTUAL de la charla."""
+    import sqlite3
+
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m")
+    ampliado = HISTORIAL + [{"role": "user", "content": "una cosa mas"}]
+    guardar_conversacion(ampliado, "groq", "m", ruta=ruta)
+
+    with sqlite3.connect(storage.DB_PATH) as conexion:
+        num = conexion.execute(
+            "SELECT num_mensajes FROM conversaciones WHERE ruta_json = ?", (str(ruta),)
+        ).fetchone()[0]
+
+    assert num == 4

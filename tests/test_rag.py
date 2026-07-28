@@ -149,3 +149,70 @@ def test_busqueda_descifra_bajo_demanda(rag_aislado, monkeypatch):
 def test_buscar_sin_indice_devuelve_vacio(rag_aislado):
     """Sin nada indexado, buscar no revienta: devuelve lista vacia."""
     assert rag.buscar("lo que sea") == []
+
+
+# --- F5.2+: indexado incremental de UNA conversacion -------------------
+# Lo que usa el bot de Telegram despues de cada turno. La alternativa
+# (indexar_conversaciones() en cada mensaje) obliga a releer y DESCIFRAR el
+# historial entero de todas las conversaciones entre mensaje y mensaje.
+
+
+def test_indexar_una_sola_conversacion(rag_aislado):
+    """Solo entra al indice la conversacion indicada, no las demas."""
+    ruta_medico = _guardar(CONV_MEDICO)
+    _guardar(CONV_PYTHON)
+
+    assert rag.indexar_conversacion(ruta_medico) == 2  # user + assistant
+    assert rag._coleccion().count() == 2               # el python NO esta
+
+    resultados = rag.buscar("python", n=3)
+    assert all("python" not in r["texto"].lower() for r in resultados)
+
+
+def test_reindexar_la_misma_conversacion_no_duplica(rag_aislado):
+    """Idempotencia, igual que la version completa."""
+    ruta = _guardar(CONV_MEDICO)
+
+    assert rag.indexar_conversacion(ruta) == 2
+    assert rag.indexar_conversacion(ruta) == 0
+
+
+def test_conversacion_reescrita_solo_indexa_lo_nuevo(rag_aislado):
+    """EL CASO DEL BOT: guarda el turno 1, indexa; llega el turno 2, se
+    REESCRIBE el mismo fichero y se reindexa. Solo deben entrar los
+    mensajes nuevos - los de antes ya tienen su id 'fichero:indice' y no se
+    vuelven a incrustar (incrustar es lo caro)."""
+    ruta = _guardar(CONV_MEDICO)
+    assert rag.indexar_conversacion(ruta) == 2
+
+    ampliada = CONV_MEDICO + [
+        {"role": "user", "content": "y apunta tambien la cita del dentista"},
+        {"role": "assistant", "content": "Dentista apuntado."},
+    ]
+    storage.guardar_conversacion(ampliada, "groq", "m", ruta=ruta)
+
+    assert rag.indexar_conversacion(ruta) == 2  # solo los 2 nuevos
+    assert rag._coleccion().count() == 4        # 2 + 2, sin duplicados
+
+
+def test_lo_guardado_por_una_via_lo_encuentra_la_otra(rag_aislado):
+    """La razon de ser de todo esto (memoria compartida CLI <-> Telegram):
+    una conversacion escrita por un lado tiene que ser recuperable por el
+    otro. Aqui se simula guardando/indexando como hace el bot y buscando
+    como hace la tool buscar_en_recuerdos."""
+    ruta = _guardar(CONV_MEDICO)
+    rag.indexar_conversacion(ruta)
+
+    resultados = rag.buscar("cita del medico", n=1)
+
+    assert len(resultados) == 1
+    assert "medico" in resultados[0]["texto"].lower()
+
+
+def test_indexar_conversacion_inexistente_no_revienta(rag_aislado):
+    """El bot llama a esto en segundo plano tras responder. Si el fichero
+    desapareciera, debe devolver 0, no tumbar el turno (mismo espiritu que
+    RNF-02: el programa avisa y sigue vivo)."""
+    fantasma = storage.CONVERSATIONS_DIR / "no-existe.json"
+
+    assert rag.indexar_conversacion(fantasma) == 0

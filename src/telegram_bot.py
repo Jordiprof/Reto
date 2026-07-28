@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from pathlib import Path
 
 from telegram import Update
 from telegram.constants import ChatAction, MessageLimit
@@ -40,6 +41,13 @@ from src.config import (
     obtener_usuarios_permitidos,
 )
 from src.main import SYSTEM_PROMPT
+
+# F5.2+ (memoria compartida): el bot escribe en el MISMO almacen que la CLI.
+# indexar_conversacion se importa aqui arriba (no perezoso) a proposito: si
+# faltara chromadb, mejor enterarse al arrancar el bot que a mitad del
+# primer turno.
+from src.rag import indexar_conversacion
+from src.storage import guardar_conversacion
 
 # --- Limites ---------------------------------------------------------------
 
@@ -70,6 +78,12 @@ _VENTANA_SEGUNDOS = 60.0
 _agentes: dict[int, Agente] = {}
 _cerrojos: dict[int, asyncio.Lock] = {}
 _marcas: dict[int, list[float]] = {}
+
+# F5.2+ (memoria compartida CLI <-> Telegram): fichero donde se va guardando
+# la conversacion EN CURSO de cada usuario. Se reescribe el mismo despues de
+# cada turno, no uno nuevo por mensaje - ver storage.guardar_conversacion.
+# Se borra la entrada en /limpiar: la charla siguiente estrena fichero.
+_rutas: dict[int, Path] = {}
 
 
 # --- Helpers puros (testeables sin red, sin Telegram y sin LLM) ------------
@@ -148,6 +162,49 @@ def _agente_de(user_id: int) -> Agente:
         proveedor, modelo, api_key = _configuracion_por_defecto()
         _agentes[user_id] = Agente(SYSTEM_PROMPT, proveedor, api_key, modelo)
     return _agentes[user_id]
+
+
+def _persistir(user_id: int) -> None:
+    """Guarda el turno recien terminado y lo mete en la memoria semantica.
+
+    ESTO es lo que hace que el bot y la CLI compartan memoria (F5.2+). Antes
+    el bot no llamaba nunca a guardar(): lo hablado por Telegram vivia solo
+    en RAM, se perdia al parar el proceso y NO alimentaba el RAG, asi que
+    buscar_en_recuerdos solo encontraba lo escrito desde la terminal. Ahora
+    las dos entradas escriben en el mismo sitio (conversations/ cifrado +
+    indice de ChromaDB) y cualquiera de las dos recuerda lo de la otra.
+
+    Se llama DESPUES de responder al usuario, no antes: guardar es
+    importante, pero no tanto como contestar. Y por eso mismo no lanza -
+    un fallo al guardar se registra y se sigue; el usuario ya tiene su
+    respuesta y perder el guardado de un turno no justifica romperle la
+    conversacion.
+
+    OJO: es SINCRONA y bloqueante (cifra, escribe disco, incrusta el texto
+    en un vector). Quien la llame debe hacerlo con asyncio.to_thread, igual
+    que con Agente.preguntar - si no, congela el bucle de eventos del bot.
+    """
+    agente = _agentes.get(user_id)
+    if agente is None:
+        return
+    try:
+        ruta = guardar_conversacion(
+            agente.historial, agente.proveedor, agente.modelo,
+            # El "nombre" es la etiqueta que en la CLI pone Jordi a mano al
+            # guardar. Por Telegram no hay donde pedirla sin interrumpir la
+            # charla, asi que se marca el origen: al menos /historial deja
+            # distinguir de un vistazo que salio del bot.
+            nombre="Telegram",
+            ruta=_rutas.get(user_id),
+        )
+        if ruta is None:
+            return  # historial vacio (solo el system prompt): nada que guardar
+        _rutas[user_id] = ruta
+        indexar_conversacion(ruta)
+    except Exception as error:
+        # Tipo, no texto (politica de logging del proyecto): el str() de un
+        # error de cifrado o de ChromaDB puede arrastrar contenido.
+        logging.error("Telegram: no se pudo persistir el turno (%s)", type(error).__name__)
 
 
 def _cerrojo_de(user_id: int) -> asyncio.Lock:
@@ -332,6 +389,20 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "Telegram: fallo no controlado al responder (%s)", type(error).__name__
             )
             respuesta = "⚠️ Se me ha cruzado un cable. Vuelve a intentarlo en un momento."
+        else:
+            # Solo se persiste si el turno fue bien: un historial que acaba
+            # en un fallo no debe entrar en la memoria a largo plazo como si
+            # fuera una conversacion real (mismo criterio que Agente.preguntar,
+            # que no mete en el historial las respuestas de error).
+            #
+            # to_thread por lo mismo que preguntar(): cifrar, escribir en
+            # disco e incrustar el texto en un vector son operaciones
+            # bloqueantes, y aqui congelarian el bot entero.
+            #
+            # Dentro del cerrojo del usuario: si no, un mensaje siguiente
+            # podria estar modificando self.historial mientras este se
+            # serializa a JSON.
+            await asyncio.to_thread(_persistir, usuario.id)
 
     for trozo in _trocear(respuesta):
         await mensaje.reply_text(trozo)
@@ -382,7 +453,14 @@ async def cmd_limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     async with _cerrojo_de(usuario.id):
         _agentes.pop(usuario.id, None)
-    await update.effective_message.reply_text("Listo, empezamos de cero.")
+        # F5.2+: se suelta tambien el fichero de la charla. Lo ya guardado NO
+        # se borra (sigue en conversations/ y en el RAG, igual que /limpiar en
+        # la CLI tampoco borra del disco): lo que se corta es que la
+        # conversacion SIGUIENTE se escriba encima de la anterior.
+        _rutas.pop(usuario.id, None)
+    await update.effective_message.reply_text(
+        "Listo, empezamos de cero. Lo de antes sigue en mi memoria a largo plazo."
+    )
 
 
 async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -528,6 +606,16 @@ def main_bot() -> None:
     """
     aplicacion = construir_aplicacion()
     print("Bot de Telegram arrancado. Ctrl+C para parar.")
+    # F5.2+: el bot y la CLI comparten memoria, y eso tiene un limite que hay
+    # que decir EN PANTALLA (no solo en el log, que nadie mira mientras usa el
+    # programa - misma leccion que el aviso de cifrado apagado en main.py).
+    # ChromaDB en modo PersistentClient esta pensado para UN proceso: dos a la
+    # vez sobre chroma_db/ pueden corromper el indice. El cerrojo de rag.py
+    # protege hilos DENTRO de un proceso, no procesos distintos.
+    print(
+        "ℹ️ Comparto memoria con la CLI (conversations/ + chroma_db/). "
+        "NO ejecutes 'python -m src.main' a la vez que el bot."
+    )
     aplicacion.run_polling()
 
 

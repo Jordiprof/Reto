@@ -26,12 +26,14 @@ def estado_limpio(monkeypatch):
     telegram_bot._agentes.clear()
     telegram_bot._cerrojos.clear()
     telegram_bot._marcas.clear()
+    telegram_bot._rutas.clear()
     monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, "111")
     monkeypatch.setenv(config.TELEGRAM_TOKEN_ENV, "123456:token-de-mentira")
     yield
     telegram_bot._agentes.clear()
     telegram_bot._cerrojos.clear()
     telegram_bot._marcas.clear()
+    telegram_bot._rutas.clear()
 
 
 def _update(user_id=111, texto="hola", nombre="Jordi", enviados=None):
@@ -529,3 +531,120 @@ def test_un_token_invalido_no_filtra_el_token(caplog, monkeypatch):
 
     assert secreto not in caplog.text
     assert secreto not in str(fallo.value)
+
+
+# --- F5.2+: memoria compartida CLI <-> Telegram -------------------------
+# Antes, el bot NO llamaba nunca a guardar(): lo hablado por Telegram vivia
+# solo en RAM y no alimentaba el RAG, asi que buscar_en_recuerdos solo
+# encontraba lo escrito desde la terminal. Ninguno de estos tests toca el
+# disco real ni ChromaDB: se espia guardar_conversacion/indexar_conversacion.
+
+
+@pytest.fixture
+def persistencia_espiada(monkeypatch, tmp_path):
+    """Sustituye el guardado y el indexado por espias. Devuelve el registro
+    de lo que se les pidio hacer."""
+    registro = SimpleNamespace(guardados=[], indexados=[], ruta=tmp_path / "conv.json")
+
+    def guardar_falso(historial, proveedor, modelo, nombre=None, ruta=None):
+        registro.guardados.append(
+            {"mensajes": len(historial), "nombre": nombre, "ruta": ruta}
+        )
+        return registro.ruta
+
+    monkeypatch.setattr(telegram_bot, "guardar_conversacion", guardar_falso)
+    monkeypatch.setattr(
+        telegram_bot, "indexar_conversacion", lambda r: registro.indexados.append(r)
+    )
+    return registro
+
+
+def _agente_falso(monkeypatch, respuesta="respondo"):
+    """Un Agente de mentira que SI queda registrado en _agentes (a
+    diferencia del stub de _agente_de que usan los tests de arriba), porque
+    _persistir lo busca ahi."""
+    agente = SimpleNamespace(
+        preguntar=lambda t: respuesta,
+        historial=[{"role": "system", "content": "s"}, {"role": "user", "content": "hola"}],
+        proveedor="groq",
+        modelo="llama",
+    )
+    monkeypatch.setattr(
+        telegram_bot, "_agente_de", lambda uid: telegram_bot._agentes.setdefault(uid, agente)
+    )
+    return agente
+
+
+def test_un_turno_por_telegram_se_guarda_y_se_indexa(monkeypatch, persistencia_espiada):
+    """La razon de ser del cambio: lo hablado por Telegram tiene que acabar
+    en el mismo almacen que usa la CLI, o las dos memorias van por
+    separado."""
+    _agente_falso(monkeypatch)
+
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="hola"), _context()))
+
+    assert len(persistencia_espiada.guardados) == 1
+    assert persistencia_espiada.indexados == [persistencia_espiada.ruta]
+
+
+def test_los_turnos_siguientes_reescriben_el_mismo_fichero(monkeypatch, persistencia_espiada):
+    """Sin esto, cada turno crearia un JSON nuevo (superconjunto del
+    anterior) y el RAG indexaria la misma frase una vez por fichero."""
+    _agente_falso(monkeypatch)
+
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="hola"), _context()))
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="que tal"), _context()))
+
+    # El primer guardado no conoce ruta todavia; el segundo YA reutiliza la
+    # que devolvio el primero.
+    assert persistencia_espiada.guardados[0]["ruta"] is None
+    assert persistencia_espiada.guardados[1]["ruta"] == persistencia_espiada.ruta
+
+
+def test_un_turno_que_falla_no_se_persiste(monkeypatch, persistencia_espiada):
+    """Un historial que acaba en error no debe entrar en la memoria a largo
+    plazo como si fuera conversacion real (mismo criterio que
+    Agente.preguntar, que no guarda las respuestas de error)."""
+    def revienta(texto):
+        raise RuntimeError("boom")
+
+    agente = _agente_falso(monkeypatch)
+    agente.preguntar = revienta
+    enviados = []
+
+    asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
+
+    assert persistencia_espiada.guardados == []
+    assert "cable" in " ".join(enviados)  # al usuario si se le contesta
+
+
+def test_si_falla_el_guardado_el_usuario_recibe_su_respuesta(monkeypatch, persistencia_espiada):
+    """Guardar es importante, pero no tanto como contestar: un fallo al
+    persistir se registra y se sigue, no rompe el turno."""
+    def guardar_que_revienta(*a, **kw):
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(telegram_bot, "guardar_conversacion", guardar_que_revienta)
+    _agente_falso(monkeypatch, respuesta="aqui tienes")
+    enviados = []
+
+    asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
+
+    assert enviados == ["aqui tienes"]
+
+
+def test_limpiar_suelta_el_fichero_pero_no_borra_lo_guardado(monkeypatch, persistencia_espiada):
+    """/limpiar corta la conversacion en curso; lo ya guardado sigue en
+    conversations/ y en el RAG (igual que /limpiar en la CLI tampoco borra
+    del disco). Lo que se corta es que la charla SIGUIENTE se escriba
+    encima de la anterior."""
+    _agente_falso(monkeypatch)
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="hola"), _context()))
+    assert telegram_bot._rutas.get(111) == persistencia_espiada.ruta
+
+    asyncio.run(telegram_bot.cmd_limpiar(_update(), _context()))
+
+    assert 111 not in telegram_bot._rutas
+    # El siguiente turno vuelve a empezar fichero (ruta=None).
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="otra cosa"), _context()))
+    assert persistencia_espiada.guardados[-1]["ruta"] is None
