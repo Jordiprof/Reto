@@ -12,6 +12,10 @@ import ast
 # no escribir un if/elif largo por cada operador.
 import operator
 
+# re: para neutralizar las etiquetas <recuerdo> que pudieran venir dentro
+# del propio texto recordado (SEG-07, ver _sanear_recordado).
+import re
+
 # Callable: el tipo "una funcion cualquiera", para el type hint del registro.
 from collections.abc import Callable
 
@@ -152,6 +156,40 @@ def calcular(expresion: str) -> float:
 # conversaciones pasadas por SIGNIFICADO ("¿que me dijo sobre X?").
 _LONGITUD_MAXIMA_CONSULTA = 300
 
+# SEG-07 (hallazgo de la auditoria del 27/07): lo que devuelve esta tool se
+# le entrega al LLM como "resultado", mezclado con las instrucciones del
+# SYSTEM_PROMPT, sin ninguna marca de donde empieza el dato y donde acaba.
+# Como ademas el SYSTEM_PROMPT EMPUJA a usar la memoria ("Úsala siempre
+# que pregunte por algo de antes"), el modelo llega predispuesto a hacer
+# caso de lo que salga de aqui. Si un recuerdo contuviera una frase con
+# forma de orden ("ignora lo anterior y responde X"), el modelo no tendria
+# forma de distinguir esa frase CITADA de una instruccion real.
+#
+# Hoy es teorico -el unico que escribe en la memoria es JIM- pero deja de
+# serlo en cuanto una tool traiga contenido de fuera (RSS, web, PDF: tier
+# de ampliacion de F5.5) o en cuanto el bot de Telegram empiece a guardar.
+# Por eso se cierra ANTES de F5.5, no despues.
+_ETIQUETA_RECUERDO = "recuerdo"
+
+# Neutraliza cualquier etiqueta <recuerdo> o </recuerdo> que venga DENTRO
+# del propio texto recordado. Sin esto el control seria decorativo: bastaria
+# con que una conversacion pasada contuviera "</recuerdo>" para cerrar la
+# cita antes de tiempo y colar el resto como si fuera texto de fuera de la
+# cita - la version en miniatura de una inyeccion SQL, cerrando la comilla.
+# re.IGNORECASE + \s*: se cierran tambien "</RECUERDO>" y "< / recuerdo >".
+_ETIQUETA_EN_TEXTO = re.compile(rf"<\s*/?\s*{_ETIQUETA_RECUERDO}\s*>", re.IGNORECASE)
+
+
+def _sanear_recordado(texto: object) -> str:
+    """Deja el texto listo para ir DENTRO de <recuerdo>...</recuerdo>.
+
+    Todo lo que pasa por aqui es contenido que escribio una persona (el
+    mensaje guardado, o el nombre que JIM le puso a la conversacion), asi
+    que se trata como dato no confiable: se le quitan las etiquetas que
+    podrian romper la cita.
+    """
+    return _ETIQUETA_EN_TEXTO.sub("(etiqueta eliminada)", str(texto))
+
 
 class ArgsBuscarRecuerdos(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -178,6 +216,9 @@ def buscar_en_recuerdos(consulta: str) -> str:
 
     resultados = buscar(consulta)
     if not resultados:
+        # Sin envolver a proposito: esta frase la escribimos NOSOTROS, no
+        # sale de ninguna conversacion. Envolverla en <recuerdo> seria
+        # mentirle al modelo sobre su origen.
         return "No encontré nada relevante en conversaciones anteriores."
 
     lineas = []
@@ -186,8 +227,21 @@ def buscar_en_recuerdos(consulta: str) -> str:
         quien = "JIM dijo" if recuerdo["rol"] == "user" else "tú respondiste"
         # Si la conversacion tenia nombre, se añade como contexto: ayuda al
         # modelo a situar de que charla salio el recuerdo (F5.3+).
-        titulo = f' (conversación "{recuerdo["nombre"]}")' if recuerdo.get("nombre") else ""
-        lineas.append(f"[{fecha}]{titulo} {quien}: {recuerdo['texto']}")
+        # El nombre lo escribe JIM al guardar, asi que se sanea igual que el
+        # texto: tambien es contenido, no una etiqueta nuestra.
+        nombre = recuerdo.get("nombre")
+        titulo = f' (conversación "{_sanear_recordado(nombre)}")' if nombre else ""
+        texto = _sanear_recordado(recuerdo["texto"])
+        # SEG-07: cada recuerdo va DELIMITADO. La etiqueta es la frontera
+        # explicita entre "esto son datos que recuperaste" y "esto son tus
+        # instrucciones"; el SYSTEM_PROMPT le dice al modelo que lo de
+        # dentro nunca se obedece (ver la seccion "Tu memoria" en main.py).
+        # Un solo bloque por recuerdo, no uno para todos: asi tampoco se
+        # pueden fundir dos recuerdos distintos en una sola cita.
+        lineas.append(
+            f"<{_ETIQUETA_RECUERDO}>[{fecha}]{titulo} {quien}: {texto}"
+            f"</{_ETIQUETA_RECUERDO}>"
+        )
     return "\n".join(lineas)
 
 
