@@ -30,9 +30,10 @@ from src.llm_errors import (
 )
 
 # Formas neutras compartidas por los 3 proveedores (F5.0/T1).
-# PresupuestoLlamadas (SEG-03): el contador de llamadas del turno, ver
+# Turno (SEG-03 + LOG-07): el estado que vive lo que dura un turno de
+# usuario - presupuesto de llamadas y memoria de tools ya ejecutadas. Ver
 # src/llm_types.py para el porque vive ahi.
-from src.llm_types import PresupuestoLlamadas, RespuestaLLM, ToolCall
+from src.llm_types import RespuestaLLM, ToolCall, Turno
 
 # HERRAMIENTAS: registro unico de tools (funcion + modelo de args +
 # descripcion). Desde F5.4 no basta con la funcion: hace falta tambien su
@@ -45,6 +46,21 @@ from src.tools import HERRAMIENTAS
 # el modelo se quedara pidiendo la misma tool una y otra vez (un bug suyo,
 # no imposible), el programa se colgaria en un bucle infinito.
 _MAX_PASOS_DE_HERRAMIENTAS = 5
+
+# AUD-05: cuantas tools se EJECUTAN como mucho en UNA sola respuesta del
+# modelo. Es un eje distinto de _MAX_PASOS_DE_HERRAMIENTAS (que limita las
+# VUELTAS del bucle): en una sola vuelta, el modelo puede pedir 50 tools de
+# golpe -las APIs lo permiten- y hoy se ejecutaban todas.
+#
+# Con tools puras eso es CPU desperdiciada; con tools de efectos reales
+# (F5.5) es 50 emails, 50 recordatorios o 50 peticiones a una API ajena a
+# partir de UN mensaje. Junto con el presupuesto por turno (SEG-03, que
+# limita las LLAMADAS) y la memoria del turno (LOG-07, que impide
+# duplicarlas), cierra el tercer eje: el ANCHO de cada ronda.
+#
+# 3 es holgado para lo real (pedir el tiempo de dos ciudades y calcular
+# algo) y ridiculamente bajo para una avalancha.
+_MAX_TOOLS_POR_RONDA = 3
 
 # F5.0/T3 (hallazgo AUD-02 de la auditoria): ninguna llamada de red tenia
 # timeout - una conexion colgada bloqueaba el proceso entero sin limite.
@@ -104,7 +120,7 @@ def _campos_seguros(argumentos: object) -> str:
     return ",".join(sorted(_nombre_seguro(campo) for campo in argumentos))[:200]
 
 
-def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
+def _ejecutar_tool(nombre: str, argumentos: dict, turno: Turno | None = None) -> str:
     """Ejecuta una tool por nombre, validando antes sus argumentos.
     Compartida por los 3 proveedores (todos acaban con los argumentos en el
     mismo formato gracias a la capa de traduccion).
@@ -112,7 +128,22 @@ def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
     Si la tool no existe, los argumentos no son validos o la funcion falla,
     NO se rompe el programa: se devuelve un string de error, que el modelo
     vera como el "resultado" de la tool.
+
+    turno (LOG-07): si esta MISMA llamada (mismo nombre y mismos argumentos)
+    ya se ejecuto en este turno, se devuelve el resultado de entonces sin
+    volver a ejecutar nada. Es lo que hace que un reintento del router no
+    duplique efectos - ver Herramienta.repetible en src/tools.py.
     """
+    # Se mira ANTES de nada: si ya se ejecuto, no se toca la funcion real.
+    if turno is not None:
+        previo = turno.resultado_previo(nombre, argumentos)
+        if previo is not None:
+            logging.info(
+                "Tool %s | reutilizada del turno | campos=%s",
+                _nombre_seguro(nombre), _campos_seguros(argumentos),
+            )
+            return previo
+
     inicio = time.perf_counter()
     herramienta = HERRAMIENTAS.get(nombre)
     if herramienta is None:
@@ -169,6 +200,16 @@ def _ejecutar_tool(nombre: str, argumentos: dict) -> str:
     # saltos de linea escapados y las comillas (distinguir "3" de 3).
     if depuracion_contenido_activa():
         logger_depuracion().debug("Tool %s args=%r -> %r", nombre, argumentos, resultado)
+
+    # LOG-07: se apunta el resultado para que un reintento no vuelva a
+    # ejecutar esta llamada. Las marcadas repetible=True se dejan fuera a
+    # proposito: son las que SI deben volver a ejecutarse.
+    #
+    # Ojo al "herramienta is None": una tool inexistente no esta en el
+    # registro, asi que no hay repetible que consultar - y su resultado es
+    # un error fijo, perfectamente reutilizable.
+    if turno is not None and (herramienta is None or not herramienta.repetible):
+        turno.recordar(nombre, argumentos, resultado)
     return resultado
 
 
@@ -233,24 +274,25 @@ class _ProveedorLLM:
         self.modelo = modelo
 
     def responder(self, historial: list, tools: list | None,
-                  presupuesto: PresupuestoLlamadas | None = None) -> str:
+                  turno: Turno | None = None) -> str:
         """El bucle unico. Recibe el historial canonico y, opcionalmente, la
         lista de tools disponibles (None = modo sin herramientas). Devuelve
         el texto final de la respuesta - todo el ir y venir de tool-calling
         queda resuelto aqui dentro.
 
-        presupuesto (SEG-03): lo crea LLMRouter.responder() una vez por
-        turno y viaja hasta aqui - None cuando se llama a este metodo
-        directamente (p.ej. los tests del bucle en tests/test_llm_loop.py),
-        en cuyo caso no hay limite compartido que comprobar.
+        turno (SEG-03 + LOG-07): lo crea LLMRouter.responder() una vez por
+        turno de usuario y viaja hasta aqui - None cuando se llama a este
+        metodo directamente (p.ej. los tests del bucle en
+        tests/test_llm_loop.py), en cuyo caso no hay ni presupuesto que
+        gastar ni memoria de tools que consultar.
         """
         estado = self._estado_inicial(historial, tools)
 
         for _ in range(_MAX_PASOS_DE_HERRAMIENTAS):
             # Se gasta ANTES de llamar, no despues: si ya no queda
             # presupuesto, esta llamada real ni se hace.
-            if presupuesto is not None:
-                presupuesto.gastar(self._nombre)
+            if turno is not None:
+                turno.gastar(self._nombre)
             # _llamar() puede lanzar ErrorLLM (auth, conexion, limite,
             # presupuesto agotado...) - NO se atrapa aqui: sube tal cual a
             # quien llamo a responder(), que decide que hacer (agent.py, y
@@ -264,14 +306,38 @@ class _ProveedorLLM:
             # El modelo pidio una o mas tools: registramos SU peticion (en el
             # formato que su propio SDK necesita ver luego) y ejecutamos.
             self._registrar_peticion(estado, respuesta)
-            for llamada in respuesta.tool_calls:
+            if len(respuesta.tool_calls) > _MAX_TOOLS_POR_RONDA:
+                logging.warning(
+                    "AUD-05: %s pidio %d tools en una ronda; se ejecutan %d",
+                    self._nombre, len(respuesta.tool_calls), _MAX_TOOLS_POR_RONDA,
+                )
+            for posicion, llamada in enumerate(respuesta.tool_calls):
+                # AUD-05: pasado el tope NO se ejecuta, pero SI se contesta.
+                #
+                # Contestar a todas es OBLIGATORIO, no cortesia: en el
+                # protocolo de Groq/OpenAI, si un mensaje del asistente trae
+                # N tool_calls, la peticion siguiente debe incluir un
+                # resultado para CADA tool_call_id - si falta uno, la API
+                # rechaza la peticion entera y el turno se pierde. Por eso se
+                # recorren todas y lo que cambia es solo si se EJECUTAN.
+                #
+                # El texto explica el motivo a proposito: el modelo lo lee y
+                # puede reintentar pidiendo menos de golpe, en vez de quedarse
+                # sin saber por que no le llego el dato.
+                if posicion >= _MAX_TOOLS_POR_RONDA:
+                    resultado = (
+                        f"Error: no ejecutada. Has pedido "
+                        f"{len(respuesta.tool_calls)} herramientas a la vez y el "
+                        f"maximo es {_MAX_TOOLS_POR_RONDA}. Pide las que falten "
+                        f"en el paso siguiente."
+                    )
                 # Si el traductor marco un error de parseo de argumentos
                 # (JSON mal formado de Groq, F4.4), NO se ejecuta la tool:
                 # ese texto de error hace de "resultado".
-                if llamada.error:
+                elif llamada.error:
                     resultado = llamada.error
                 else:
-                    resultado = _ejecutar_tool(llamada.nombre, llamada.argumentos)
+                    resultado = _ejecutar_tool(llamada.nombre, llamada.argumentos, turno)
                 self._registrar_resultado(estado, llamada, resultado)
 
         raise ErrorLimitePasos(self._nombre)
@@ -617,7 +683,7 @@ _PROVEEDORES = {
 
 def responder_proveedor(proveedor: str, api_key: str, modelo: str,
                         historial: list, tools: list | None,
-                        presupuesto: PresupuestoLlamadas | None = None) -> str:
+                        turno: Turno | None = None) -> str:
     """Ejecuta el bucle completo en UN proveedor concreto y devuelve el
     texto final. Es el UNICO punto de entrada publico desde F5.0/T4: el
     router (src/llm_router.py) lo llama para cada eslabon de la cadena -
@@ -625,7 +691,9 @@ def responder_proveedor(proveedor: str, api_key: str, modelo: str,
     reintentar o degradar al siguiente. Nada mas llama a esto directamente
     (ni siquiera Agente, que solo conoce al router).
 
-    presupuesto (SEG-03): se reenvia tal cual - lo crea el router una vez
-    por turno y es el mismo objeto para todos los eslabones que se prueben.
+    turno (SEG-03 + LOG-07): se reenvia tal cual - lo crea el router una vez
+    por turno y es EL MISMO OBJETO para todos los eslabones que se prueben.
+    Justo por eso funciona: la cuenta de llamadas y la memoria de tools ya
+    ejecutadas sobreviven al cambio de proveedor.
     """
-    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools, presupuesto)
+    return _PROVEEDORES[proveedor](api_key, modelo).responder(historial, tools, turno)

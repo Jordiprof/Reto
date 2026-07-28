@@ -257,6 +257,26 @@ class Herramienta:
     args: type[BaseModel]
     descripcion: str
 
+    # LOG-07: ¿se puede volver a EJECUTAR esta tool dentro del mismo turno?
+    #
+    # El problema que cierra: cuando el router reintenta un proveedor o
+    # degrada al siguiente (ADR-004), el bucle de tools se rehace DESDE
+    # CERO, asi que el modelo vuelve a pedir las mismas tools y estas se
+    # volverian a ejecutar. Con la calculadora da igual; con la primera tool
+    # que mande un email, un reintento lo manda DOS VECES.
+    #
+    # EL DEFAULT ES False A PROPOSITO, y es la decision importante de todo
+    # esto: si alguien añade una tool en F5.5 y se olvida de declarar nada,
+    # lo que pasa es que su resultado se REUTILIZA (a lo sumo se pierde algo
+    # de frescura). Con el default al reves, un olvido significaria mandar
+    # el email dos veces. Mismo criterio que la lista blanca del bot: ante
+    # el olvido, el comportamiento seguro.
+    #
+    # Poner True SOLO si volver a ejecutarla es INOFENSIVO *y* ademas se
+    # quiere de verdad (p.ej. un dado, o un dato que cambia por segundos).
+    # Una tool con efectos reales NUNCA lleva True.
+    repetible: bool = False
+
 
 HERRAMIENTAS = {
     "calcular": Herramienta(

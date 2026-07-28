@@ -6,13 +6,16 @@
 # dos clases comunes, y el bucle se escribe UNA sola vez contra ellas.
 # Mismo principio que traducir_historial_gemini (F3.1), pero para la
 # RESPUESTA del modelo cuando pide funciones.
+# json: para construir una clave estable a partir de los argumentos de una
+# tool (ver Turno._clave).
+import json
 from dataclasses import dataclass, field
 
-# SEG-03: el contador vive aqui (no en llm_router.py ni en llm_client.py)
-# porque lo usan LOS DOS - llm_router.py lo crea una vez por turno,
-# llm_client.py lo consulta en cada vuelta del bucle de tools. Ponerlo en
-# cualquiera de los dos modulos crearia un import circular (llm_router.py ya
-# importa de llm_client.py).
+# SEG-03 / LOG-07: el estado del turno vive aqui (no en llm_router.py ni en
+# llm_client.py) porque lo usan LOS DOS - llm_router.py lo crea una vez por
+# turno, llm_client.py lo consulta en cada vuelta del bucle de tools.
+# Ponerlo en cualquiera de los dos modulos crearia un import circular
+# (llm_router.py ya importa de llm_client.py).
 from src.llm_errors import ErrorPresupuestoAgotado
 
 
@@ -58,20 +61,36 @@ class RespuestaLLM:
         return len(self.tool_calls) > 0
 
 
-class PresupuestoLlamadas:
-    """Cuenta cuantas llamadas de red al LLM van gastadas en UN turno de
-    usuario (SEG-03), COMPARTIDO entre todos los eslabones de la cadena del
-    router (proveedores + sus fallbacks) y todos sus reintentos - no es un
-    presupuesto por proveedor, es del turno completo.
+class Turno:
+    """Todo lo que hay que contar y recordar DENTRO de un turno de usuario,
+    COMPARTIDO entre todos los eslabones de la cadena del router
+    (proveedores + fallbacks) y todos sus reintentos.
 
     Se crea UNA vez por llamada a LLMRouter.responder() y viaja por todo el
-    camino (router -> responder_proveedor -> _ProveedorLLM.responder) para
-    que la cuenta sea una sola, no una por cada intento.
+    camino (router -> responder_proveedor -> _ProveedorLLM.responder ->
+    _ejecutar_tool). Que sea UNO SOLO para todo el turno es justo lo que le
+    da sentido: si se creara uno por intento, ni la cuenta ni la memoria de
+    lo ya ejecutado sobrevivirian a un reintento, que es cuando hacen falta.
+
+    Lleva dos cosas:
+    - El PRESUPUESTO de llamadas (SEG-03): cuantas van gastadas.
+    - Los RESULTADOS de las tools ya ejecutadas (LOG-07): para no volver a
+      ejecutarlas si el turno se reintenta.
+
+    Antes esta clase se llamaba PresupuestoLlamadas y solo hacia lo primero.
+    El presupuesto no ha cambiado: sigue igual, solo que ahora vive dentro
+    de una caja un poco mas grande, porque LOG-07 necesitaba exactamente el
+    mismo recorrido (crearse una vez por turno y llegar hasta las tools) y
+    duplicar esa tuberia habria sido peor.
     """
 
     def __init__(self, maximo: int):
         self.maximo = maximo
         self.gastadas = 0
+        # nombre+argumentos -> resultado de la tool, dentro de ESTE turno.
+        self._resultados: dict[tuple[str, str], str] = {}
+
+    # --- Presupuesto de llamadas (SEG-03) ---
 
     def gastar(self, proveedor: str) -> None:
         """Se llama justo ANTES de cada llamada real de red. Si ya no queda
@@ -80,3 +99,27 @@ class PresupuestoLlamadas:
         if self.gastadas >= self.maximo:
             raise ErrorPresupuestoAgotado(proveedor)
         self.gastadas += 1
+
+    # --- Memoria de tools ya ejecutadas (LOG-07) ---
+
+    @staticmethod
+    def _clave(nombre: str, argumentos: object) -> tuple[str, str]:
+        """Identifica una llamada por su nombre MAS sus argumentos.
+
+        sort_keys=True: dos dicts con las mismas claves en distinto orden
+        son la MISMA llamada, y sin ordenar darian textos distintos. El
+        except cubre argumentos que no sean serializables (no deberia pasar
+        -vienen de JSON- pero si pasara, repr() da una clave estable igual y
+        es preferible a reventar dentro del bucle de tools).
+        """
+        try:
+            return (nombre, json.dumps(argumentos, sort_keys=True, default=repr))
+        except (TypeError, ValueError):
+            return (nombre, repr(argumentos))
+
+    def resultado_previo(self, nombre: str, argumentos: object) -> str | None:
+        """Lo que ya devolvio esta MISMA llamada en este turno, o None."""
+        return self._resultados.get(self._clave(nombre, argumentos))
+
+    def recordar(self, nombre: str, argumentos: object, resultado: str) -> None:
+        self._resultados[self._clave(nombre, argumentos)] = resultado

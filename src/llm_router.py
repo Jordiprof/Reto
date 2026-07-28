@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from src.config import ClaveApiNoConfigurada, obtener_api_key, obtener_modelo_por_defecto
 from src.llm_client import responder_proveedor
 from src.llm_errors import ErrorLLM, ErrorPresupuestoAgotado
-from src.llm_types import PresupuestoLlamadas
+from src.llm_types import Turno
 
 # ADR-001: orden oficial de la cadena de proveedores. Anthropic queda fuera
 # porque todavia no esta implementado como proveedor.
@@ -46,11 +46,11 @@ class Eslabon:
 
 
 def _llamar_real(eslabon: Eslabon, historial: list, tools: list | None,
-                 presupuesto: PresupuestoLlamadas) -> str:
+                 turno: Turno) -> str:
     """Como se llama de verdad a un eslabon (se inyecta otra en los tests
     para no tocar la red)."""
     return responder_proveedor(
-        eslabon.proveedor, eslabon.api_key, eslabon.modelo, historial, tools, presupuesto,
+        eslabon.proveedor, eslabon.api_key, eslabon.modelo, historial, tools, turno,
     )
 
 
@@ -72,7 +72,7 @@ class LLMRouter:
         self.max_reintentos = max_reintentos
         self.backoff_base = backoff_base
         # SEG-03: tope compartido por TODOS los eslabones y reintentos de UN
-        # turno - ver PresupuestoLlamadas en src/llm_types.py.
+        # turno - ver Turno en src/llm_types.py.
         self.max_llamadas_por_turno = max_llamadas_por_turno
         # _dormir y _llamar son "costuras" para los tests: se pueden inyectar
         # versiones falsas que ni duermen ni tocan la red.
@@ -84,10 +84,11 @@ class LLMRouter:
 
     def responder(self, historial: list, tools: list | None) -> str:
         ultimo_error = None
-        # Un presupuesto NUEVO por cada turno (cada llamada a responder()) -
-        # se agota junto con este turno, el siguiente mensaje del usuario
-        # empieza con el tope entero otra vez.
-        presupuesto = PresupuestoLlamadas(self.max_llamadas_por_turno)
+        # Un Turno NUEVO por cada llamada a responder() - es lo que hace que
+        # el presupuesto (SEG-03) y la memoria de tools ya ejecutadas
+        # (LOG-07) sean compartidos por todos los intentos y proveedores de
+        # ESTE mensaje, y que el mensaje siguiente empiece limpio.
+        turno = Turno(self.max_llamadas_por_turno)
 
         for indice, eslabon in enumerate(self.eslabones):
             es_primario = (indice == 0)
@@ -95,13 +96,13 @@ class LLMRouter:
             # Bucle de reintentos DENTRO del mismo proveedor.
             for intento in range(self.max_reintentos + 1):
                 try:
-                    texto = self._llamar(eslabon, historial, tools, presupuesto)
+                    texto = self._llamar(eslabon, historial, tools, turno)
                 except ErrorPresupuestoAgotado:
                     # SEG-03: el presupuesto es del TURNO, no de este
                     # proveedor - ni reintentar el mismo ni degradar al
                     # siguiente ayudaria, solo gastarian mas presupuesto sin
-                    # ninguna llamada real de por medio (ver gastar() en
-                    # PresupuestoLlamadas). Se corta en seco.
+                    # ninguna llamada real de por medio (ver Turno.gastar()).
+                    # Se corta en seco.
                     raise
                 except ErrorLLM as error:
                     ultimo_error = error
