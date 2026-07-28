@@ -648,3 +648,223 @@ def test_limpiar_suelta_el_fichero_pero_no_borra_lo_guardado(monkeypatch, persis
     # El siguiente turno vuelve a empezar fichero (ruta=None).
     asyncio.run(telegram_bot.manejar_mensaje(_update(texto="otra cosa"), _context()))
     assert persistencia_espiada.guardados[-1]["ruta"] is None
+
+
+# --- F5.2+: comandos con paridad con la CLI ----------------------------
+
+
+def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
+    """REGRESION del bug encontrado probando en real el 28/07.
+
+    El bot solo indexaba SU PROPIA conversacion despues de cada turno, asi
+    que una charla guardada desde la CLI quedaba en disco pero fuera del
+    indice: buscar_en_recuerdos no la encontraba y el agente contestaba "no
+    lo tengo guardado" teniendo el dato a un palmo. La CLI ya indexaba al
+    arrancar; al bot se le habia olvidado.
+
+    Este test no existia porque todos los demas ESPIAN el indexado en vez de
+    arrancar el bot - por eso el fallo paso limpio los 175 tests.
+    """
+    llamadas = []
+    monkeypatch.setattr(telegram_bot, "indexar_conversaciones", lambda: llamadas.append(1) or 0)
+    # La Application real no se construye ni se arranca: solo interesa que
+    # main_bot indexe antes de ponerse a escuchar.
+    monkeypatch.setattr(
+        telegram_bot, "construir_aplicacion",
+        lambda: SimpleNamespace(run_polling=lambda: None),
+    )
+
+    telegram_bot.main_bot()
+
+    assert llamadas == [1]
+
+
+def test_si_falla_el_indexado_el_bot_arranca_igual(monkeypatch):
+    """RNF-02: sin memoria semantica el bot sigue siendo util, asi que un
+    fallo al indexar no debe impedir que arranque."""
+    def revienta():
+        raise RuntimeError("chroma roto")
+
+    arrancado = []
+    monkeypatch.setattr(telegram_bot, "indexar_conversaciones", revienta)
+    monkeypatch.setattr(
+        telegram_bot, "construir_aplicacion",
+        lambda: SimpleNamespace(run_polling=lambda: arrancado.append(1)),
+    )
+
+    telegram_bot.main_bot()
+
+    assert arrancado == [1]
+
+
+def test_historial_lista_sin_descifrar(monkeypatch):
+    """Los metadatos van en claro a proposito: listar NO debe necesitar la
+    clave ni cargar el contenido de todas las conversaciones."""
+    from pathlib import Path
+
+    monkeypatch.setattr(
+        telegram_bot, "listar_conversaciones",
+        lambda: [Path("2026-07-28_10-00-00.json"), Path("2026-07-28_11-00-00.json")],
+    )
+    monkeypatch.setattr(
+        telegram_bot, "leer_metadatos",
+        lambda ruta: {"fecha": "2026-07-28T10:00", "nombre": "chiste malo", "cifrado": True},
+    )
+    # Si alguien metiera un cargar_conversacion aqui, este espia lo cazaria.
+    enviados = []
+
+    asyncio.run(telegram_bot.cmd_historial(_update(enviados=enviados), _context()))
+
+    assert "chiste malo" in " ".join(enviados)
+
+
+def test_historial_vacio_lo_dice(monkeypatch):
+    monkeypatch.setattr(telegram_bot, "listar_conversaciones", lambda: [])
+    enviados = []
+
+    asyncio.run(telegram_bot.cmd_historial(_update(enviados=enviados), _context()))
+
+    assert "Todavía no hay" in " ".join(enviados)
+
+
+def test_guardar_sin_nombre_explica_como_se_usa():
+    enviados = []
+    contexto = _context()
+    contexto.args = []
+
+    asyncio.run(telegram_bot.cmd_guardar(_update(enviados=enviados), contexto))
+
+    assert "/guardar" in " ".join(enviados)
+
+
+def test_guardar_pone_nombre_y_no_lo_pisa_el_turno_siguiente(
+    monkeypatch, persistencia_espiada
+):
+    """El guardado automatico de cada turno NO debe borrar la etiqueta que
+    puso /guardar (si no, el nombre duraria un solo mensaje)."""
+    _agente_falso(monkeypatch)
+    # Primero se habla (que es cuando nace el Agente del usuario); /guardar
+    # sobre una charla que no existe no tiene nada que etiquetar.
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="hola"), _context()))
+
+    contexto = _context()
+    contexto.args = ["ideas", "de", "tools"]
+
+    asyncio.run(telegram_bot.cmd_guardar(_update(), contexto))
+    assert persistencia_espiada.guardados[-1]["nombre"] == "ideas de tools"
+
+    # Un turno normal despues: conserva el nombre, no lo cambia por "Telegram".
+    asyncio.run(telegram_bot.manejar_mensaje(_update(texto="hola"), _context()))
+    assert persistencia_espiada.guardados[-1]["nombre"] == "ideas de tools"
+
+
+def test_un_nombre_larguisimo_se_rechaza():
+    enviados = []
+    contexto = _context()
+    contexto.args = ["x" * (telegram_bot._MAX_NOMBRE + 1)]
+
+    asyncio.run(telegram_bot.cmd_guardar(_update(enviados=enviados), contexto))
+
+    assert "largo" in " ".join(enviados)
+
+
+# --- Botones de /modelo y /proveedor: el dato que vuelve NO se confia ---
+
+
+def _consulta(dato, respondido=None):
+    """CallbackQuery falso (lo que manda Telegram al pulsar un boton)."""
+    editado = respondido if respondido is not None else []
+
+    async def answer(*a, **kw):
+        return None
+
+    async def edit_message_text(texto, *a, **kw):
+        editado.append(texto)
+
+    return SimpleNamespace(data=dato, answer=answer, edit_message_text=edit_message_text)
+
+
+def _update_boton(dato, user_id=111, editado=None):
+    return SimpleNamespace(
+        callback_query=_consulta(dato, editado),
+        effective_user=SimpleNamespace(id=user_id, first_name="Jordi", username="Jordi"),
+        effective_message=None,
+    )
+
+
+def test_un_modelo_fuera_del_catalogo_se_rechaza(monkeypatch):
+    """El callback_data viaja a Telegram y vuelve: es dato NO confiable.
+    Aunque hoy solo pueda pulsarlo el usuario de la allowlist, el valor se
+    valida contra el catalogo verificado de config.py antes de usarlo."""
+    cambios = []
+    agente = SimpleNamespace(
+        proveedor="groq", modelo="llama-3.3-70b-versatile",
+        cambiar_modelo=lambda m: cambios.append(m),
+    )
+    monkeypatch.setattr(telegram_bot, "_agente_de", lambda uid: agente)
+    editado = []
+
+    boton = _update_boton("m:modelo-inventado", editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    assert cambios == []
+    assert "ya no está disponible" in " ".join(editado)
+
+
+def test_un_modelo_del_catalogo_si_cambia(monkeypatch):
+    """Caso de control: sin esto, 'rechazarlo todo' pasaria el test anterior."""
+    from src.config import MODELOS
+
+    cambios = []
+    agente = SimpleNamespace(
+        proveedor="groq", modelo="llama-3.3-70b-versatile",
+        cambiar_modelo=lambda m: cambios.append(m),
+    )
+    monkeypatch.setattr(telegram_bot, "_agente_de", lambda uid: agente)
+    valido = MODELOS["groq"][1]
+
+    asyncio.run(telegram_bot.manejar_boton(_update_boton(f"m:{valido}"), _context()))
+
+    assert cambios == [valido]
+
+
+def test_un_proveedor_sin_clave_no_se_activa(monkeypatch):
+    """Ofrecer un proveedor sin clave seria ofrecer un error. Si el boton
+    llegara igual (dato manipulado), se rechaza aqui."""
+    from src.config import ClaveApiNoConfigurada
+
+    cambios = []
+    agente = SimpleNamespace(
+        proveedor="groq", modelo="m",
+        cambiar_proveedor=lambda p, m, k: cambios.append(p),
+    )
+    monkeypatch.setattr(telegram_bot, "_agente_de", lambda uid: agente)
+
+    def sin_clave(proveedor):
+        raise ClaveApiNoConfigurada("no hay")
+
+    monkeypatch.setattr(telegram_bot, "obtener_api_key", sin_clave)
+    editado = []
+
+    asyncio.run(telegram_bot.manejar_boton(_update_boton("p:gemini", editado=editado), _context()))
+
+    assert cambios == []
+    assert "clave" in " ".join(editado)
+
+
+def test_los_botones_pasan_por_la_allowlist():
+    """Un CallbackQuery es un Update como otro cualquiera, asi que la puerta
+    del grupo -1 (TypeHandler(Update)) lo cubre sin codigo extra. Es la
+    ventaja del diseño de ADR-005: una via de entrada nueva NO obliga a
+    acordarse de protegerla."""
+    aplicacion = telegram_bot.construir_aplicacion()
+    grupo = min(aplicacion.handlers)
+
+    assert aplicacion.handlers[grupo][0].callback is telegram_bot.puerta_allowlist
+    # Y el handler de botones vive en un grupo POSTERIOR (0), o sea que la
+    # puerta corre antes.
+    grupos_con_botones = [
+        g for g, hs in aplicacion.handlers.items()
+        if any(h.callback is telegram_bot.manejar_boton for h in hs)
+    ]
+    assert grupos_con_botones and min(grupos_con_botones) > grupo

@@ -18,12 +18,13 @@ import logging
 import time
 from pathlib import Path
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, MessageLimit
 from telegram.ext import (
     Application,
     ApplicationBuilder,
     ApplicationHandlerStop,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -33,6 +34,8 @@ from telegram.ext import (
 
 from src.agent import Agente
 from src.config import (
+    MODELOS,
+    ClaveApiNoConfigurada,
     ConfiguracionTelegramInvalida,
     obtener_api_key,
     obtener_modelo_por_defecto,
@@ -46,8 +49,13 @@ from src.main import SYSTEM_PROMPT
 # indexar_conversacion se importa aqui arriba (no perezoso) a proposito: si
 # faltara chromadb, mejor enterarse al arrancar el bot que a mitad del
 # primer turno.
-from src.rag import indexar_conversacion
-from src.storage import guardar_conversacion
+from src.rag import indexar_conversacion, indexar_conversaciones
+from src.storage import (
+    ConversacionNoDescifrable,
+    guardar_conversacion,
+    leer_metadatos,
+    listar_conversaciones,
+)
 
 # --- Limites ---------------------------------------------------------------
 
@@ -70,6 +78,15 @@ _MAX_TROZOS = 5
 _LIMITE_MENSAJES = 20
 _VENTANA_SEGUNDOS = 60.0
 
+# Cuantas conversaciones enseña /historial. Telegram corta en 4096
+# caracteres, y una lista de 200 charlas no la lee nadie: se muestran las
+# mas recientes, que son las que se buscan.
+_MAX_HISTORIAL = 15
+
+# Tope del nombre de /guardar. Va a los metadatos EN CLARO del JSON, asi
+# que ademas de caber en la lista conviene que no sea un texto libre largo.
+_MAX_NOMBRE = 60
+
 
 # --- Estado en memoria -----------------------------------------------------
 # Los tres diccionarios estan ACOTADOS por la allowlist: solo pueden crecer
@@ -84,6 +101,10 @@ _marcas: dict[int, list[float]] = {}
 # cada turno, no uno nuevo por mensaje - ver storage.guardar_conversacion.
 # Se borra la entrada en /limpiar: la charla siguiente estrena fichero.
 _rutas: dict[int, Path] = {}
+
+# Etiqueta puesta con /guardar, por usuario. Se conserva entre turnos para
+# que el guardado automatico no la pise con "Telegram" al reescribir.
+_nombres: dict[int, str] = {}
 
 
 # --- Helpers puros (testeables sin red, sin Telegram y sin LLM) ------------
@@ -164,7 +185,7 @@ def _agente_de(user_id: int) -> Agente:
     return _agentes[user_id]
 
 
-def _persistir(user_id: int) -> None:
+def _persistir(user_id: int, nombre: str | None = None) -> Path | None:
     """Guarda el turno recien terminado y lo mete en la memoria semantica.
 
     ESTO es lo que hace que el bot y la CLI compartan memoria (F5.2+). Antes
@@ -180,31 +201,40 @@ def _persistir(user_id: int) -> None:
     respuesta y perder el guardado de un turno no justifica romperle la
     conversacion.
 
+    "nombre" es la etiqueta opcional de /guardar. Si no se pasa, se conserva
+    la que ya tuviera la conversacion (para no borrarla en cada turno) y, si
+    no tenia ninguna, se marca "Telegram" - asi /historial deja ver de un
+    vistazo que salio del bot y no de la terminal.
+
+    Devuelve la ruta del fichero, o None si no habia nada que guardar.
+
     OJO: es SINCRONA y bloqueante (cifra, escribe disco, incrusta el texto
     en un vector). Quien la llame debe hacerlo con asyncio.to_thread, igual
     que con Agente.preguntar - si no, congela el bucle de eventos del bot.
     """
     agente = _agentes.get(user_id)
     if agente is None:
-        return
+        return None
     try:
         ruta = guardar_conversacion(
             agente.historial, agente.proveedor, agente.modelo,
-            # El "nombre" es la etiqueta que en la CLI pone Jordi a mano al
-            # guardar. Por Telegram no hay donde pedirla sin interrumpir la
-            # charla, asi que se marca el origen: al menos /historial deja
-            # distinguir de un vistazo que salio del bot.
-            nombre="Telegram",
+            nombre=nombre or _nombres.get(user_id) or "Telegram",
             ruta=_rutas.get(user_id),
         )
         if ruta is None:
-            return  # historial vacio (solo el system prompt): nada que guardar
+            return None  # historial vacio (solo el system prompt): nada que guardar
         _rutas[user_id] = ruta
+        if nombre:
+            # Se recuerda para que los turnos SIGUIENTES no lo pisen con
+            # "Telegram" al reescribir el mismo fichero.
+            _nombres[user_id] = nombre
         indexar_conversacion(ruta)
+        return ruta
     except Exception as error:
         # Tipo, no texto (politica de logging del proyecto): el str() de un
         # error de cifrado o de ChromaDB puede arrastrar contenido.
         logging.error("Telegram: no se pudo persistir el turno (%s)", type(error).__name__)
+        return None
 
 
 def _cerrojo_de(user_id: int) -> asyncio.Lock:
@@ -437,9 +467,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
         await update.effective_message.reply_text(
-            "/limpiar — empezar de cero (olvida esta conversación)\n"
+            "/modelo — cambiar el modelo (mismo proveedor)\n"
+            "/proveedor — cambiar de proveedor (y modelo)\n"
+            "/historial — ver tus conversaciones guardadas\n"
+            "/guardar <nombre> — ponerle nombre a esta charla\n"
             "/resumen — resumir lo hablado hasta ahora\n"
+            "/limpiar — empezar de cero (olvida esta conversación)\n"
             "/ayuda — esto\n\n"
+            "Voy guardando solo según hablamos, no hace falta que me lo pidas.\n"
             "Para todo lo demás, escríbeme normal."
         )
 
@@ -458,6 +493,7 @@ async def cmd_limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # la CLI tampoco borra del disco): lo que se corta es que la
         # conversacion SIGUIENTE se escriba encima de la anterior.
         _rutas.pop(usuario.id, None)
+        _nombres.pop(usuario.id, None)
     await update.effective_message.reply_text(
         "Listo, empezamos de cero. Lo de antes sigue en mi memoria a largo plazo."
     )
@@ -477,6 +513,198 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             respuesta = "⚠️ No he podido resumir ahora mismo."
     for trozo in _trocear(respuesta):
         await mensaje.reply_text(trozo)
+
+
+async def cmd_historial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lista las conversaciones guardadas, como /historial en la CLI.
+
+    Usa leer_metadatos y NO cargar_conversacion: los metadatos (fecha,
+    nombre, proveedor) van en claro a proposito, asi que listar NO necesita
+    descifrar nada. Ademas de ser mas rapido, evita pasear por memoria el
+    contenido de todas las conversaciones solo para enseñar una lista.
+    """
+    mensaje = update.effective_message
+    if mensaje is None:
+        return
+
+    try:
+        rutas = await asyncio.to_thread(listar_conversaciones)
+    except Exception as error:
+        logging.error("Telegram: fallo al listar historial (%s)", type(error).__name__)
+        await mensaje.reply_text("⚠️ No he podido leer el historial.")
+        return
+
+    if not rutas:
+        await mensaje.reply_text("Todavía no hay conversaciones guardadas.")
+        return
+
+    # Las mas recientes primero y solo las ultimas: en Telegram un mensaje
+    # tiene tope de 4096 caracteres y una lista de 200 charlas no se lee.
+    lineas = []
+    for ruta in reversed(rutas[-_MAX_HISTORIAL:]):
+        try:
+            meta = await asyncio.to_thread(leer_metadatos, ruta)
+        except (OSError, ValueError, ConversacionNoDescifrable):
+            continue  # un fichero corrupto no debe tumbar la lista entera
+        fecha = (meta.get("fecha") or "")[:16].replace("T", " ")
+        nombre = meta.get("nombre") or "(sin nombre)"
+        candado = "🔒" if meta.get("cifrado") else ""
+        lineas.append(f"{candado} {fecha} — {nombre}")
+
+    total = len(rutas)
+    cabecera = f"Tus últimas {len(lineas)} conversaciones (de {total}):"
+    await mensaje.reply_text(cabecera + "\n\n" + "\n".join(lineas))
+
+
+async def cmd_guardar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pone NOMBRE a la conversación en curso (y la guarda ya).
+
+    Ojo a la diferencia con la CLI: por Telegram el guardado es automatico
+    despues de cada turno, asi que aqui "guardar" no sirve para no perder
+    nada -eso ya esta cubierto- sino para ETIQUETAR la charla y poder
+    reconocerla luego en /historial.
+
+    El nombre llega como argumento del propio comando ("/guardar ideas de
+    tools"): pedirlo en un segundo mensaje obligaria a llevar una maquina de
+    estados por usuario, y el bot no tiene ninguna hoy.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+
+    # context.args son las palabras que siguen al comando (PTB las parte).
+    nombre = " ".join(context.args).strip() if context.args else ""
+    if not nombre:
+        await mensaje.reply_text(
+            "Escribe el nombre después del comando, por ejemplo:\n"
+            "/guardar ideas de herramientas"
+        )
+        return
+    if len(nombre) > _MAX_NOMBRE:
+        await mensaje.reply_text(f"El nombre es muy largo (máximo {_MAX_NOMBRE}).")
+        return
+
+    async with _cerrojo_de(usuario.id):
+        ruta = await asyncio.to_thread(_persistir, usuario.id, nombre)
+
+    if ruta is None:
+        await mensaje.reply_text("Todavía no hemos hablado de nada que guardar.")
+    else:
+        await mensaje.reply_text(f'Guardada como "{nombre}".')
+
+
+# --- /modelo y /proveedor: menus con BOTONES -------------------------------
+# En la CLI son menus de flechas (questionary). En Telegram no existe tal
+# cosa: el equivalente son los "inline keyboards", botones bajo el mensaje
+# que al pulsarse mandan un CallbackQuery de vuelta.
+#
+# SEGURIDAD: esos CallbackQuery son updates como cualquier otro, asi que
+# pasan por puerta_allowlist igual que un mensaje - porque la puerta es un
+# TypeHandler(Update) del grupo -1, no un filtro por handler. Es justo la
+# ventaja de ese diseño (ver ADR-005): añadir una via de entrada nueva NO
+# obliga a acordarse de protegerla.
+#
+# El callback_data viaja a Telegram y vuelve, asi que NO se le confia nada:
+# al volver se comprueba que el valor este en el catalogo de config.py antes
+# de usarlo. Telegram ademas lo limita a 64 bytes.
+
+_PREFIJO_MODELO = "m:"
+_PREFIJO_PROVEEDOR = "p:"
+
+
+def _teclado(prefijo: str, opciones: list[str]) -> InlineKeyboardMarkup:
+    """Un boton por opcion, uno por fila (los nombres de modelo son largos)."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(op, callback_data=f"{prefijo}{op}")] for op in opciones]
+    )
+
+
+async def cmd_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cambia de modelo DENTRO del proveedor actual."""
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+    agente = _agente_de(usuario.id)
+    opciones = MODELOS.get(agente.proveedor, [])
+    if not opciones:
+        await mensaje.reply_text("No tengo catálogo de modelos para este proveedor.")
+        return
+    await mensaje.reply_text(
+        f"Ahora uso *{agente.modelo}* ({agente.proveedor}). ¿A cuál cambio?",
+        parse_mode="Markdown",
+        reply_markup=_teclado(_PREFIJO_MODELO, opciones),
+    )
+
+
+async def cmd_proveedor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cambia de proveedor (y coge su modelo por defecto)."""
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+    # Solo los que tienen clave configurada: ofrecer uno sin clave seria
+    # ofrecer un error (misma logica que construir_cadena en llm_router).
+    disponibles = []
+    for proveedor in MODELOS:
+        try:
+            obtener_api_key(proveedor)
+        except ClaveApiNoConfigurada:
+            continue
+        disponibles.append(proveedor)
+
+    if not disponibles:
+        await mensaje.reply_text("No hay ningún proveedor con clave configurada.")
+        return
+    await mensaje.reply_text(
+        f"Ahora hablo con *{_agente_de(usuario.id).proveedor}*. ¿A cuál cambio?",
+        parse_mode="Markdown",
+        reply_markup=_teclado(_PREFIJO_PROVEEDOR, disponibles),
+    )
+
+
+async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Procesa la pulsacion de un boton de /modelo o /proveedor."""
+    consulta = update.callback_query
+    usuario = update.effective_user
+    if consulta is None or usuario is None:
+        return
+
+    # answer() quita el "relojito" de carga del boton. Si no se llama, el
+    # cliente de Telegram deja el boton girando unos segundos.
+    await consulta.answer()
+    dato = consulta.data or ""
+    agente = _agente_de(usuario.id)
+
+    if dato.startswith(_PREFIJO_MODELO):
+        elegido = dato[len(_PREFIJO_MODELO):]
+        # NO se confia en el dato que vuelve de Telegram: tiene que estar en
+        # el catalogo verificado de config.py.
+        if elegido not in MODELOS.get(agente.proveedor, []):
+            await consulta.edit_message_text("Ese modelo ya no está disponible.")
+            return
+        async with _cerrojo_de(usuario.id):
+            agente.cambiar_modelo(elegido)
+        await consulta.edit_message_text(f"Listo, ahora uso {elegido}.")
+        return
+
+    if dato.startswith(_PREFIJO_PROVEEDOR):
+        elegido = dato[len(_PREFIJO_PROVEEDOR):]
+        if elegido not in MODELOS:
+            await consulta.edit_message_text("Ese proveedor no existe.")
+            return
+        try:
+            clave = obtener_api_key(elegido)
+        except ClaveApiNoConfigurada:
+            await consulta.edit_message_text(f"No tengo clave configurada para {elegido}.")
+            return
+        modelo = obtener_modelo_por_defecto(elegido)
+        async with _cerrojo_de(usuario.id):
+            # El historial NO se toca al cambiar (F3.1): esta en formato
+            # canonico y el proveedor nuevo hereda la conversacion entera.
+            agente.cambiar_proveedor(elegido, modelo, clave)
+        await consulta.edit_message_text(f"Listo, ahora hablo con {elegido} ({modelo}).")
 
 
 async def cmd_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -582,9 +810,17 @@ def construir_aplicacion() -> Application:
     # que es lo primero que escribe cualquiera al abrir un bot. Hallazgo de
     # la auditoria del 27/07, verificado con los filtros reales de PTB.
     aplicacion.add_handler(CommandHandler("start", cmd_start))
-    aplicacion.add_handler(CommandHandler(["ayuda", "help"], cmd_ayuda))
+    aplicacion.add_handler(CommandHandler(["ayuda", "help", "comandos"], cmd_ayuda))
     aplicacion.add_handler(CommandHandler("limpiar", cmd_limpiar))
     aplicacion.add_handler(CommandHandler("resumen", cmd_resumen))
+    # F5.2+ (paridad con la CLI): historial, guardar, modelo y proveedor.
+    aplicacion.add_handler(CommandHandler("historial", cmd_historial))
+    aplicacion.add_handler(CommandHandler("guardar", cmd_guardar))
+    aplicacion.add_handler(CommandHandler("modelo", cmd_modelo))
+    aplicacion.add_handler(CommandHandler("proveedor", cmd_proveedor))
+    # Los botones de /modelo y /proveedor vuelven como CallbackQuery. Pasan
+    # por la allowlist igual que todo lo demas (TypeHandler del grupo -1).
+    aplicacion.add_handler(CallbackQueryHandler(manejar_boton))
     # Cualquier otro comando: responde en vez de desaparecer.
     aplicacion.add_handler(MessageHandler(filters.COMMAND, cmd_desconocido))
 
@@ -605,6 +841,24 @@ def main_bot() -> None:
     fuera y no abre ningun puerto.
     """
     aplicacion = construir_aplicacion()
+
+    # BUG encontrado probando en real el 28/07: sin esto, el bot solo tenia en
+    # el indice lo que EL MISMO habia escrito. Una conversacion guardada desde
+    # la CLI quedaba en disco pero NADIE la indexaba, porque el bot solo
+    # indexa su propio fichero despues de cada turno - asi que
+    # buscar_en_recuerdos no la encontraba y el agente contestaba "no lo
+    # tengo guardado" teniendo el dato a un palmo. La CLI ya hacia esto al
+    # arrancar (main.py); al bot se me olvido, y los tests no lo cogieron
+    # porque todos espian el indexado en vez de arrancar el bot de verdad.
+    try:
+        nuevos = indexar_conversaciones()
+        print(f"Memoria semántica al día ({nuevos} recuerdo(s) nuevo(s) indexado(s)).")
+    except Exception as error:
+        # No impide arrancar: sin memoria semantica el bot sigue siendo util
+        # (RNF-02). Tipo, no texto: el str() puede arrastrar contenido.
+        logging.error("Telegram: no se pudo indexar al arrancar (%s)", type(error).__name__)
+        print("⚠️ No se pudo cargar la memoria semántica; el bot arranca igual.")
+
     print("Bot de Telegram arrancado. Ctrl+C para parar.")
     # F5.2+: el bot y la CLI comparten memoria, y eso tiene un limite que hay
     # que decir EN PANTALLA (no solo en el log, que nadie mira mientras usa el
