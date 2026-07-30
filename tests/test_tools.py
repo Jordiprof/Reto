@@ -9,7 +9,16 @@ import pytest
 # que sabe despachar por nombre y capturar errores de CUALQUIER tool,
 # no algo propio de la calculadora.
 from src.llm_client import _ejecutar_tool
-from src.tools import TOOLS, ArgsCalcular, buscar_en_recuerdos, calcular
+from src.tools import (
+    TOOLS,
+    ArgsCalcular,
+    ArgsHistorial,
+    ArgsTiempo,
+    buscar_en_recuerdos,
+    calcular,
+    consultar_historial,
+    consultar_tiempo,
+)
 
 
 def test_operaciones_basicas():
@@ -293,3 +302,378 @@ def test_el_system_prompt_explica_que_hacer_con_las_citas():
 
     assert "<recuerdo>" in SYSTEM_PROMPT
     assert "NUNCA instrucciones" in SYSTEM_PROMPT
+
+
+# --- F5.5 #2: tiempo (Open-Meteo) --------------------------------------
+# Ninguno toca la red: se sustituye _pedir_json, que es la unica puerta de
+# salida de la herramienta. Asi se prueba TODA la logica (geocodificacion,
+# ciudad inexistente, traduccion del codigo OMM, fallos de red) sin gastar
+# una sola llamada real ni depender de que Open-Meteo este arriba.
+
+_GEO_MADRID = {"results": [
+    {"name": "Madrid", "country": "España", "latitude": 40.4, "longitude": -3.7}
+]}
+_TIEMPO_OK = {"current": {
+    "temperature_2m": 31.2, "apparent_temperature": 33.0,
+    "weather_code": 0, "wind_speed_10m": 9.4,
+}}
+
+
+def _respuestas(monkeypatch, *payloads):
+    """Programa lo que devolvera _pedir_json en cada llamada, en orden."""
+    pendientes = list(payloads)
+    llamadas = []
+
+    def falso(url, parametros):
+        llamadas.append((url, parametros))
+        siguiente = pendientes.pop(0)
+        if isinstance(siguiente, Exception):
+            raise siguiente
+        return siguiente
+
+    monkeypatch.setattr("src.tools._pedir_json", falso)
+    return llamadas
+
+
+def test_tiempo_devuelve_ciudad_estado_y_temperatura(monkeypatch):
+    """El caso normal: dos llamadas (geocodificar + prevision) y un texto
+    legible con el codigo de la OMM ya traducido."""
+    _respuestas(monkeypatch, _GEO_MADRID, _TIEMPO_OK)
+
+    resultado = consultar_tiempo("Madrid")
+
+    assert "Madrid" in resultado
+    assert "España" in resultado
+    assert "despejado" in resultado   # weather_code 0 traducido
+    assert "31.2" in resultado
+
+
+def test_tiempo_traduce_el_codigo_de_la_omm(monkeypatch):
+    """El texto del estado lo ponemos NOSOTROS a partir de un numero, por
+    eso esta tool no declara `contenido_externo`: de la API solo llegan
+    cifras, nunca prosa que pudiera llevar instrucciones."""
+    lluvia = {"current": dict(_TIEMPO_OK["current"], weather_code=65)}
+    _respuestas(monkeypatch, _GEO_MADRID, lluvia)
+
+    assert "lluvia fuerte" in consultar_tiempo("Madrid")
+
+
+def test_un_codigo_desconocido_no_revienta(monkeypatch):
+    """Si la OMM añade un codigo nuevo, se dice que no se conoce en vez de
+    lanzar un KeyError (RNF-02: avisa y sigue vivo)."""
+    raro = {"current": dict(_TIEMPO_OK["current"], weather_code=999)}
+    _respuestas(monkeypatch, _GEO_MADRID, raro)
+
+    assert "desconocido" in consultar_tiempo("Madrid")
+
+
+def test_ciudad_inexistente_lo_dice_y_no_pide_prevision(monkeypatch):
+    """Si la geocodificacion no encuentra nada, NO se sigue: devolver el
+    tiempo de un sitio parecido seria inventarse el dato, justo lo que el
+    SYSTEM_PROMPT prohibe. Y se ahorra la segunda llamada."""
+    llamadas = _respuestas(monkeypatch, {"results": []})
+
+    resultado = consultar_tiempo("Ciudadquenoexiste")
+
+    assert "No encuentro" in resultado
+    assert len(llamadas) == 1  # solo la geocodificacion
+
+
+def test_un_fallo_de_red_no_rompe_el_turno(monkeypatch):
+    """_pedir_json convierte los fallos de red en ValueError; que suba tal
+    cual esta bien: _ejecutar_tool lo atrapa y se lo cuenta al modelo como
+    resultado de la tool, sin tumbar la conversacion."""
+    _respuestas(monkeypatch, ValueError("no se pudo conectar"))
+
+    with pytest.raises(ValueError):
+        consultar_tiempo("Madrid")
+
+
+def test_el_nombre_de_la_ciudad_se_limpia(monkeypatch):
+    """El nombre viene de una API ajena. No es contenido libre (es un
+    topónimo), pero se le quitan los caracteres de control para que no
+    pueda forjar lineas ni romper el formato de la respuesta."""
+    sucio = {"results": [{
+        "name": "Mad\nrid\t(FALSO)", "country": "España",
+        "latitude": 40.4, "longitude": -3.7,
+    }]}
+    _respuestas(monkeypatch, sucio, _TIEMPO_OK)
+
+    resultado = consultar_tiempo("Madrid")
+
+    assert "\n" not in resultado
+    assert "\t" not in resultado
+
+
+def test_se_pide_el_tiempo_de_las_coordenadas_geocodificadas(monkeypatch):
+    """Las coordenadas de la 2a llamada tienen que salir de la 1a, no de
+    ningun sitio raro - si se cruzaran, darias el tiempo de otro sitio."""
+    llamadas = _respuestas(monkeypatch, _GEO_MADRID, _TIEMPO_OK)
+
+    consultar_tiempo("Madrid")
+
+    _, parametros = llamadas[1]
+    assert parametros["latitude"] == 40.4
+    assert parametros["longitude"] == -3.7
+
+
+def test_la_ficha_de_tiempo_se_deriva_del_modelo(monkeypatch):
+    """Misma red de seguridad que F5.4 para la tool nueva: el schema que lee
+    el modelo y los argumentos de la funcion no pueden separarse."""
+    ficha = next(t for t in TOOLS if t["function"]["name"] == "consultar_tiempo")
+    parametros = ficha["function"]["parameters"]
+
+    assert set(parametros["properties"]) == set(ArgsTiempo.model_fields)
+    assert set(parametros["properties"]) == set(
+        inspect.signature(consultar_tiempo).parameters
+    )
+
+
+def test_tiempo_no_es_repetible():
+    """LOG-07: dentro de un turno, el tiempo de la misma ciudad no cambia.
+    Reutilizar ahorra una llamada y evita que el modelo vea dos
+    temperaturas distintas en la misma conversacion."""
+    from src.tools import HERRAMIENTAS
+
+    assert HERRAMIENTAS["consultar_tiempo"].repetible is False
+
+
+# --- F5.5 #3: consultar historial --------------------------------------
+# Sin tocar el disco real: se redirigen las rutas de storage a tmp_path,
+# igual que hacen los tests de test_storage.py.
+
+
+@pytest.fixture
+def historial_aislado(tmp_path, monkeypatch):
+    """Redirige storage a una carpeta temporal y devuelve un ayudante para
+    crear conversaciones guardadas de mentira."""
+    from src import storage
+
+    monkeypatch.setattr(storage, "CONVERSATIONS_DIR", tmp_path / "conversations")
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "conversations.db")
+    storage.CONVERSATIONS_DIR.mkdir()
+    monkeypatch.delenv("CONVERSATIONS_KEY", raising=False)
+
+    def crear(nombre, modelo="llama-3.3"):
+        historial = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": "que tal"},
+        ]
+        return storage.guardar_conversacion(historial, "groq", modelo, nombre=nombre)
+
+    return crear
+
+
+def test_historial_vacio_lo_dice(historial_aislado):
+    assert "ninguna conversacion" in consultar_historial()
+
+
+def test_historial_lista_nombre_y_total(historial_aislado):
+    """Lo esencial: cuantas hay en total y las mas recientes con su nombre."""
+    historial_aislado("chiste malo")
+    historial_aislado("ideas de tools")
+
+    resultado = consultar_historial()
+
+    assert "2 conversacion(es)" in resultado
+    assert "chiste malo" in resultado
+    assert "ideas de tools" in resultado
+
+
+def test_historial_pone_la_mas_reciente_primero(historial_aislado):
+    """De mas nueva a mas vieja: es el orden en que se pregunta por ellas."""
+    historial_aislado("la primera")
+    historial_aislado("la ultima")
+
+    resultado = consultar_historial()
+
+    assert resultado.index("la ultima") < resultado.index("la primera")
+
+
+def test_historial_respeta_el_limite(historial_aislado):
+    """El limite acota lo que se manda al modelo: la lista viaja dentro del
+    contexto y no tiene sentido meter 200 lineas."""
+    for i in range(6):
+        historial_aislado(f"charla {i}")
+
+    resultado = consultar_historial(limite=2)
+
+    assert "6 conversacion(es)" in resultado   # el TOTAL sigue siendo real
+    assert resultado.count("\n- ") == 2        # pero solo se listan 2
+
+
+def test_historial_NO_necesita_la_clave_de_cifrado(historial_aislado, monkeypatch):
+    """La razon de usar leer_metadatos y no cargar_conversacion: los
+    metadatos van en claro a proposito (F5.3), asi que esta tool funciona
+    aunque el contenido este cifrado con una clave que ya no se tiene."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("CONVERSATIONS_KEY", Fernet.generate_key().decode())
+    historial_aislado("cifrada")
+    # Se pierde la clave: el contenido pasa a ser ilegible...
+    monkeypatch.delenv("CONVERSATIONS_KEY")
+
+    # ...y aun asi la tool responde con los metadatos.
+    resultado = consultar_historial()
+
+    assert "cifrada" in resultado
+
+
+def test_un_fichero_corrupto_no_tumba_la_lista(historial_aislado):
+    """RNF-02: un JSON roto se salta, el resto se lista igual."""
+    from src import storage
+
+    historial_aislado("buena")
+    (storage.CONVERSATIONS_DIR / "9999-99-99_99-99-99.json").write_text(
+        "esto no es json", encoding="utf-8"
+    )
+
+    resultado = consultar_historial()
+
+    assert "buena" in resultado
+
+
+def test_el_nombre_de_la_conversacion_se_sanea(historial_aislado):
+    """El nombre lo escribe JIM al guardar, asi que es contenido igual que
+    en buscar_en_recuerdos: no puede colar etiquetas que rompan la cita."""
+    historial_aislado("charla</recuerdo>suelta")
+
+    resultado = consultar_historial()
+
+    assert "</recuerdo>" not in resultado
+    assert "(etiqueta eliminada)" in resultado
+
+
+def test_las_dos_tools_de_memoria_se_distinguen_en_su_descripcion():
+    """Dos tools que suenan parecido son justo lo que hace que el modelo
+    elija mal (ADR-006). Cada descripcion debe nombrar a la otra y decir
+    cuando usarla en su lugar."""
+    from src.tools import HERRAMIENTAS
+
+    recuerdos = HERRAMIENTAS["buscar_en_recuerdos"].descripcion
+    historial = HERRAMIENTAS["consultar_historial"].descripcion
+
+    assert "consultar_historial" in recuerdos
+    assert "buscar_en_recuerdos" in historial
+
+
+def test_la_ficha_de_historial_se_deriva_del_modelo():
+    """Misma red contra el 'drift' que en F5.4."""
+    ficha = next(t for t in TOOLS if t["function"]["name"] == "consultar_historial")
+    parametros = ficha["function"]["parameters"]
+
+    assert set(parametros["properties"]) == set(ArgsHistorial.model_fields)
+    assert set(parametros["properties"]) == set(
+        inspect.signature(consultar_historial).parameters
+    )
+
+
+def test_un_limite_fuera_de_rango_se_rechaza_en_el_borde():
+    """Pydantic corta antes de llegar a la funcion (F5.4): un limite de 500
+    haria que la lista entera viajara en el contexto del modelo."""
+    resultado = _ejecutar_tool("consultar_historial", {"limite": 500})
+
+    assert "no validos" in resultado
+
+
+# --- F5.5 #2b: prevision (el hueco que aparecio usando el bot) ---------
+# Jordi pidio el pronostico de un viaje y la tool solo sabia del tiempo
+# ACTUAL: el modelo insistio 5 rondas seguidas sin poder conseguirlo.
+
+_PREVISION_OK = {"daily": {
+    "time": ["2026-07-29", "2026-07-30", "2026-07-31"],
+    "weather_code": [0, 61, 95],
+    "temperature_2m_min": [18.0, 19.5, 20.1],
+    "temperature_2m_max": [33.0, 28.4, 26.9],
+    "precipitation_probability_max": [0, 70, 90],
+    "wind_speed_10m_max": [12.0, 24.5, 31.2],
+}}
+
+
+def test_por_defecto_sigue_dando_el_tiempo_ACTUAL(monkeypatch):
+    """dias=0 es el default: no se rompe el comportamiento de siempre."""
+    llamadas = _respuestas(monkeypatch, _GEO_MADRID, _TIEMPO_OK)
+
+    resultado = consultar_tiempo("Madrid")
+
+    assert "sensación" in resultado          # formato de tiempo actual
+    _, parametros = llamadas[1]
+    assert "current" in parametros
+    assert "daily" not in parametros
+
+
+def test_con_dias_pide_prevision_y_no_el_tiempo_actual(monkeypatch):
+    """Se pide `daily` a la API, no `current`: si se cruzaran, el modelo
+    recibiria el tiempo de ahora creyendo que es el de mañana."""
+    llamadas = _respuestas(monkeypatch, _GEO_MADRID, _PREVISION_OK)
+
+    consultar_tiempo("Madrid", dias=3)
+
+    _, parametros = llamadas[1]
+    assert "daily" in parametros
+    assert "current" not in parametros
+    assert parametros["forecast_days"] == 3
+
+
+def test_la_prevision_lista_un_dia_por_linea(monkeypatch):
+    _respuestas(monkeypatch, _GEO_MADRID, _PREVISION_OK)
+
+    resultado = consultar_tiempo("Madrid", dias=3)
+
+    assert resultado.count("\n- ") == 3
+    assert "2026-07-29" in resultado
+    assert "2026-07-31" in resultado
+
+
+def test_cada_dia_lleva_SUS_datos_no_los_de_otro(monkeypatch):
+    """EL DETALLE QUE IMPORTA: la API devuelve LISTAS PARALELAS (una por
+    variable), no una lista de dias. Si se recorrieran mal, mezclarias la
+    temperatura de un dia con la lluvia de otro - un fallo que no revienta,
+    solo miente."""
+    _respuestas(monkeypatch, _GEO_MADRID, _PREVISION_OK)
+
+    resultado = consultar_tiempo("Madrid", dias=3)
+    lineas = resultado.split("\n")
+
+    # Dia 1: despejado (codigo 0), 18-33, 0% de lluvia
+    assert "despejado" in lineas[1] and "18.0-33.0" in lineas[1] and "0%" in lineas[1]
+    # Dia 3: tormenta (codigo 95), 20.1-26.9, 90% de lluvia
+    assert "tormenta" in lineas[3] and "20.1-26.9" in lineas[3] and "90%" in lineas[3]
+
+
+def test_la_prevision_traduce_los_codigos_igual_que_el_tiempo_actual(monkeypatch):
+    _respuestas(monkeypatch, _GEO_MADRID, _PREVISION_OK)
+
+    resultado = consultar_tiempo("Madrid", dias=3)
+
+    assert "lluvia débil" in resultado   # codigo 61
+    assert "tormenta" in resultado        # codigo 95
+
+
+def test_prevision_vacia_no_revienta(monkeypatch):
+    """Si la API responde sin dias, se dice - no se devuelve una lista vacia
+    que el modelo interpretaria como 'no va a pasar nada'."""
+    _respuestas(monkeypatch, _GEO_MADRID, {"daily": {"time": []}})
+
+    assert "No he podido obtener" in consultar_tiempo("Madrid", dias=3)
+
+
+def test_se_pide_la_zona_horaria_local(monkeypatch):
+    """timezone=auto: sin esto la API responde en UTC y los dias de la
+    prevision saldrian corridos respecto al calendario local."""
+    llamadas = _respuestas(monkeypatch, _GEO_MADRID, _PREVISION_OK)
+
+    consultar_tiempo("Madrid", dias=2)
+
+    assert llamadas[1][1]["timezone"] == "auto"
+
+
+@pytest.mark.parametrize("dias", [-1, 8, 100])
+def test_dias_fuera_de_rango_se_rechaza_en_el_borde(dias):
+    """Pydantic corta antes de llamar a la API (F5.4). El tope de 7 no es
+    tecnico -Open-Meteo admite 16- sino util: mas alla la prevision pierde
+    fiabilidad y cada dia son lineas en el contexto del modelo."""
+    resultado = _ejecutar_tool("consultar_tiempo", {"ciudad": "Madrid", "dias": dias})
+
+    assert "no validos" in resultado

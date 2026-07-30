@@ -245,6 +245,305 @@ def buscar_en_recuerdos(consulta: str) -> str:
     return "\n".join(lineas)
 
 
+# ---------------------------------------------------------------------------
+# F5.5 #2 - Tiempo (Open-Meteo). PRIMERA herramienta que sale a internet.
+# ---------------------------------------------------------------------------
+# Open-Meteo verificado el 28/07/2026 en su documentacion oficial:
+#   - Gratis para uso NO COMERCIAL, SIN clave de API.
+#   - Limites: <10.000 llamadas/dia, 5.000/hora, 600/minuto.
+#   - Dos endpoints distintos: geocodificacion (ciudad -> coordenadas) y
+#     prevision (coordenadas -> tiempo). Hacen falta los dos, porque el
+#     usuario escribe "Madrid" y la API de prevision solo entiende lat/lon.
+#
+# Capacidad declarada (ADR-006): `red`. Lo que eso obliga:
+#   - TIMEOUT propio y CORTO (ver _TIMEOUT_TOOLS): una tool no puede colgar
+#     un turno. Es mas agresivo que el de los proveedores LLM (30s) porque
+#     un servicio de consulta que tarda 8s ya se considera caido.
+#   - Fallar SIN romper: cualquier fallo devuelve un texto que el modelo
+#     entiende, nunca una excepcion que suba (RNF-02).
+#
+# NO declara `contenido_externo` a proposito: lo que vuelve son numeros y
+# un codigo de la OMM que traducimos NOSOTROS a texto fijo (ver
+# _TIEMPO_POR_CODIGO). El unico texto ajeno que se muestra es el nombre de
+# la ciudad y el pais, que se sanean igual - no vaya a ser que un topónimo
+# raro traiga caracteres de control.
+_TIMEOUT_TOOLS = 8.0
+
+_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+
+_LONGITUD_MAXIMA_CIUDAD = 80
+
+# Codigos de estado del tiempo de la OMM (WMO), traducidos a mano al
+# español. La API devuelve un numero; el texto lo ponemos nosotros, asi que
+# NO es contenido externo. Tabla verificada en la doc de Open-Meteo (28/07).
+_TIEMPO_POR_CODIGO = {
+    0: "despejado",
+    1: "casi despejado", 2: "parcialmente nublado", 3: "nublado",
+    45: "niebla", 48: "niebla helada",
+    51: "llovizna débil", 53: "llovizna", 55: "llovizna intensa",
+    56: "llovizna helada débil", 57: "llovizna helada intensa",
+    61: "lluvia débil", 63: "lluvia", 65: "lluvia fuerte",
+    66: "lluvia helada débil", 67: "lluvia helada fuerte",
+    71: "nieve débil", 73: "nieve", 75: "nieve intensa",
+    77: "granos de nieve",
+    80: "chubascos débiles", 81: "chubascos", 82: "chubascos violentos",
+    85: "chubascos de nieve débiles", 86: "chubascos de nieve fuertes",
+    95: "tormenta",
+    96: "tormenta con algo de granizo", 99: "tormenta con granizo fuerte",
+}
+
+
+# Tope de dias de prevision. Open-Meteo admite hasta 16 (verificado), pero
+# 7 es lo util: mas alla la prevision meteorologica pierde fiabilidad de
+# verdad, y cada dia extra son lineas que viajan en el contexto del modelo.
+_MAX_DIAS_PREVISION = 7
+
+
+class ArgsTiempo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ciudad: str = Field(
+        description=(
+            "Nombre de la ciudad o pueblo, ej. 'Madrid' o 'Santa Cruz de "
+            "Tenerife'. Puede incluir el pais si hay ambiguedad: 'Cordoba, "
+            "Argentina'."
+        ),
+        max_length=_LONGITUD_MAXIMA_CIUDAD,
+    )
+
+    # F5.5 #2b: el hueco que encontro Jordi usando el bot en real - pidio el
+    # pronostico de un viaje y la tool solo sabia del tiempo ACTUAL. El
+    # modelo insistio 5 rondas seguidas (agotando el bucle de tools) porque
+    # no tenia forma de conseguirlo. Un solo parametro lo resuelve, en vez
+    # de una tool aparte: es la misma pregunta ("¿que tiempo va a hacer?")
+    # con distinto horizonte, y dos tools parecidas empeoran la eleccion del
+    # modelo (ADR-006).
+    dias: int = Field(
+        default=0,
+        ge=0,
+        le=_MAX_DIAS_PREVISION,
+        description=(
+            "0 (por defecto) para el tiempo de AHORA MISMO. Un numero del 1 "
+            f"al {_MAX_DIAS_PREVISION} para la PREVISION de los proximos dias "
+            "(1 = solo hoy, 7 = la semana). Usa la prevision cuando pregunten "
+            "por 'mañana', 'el fin de semana' o un viaje futuro."
+        ),
+    )
+
+
+def _texto_seguro(valor: object, limite: int = 60) -> str:
+    """Limpia un texto que viene de una API ajena antes de enseñarlo.
+
+    Solo quita caracteres de control (saltos de linea, tabuladores,
+    escapes) y recorta. No es el saneado de SEG-07 -eso es para contenido
+    libre que podria llevar instrucciones-, sino la higiene minima para un
+    nombre propio: que un topónimo no pueda forjar lineas falsas ni romper
+    el formato de la respuesta.
+    """
+    texto = "".join(c for c in str(valor) if c.isprintable())
+    return texto[:limite]
+
+
+def _pedir_json(url: str, parametros: dict) -> dict:
+    """Una peticion GET que devuelve JSON, con timeout y sin lanzar nunca
+    excepciones de red hacia arriba (las convierte en ValueError con un
+    texto que el modelo pueda entender).
+
+    Import perezoso de httpx por coherencia con el resto del fichero: quien
+    solo use `calcular` no deberia pagar el import.
+    """
+    import httpx
+
+    try:
+        respuesta = httpx.get(url, params=parametros, timeout=_TIMEOUT_TOOLS)
+        respuesta.raise_for_status()
+        return respuesta.json()
+    except httpx.TimeoutException:
+        raise ValueError("el servicio de meteorologia tardo demasiado en responder")
+    except httpx.HTTPStatusError as error:
+        # El CODIGO de estado, no el cuerpo: un cuerpo de error de una API
+        # ajena es texto que no controlamos y acabaria en el contexto del
+        # modelo (misma politica que con los errores de los SDK de LLM).
+        raise ValueError(
+            f"el servicio de meteorologia respondio con error {error.response.status_code}"
+        ) from None
+    except httpx.HTTPError:
+        raise ValueError("no se pudo conectar con el servicio de meteorologia") from None
+    except ValueError:
+        # .json() sobre algo que no es JSON.
+        raise ValueError("el servicio de meteorologia devolvio una respuesta ilegible") from None
+
+
+def _donde(lugar: dict, ciudad: str) -> str:
+    """'Ciudad (Pais)' con los textos de la API ya limpios."""
+    nombre = _texto_seguro(lugar.get("name", ciudad))
+    pais = _texto_seguro(lugar.get("country", ""))
+    return f"{nombre} ({pais})" if pais else nombre
+
+
+def _estado_de(codigo) -> str:
+    """Traduce el codigo de la OMM. El texto lo ponemos NOSOTROS, por eso
+    esta tool no maneja contenido externo: de la API solo llegan cifras."""
+    return _TIEMPO_POR_CODIGO.get(codigo, "estado desconocido")
+
+
+def _formatear_actual(datos: dict, donde: str) -> str:
+    return (
+        f"En {donde}: {_estado_de(datos.get('weather_code'))}, "
+        f"{datos.get('temperature_2m', '?')}°C "
+        f"(sensación {datos.get('apparent_temperature', '?')}°C), "
+        f"viento {datos.get('wind_speed_10m', '?')} km/h."
+    )
+
+
+def _formatear_prevision(datos: dict, donde: str) -> str:
+    """La respuesta diaria viene en LISTAS PARALELAS (una por variable,
+    todas del mismo largo, casadas por posicion), no en una lista de dias.
+    Se recorren con zip para no cruzar el dato de un dia con el de otro.
+    """
+    dias = datos.get("time") or []
+    if not dias:
+        return f"No he podido obtener la previsión para {donde}."
+
+    lineas = [f"Previsión para {donde}:"]
+    columnas = zip(
+        dias,
+        datos.get("weather_code", []),
+        datos.get("temperature_2m_min", []),
+        datos.get("temperature_2m_max", []),
+        datos.get("precipitation_probability_max", []),
+        datos.get("wind_speed_10m_max", []),
+    )
+    for fecha, codigo, minima, maxima, lluvia, viento in columnas:
+        lineas.append(
+            f"- {fecha}: {_estado_de(codigo)}, {minima}-{maxima}°C, "
+            f"lluvia {lluvia}%, viento hasta {viento} km/h"
+        )
+    return "\n".join(lineas)
+
+
+def consultar_tiempo(ciudad: str, dias: int = 0) -> str:
+    """Tiempo actual (dias=0) o prevision de N dias, via Open-Meteo.
+
+    Dos pasos: primero se traduce el nombre a coordenadas (geocoding) y
+    luego se pide el tiempo. Si la ciudad no existe se dice, en vez de
+    devolver el tiempo de otro sitio parecido - inventarse la ciudad seria
+    justo el tipo de fallo que el SYSTEM_PROMPT prohibe.
+
+    Una sola tool para los dos horizontes, no dos: es la misma pregunta con
+    distinto alcance, y dos herramientas parecidas hacen que el modelo elija
+    peor (ADR-006). El parametro `dias` decide que se pide a la API.
+    """
+    lugares = _pedir_json(
+        _GEOCODING_URL,
+        {"name": ciudad, "count": 1, "language": "es", "format": "json"},
+    ).get("results")
+
+    if not lugares:
+        return f"No encuentro ninguna ciudad que se llame '{_texto_seguro(ciudad)}'."
+
+    lugar = lugares[0]
+    parametros = {
+        "latitude": lugar["latitude"],
+        "longitude": lugar["longitude"],
+        # timezone=auto: sin esto la API responde en UTC y los dias de la
+        # prevision saldrian corridos respecto al calendario local.
+        "timezone": "auto",
+    }
+
+    if dias:
+        parametros["daily"] = (
+            "weather_code,temperature_2m_min,temperature_2m_max,"
+            "precipitation_probability_max,wind_speed_10m_max"
+        )
+        parametros["forecast_days"] = dias
+        respuesta = _pedir_json(_FORECAST_URL, parametros).get("daily", {})
+        return _formatear_prevision(respuesta, _donde(lugar, ciudad))
+
+    parametros["current"] = (
+        "temperature_2m,apparent_temperature,weather_code,wind_speed_10m"
+    )
+    respuesta = _pedir_json(_FORECAST_URL, parametros).get("current", {})
+    return _formatear_actual(respuesta, _donde(lugar, ciudad))
+
+
+# ---------------------------------------------------------------------------
+# F5.5 #3 - Consultar el propio historial de conversaciones.
+# ---------------------------------------------------------------------------
+# NO se solapa con buscar_en_recuerdos, y la diferencia importa porque el
+# modelo tiene que saber cual elegir:
+#   - buscar_en_recuerdos -> busca por SIGNIFICADO dentro del CONTENIDO
+#     ("¿que me dijo del medico?"). Necesita descifrar y usa el RAG.
+#   - consultar_historial  -> lista METADATOS de las conversaciones
+#     ("¿cuantas veces hemos hablado?", "¿cuando fue la ultima?"). NO
+#     descifra nada.
+# Por eso las descripciones que lee el modelo se escriben marcando el
+# contraste a proposito: la ambiguedad entre dos tools parecidas es justo
+# lo que empeora la eleccion (ver ADR-006, motivo de /tools).
+#
+# Capacidades (ADR-006): NINGUNA de red ni de efecto. Solo lectura local.
+# Los metadatos van en claro en el JSON a proposito (decision de F5.3), asi
+# que esta tool funciona incluso sin CONVERSATIONS_KEY.
+_MAX_HISTORIAL_TOOL = 20
+
+
+class ArgsHistorial(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limite: int = Field(
+        default=5,
+        ge=1,
+        le=_MAX_HISTORIAL_TOOL,
+        description=(
+            "Cuantas conversaciones recientes listar. Por defecto 5, maximo "
+            f"{_MAX_HISTORIAL_TOOL}."
+        ),
+    )
+
+
+def consultar_historial(limite: int = 5) -> str:
+    """Lista los METADATOS de las conversaciones guardadas, de la mas
+    reciente a la mas antigua.
+
+    Usa leer_metadatos y NO cargar_conversacion: fecha, nombre, proveedor y
+    modelo se guardan EN CLARO a proposito (F5.3), asi que listar no
+    necesita la clave de cifrado ni pasea por memoria el contenido de todas
+    las conversaciones. Es la misma decision que ya tomo el comando
+    /historial; aqui solo se expone al modelo.
+
+    Import perezoso por coherencia con el resto del fichero: importar
+    storage crea la carpeta conversations/ como efecto secundario, y quien
+    solo use `calcular` no deberia provocar eso.
+    """
+    from src.storage import ConversacionNoDescifrable, leer_metadatos, listar_conversaciones
+
+    rutas = listar_conversaciones()
+    if not rutas:
+        return "No hay ninguna conversacion guardada todavia."
+
+    lineas = []
+    for ruta in reversed(rutas[-limite:]):
+        try:
+            meta = leer_metadatos(ruta)
+        except (OSError, ValueError, ConversacionNoDescifrable):
+            # Un fichero corrupto no debe tumbar la lista entera (RNF-02).
+            continue
+        fecha = (meta.get("fecha") or "")[:16].replace("T", " ") or "sin fecha"
+        # El nombre lo escribe JIM al guardar, asi que se sanea igual que en
+        # buscar_en_recuerdos: es contenido, no una etiqueta nuestra.
+        nombre = _sanear_recordado(meta.get("nombre") or "(sin nombre)")
+        lineas.append(f"- {fecha} · {nombre} · {meta.get('modelo', '?')}")
+
+    if not lineas:
+        return f"Hay {len(rutas)} conversacion(es) guardada(s), pero no he podido leer ninguna."
+
+    return (
+        f"Tienes {len(rutas)} conversacion(es) guardada(s) en total. "
+        f"Las {len(lineas)} mas recientes:\n" + "\n".join(lineas)
+    )
+
+
 # F5.4: UNA entrada por herramienta, con las tres cosas que la definen
 # juntas: la funcion real, el modelo que valida sus argumentos y la
 # descripcion que lee el LLM. Antes la ficha de TOOLS se escribia a mano
@@ -291,14 +590,50 @@ HERRAMIENTAS = {
             "de inventar el resultado de memoria."
         ),
     ),
+    "consultar_tiempo": Herramienta(
+        funcion=consultar_tiempo,
+        args=ArgsTiempo,
+        descripcion=(
+            "Consulta el tiempo de una ciudad. Con dias=0 (por defecto) da el "
+            "tiempo de AHORA MISMO; con dias=1..7 da la PREVISION de los "
+            "proximos dias (maximas, minimas, probabilidad de lluvia y "
+            "viento). Usala siempre que pregunten por el tiempo -tanto el de "
+            "ahora como el de mañana, el fin de semana o un viaje-, en vez de "
+            "inventarlo: no puedes saberlo de memoria."
+        ),
+        # repetible=False (el default, LOG-07): dentro de UN turno, el tiempo
+        # en la misma ciudad no cambia. Reutilizar el resultado en un
+        # reintento ahorra una llamada y ademas evita que el modelo vea dos
+        # temperaturas distintas en la misma conversacion.
+    ),
     "buscar_en_recuerdos": Herramienta(
         funcion=buscar_en_recuerdos,
         args=ArgsBuscarRecuerdos,
+        # F5.5 #3: se añade el contraste con consultar_historial. Dos tools
+        # de "memoria" que suenan parecido son justo lo que hace que el
+        # modelo elija mal, asi que cada descripcion dice lo que la otra NO
+        # hace (ver ADR-006, motivo de /tools).
         descripcion=(
-            "Busca en las conversaciones anteriores con JIM por significado. "
-            "Usala cuando pregunte por algo que os contó o hablasteis antes "
-            "(citas, tareas, datos de su vida), en vez de decir que no lo sabes."
+            "Busca en las conversaciones anteriores con JIM por significado, "
+            "dentro del CONTENIDO de lo que os dijisteis. Usala cuando "
+            "pregunte por algo que os contó o hablasteis antes (citas, tareas, "
+            "datos de su vida), en vez de decir que no lo sabes. Para saber "
+            "CUANTAS conversaciones hay o CUANDO fueron, usa "
+            "consultar_historial en su lugar."
         ),
+    ),
+    "consultar_historial": Herramienta(
+        funcion=consultar_historial,
+        args=ArgsHistorial,
+        descripcion=(
+            "Lista las conversaciones guardadas con su fecha, su nombre y el "
+            "modelo usado - NO su contenido. Usala para preguntas sobre la "
+            "propia historia de vuestras charlas: cuantas hay, cuando fue la "
+            "ultima, como se llamaban. Si lo que quieres es recordar QUE se "
+            "dijo, usa buscar_en_recuerdos en su lugar."
+        ),
+        # repetible=False (el default): la lista no cambia a mitad de un
+        # turno, asi que reutilizarla es correcto y ahorra leer el disco.
     ),
 }
 
