@@ -252,6 +252,50 @@ def logger_depuracion() -> logging.Logger:
 
 
 # ---------------------------------------------------------------------------
+# F5.5 - Herramientas (ADR-006)
+# ---------------------------------------------------------------------------
+# Lista blanca de dominios que las tools tienen permiso de visitar. Es la
+# mitad "editorial" del guardian de URLs (src/red_segura.py): decide en QUE
+# SITIOS confia Jordi, algo que ningun programa puede deducir solo. La otra
+# mitad (¿esa direccion esta en mi red?) es tecnica y va en red_segura.
+DOMINIOS_WEB_ENV = "DOMINIOS_PERMITIDOS_WEB"
+
+# Clave de api.nasa.gov. OPCIONAL: sin ella se usa DEMO_KEY, que funciona
+# pero con 30 peticiones/hora y 50/dia (verificado en su doc). Con clave
+# propia (gratis, por email) son 1.000/hora.
+NASA_API_KEY_ENV = "NASA_API_KEY"
+_NASA_CLAVE_DEMO = "DEMO_KEY"
+
+
+def obtener_dominios_permitidos() -> frozenset[str]:
+    """Dominios autorizados, en minusculas y sin espacios.
+
+    Devuelve un conjunto VACIO si no hay ninguno configurado, y eso es
+    deliberado: quien llama (red_segura.validar_url) trata el conjunto
+    vacio como "no visito nada". Falla CERRADO, igual que la lista blanca
+    del bot - una lista de permitidos que al estar vacia permitiera todo
+    seria un control de acceso al reves.
+    """
+    crudo = os.environ.get(DOMINIOS_WEB_ENV, "")
+    return frozenset(
+        d.strip().lower().removeprefix("www.")
+        for d in crudo.split(",")
+        if d.strip()
+    )
+
+
+def obtener_clave_nasa() -> str:
+    """Clave de NASA, o DEMO_KEY si no hay ninguna configurada.
+
+    Aqui SI se cae a un valor por defecto (a diferencia de los proveedores
+    LLM, que lanzan): DEMO_KEY es una clave publica que la propia NASA
+    ofrece para probar, asi que la tool funciona nada mas instalar el
+    proyecto. Lo unico que se pierde es cuota.
+    """
+    return os.environ.get(NASA_API_KEY_ENV, "").strip() or _NASA_CLAVE_DEMO
+
+
+# ---------------------------------------------------------------------------
 # F5.2 - Bot de Telegram
 # ---------------------------------------------------------------------------
 # Solo los NOMBRES de las variables, igual que PROVEEDORES: el valor se lee
