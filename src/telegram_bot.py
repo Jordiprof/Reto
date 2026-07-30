@@ -808,6 +808,14 @@ def _borrar_del_todo(ruta: Path) -> bool:
 
 _PREFIJO_MODELO = "m:"
 _PREFIJO_PROVEEDOR = "p:"
+# ADR-006: /tools. Cada pulsacion CONMUTA una categoria y vuelve a dibujar
+# el menu, en vez de cerrarlo: activar varias de una vez es lo normal, y
+# cerrar el menu en cada toque obligaria a repetir el comando.
+_PREFIJO_TOOLS = "t:"
+# Enseña la lista blanca de sitios sin salir del menu de /tools.
+# OJO: NO puede empezar por "t:" - lo cazaria antes el conmutador de
+# categorias y buscaria una categoria llamada "ver-sitios".
+_VER_SITIOS = "ver-sitios"
 
 
 def _teclado(prefijo: str, opciones: list[str]) -> InlineKeyboardMarkup:
@@ -858,6 +866,51 @@ async def cmd_proveedor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"Ahora hablo con *{_agente_de(usuario.id).proveedor}*. ¿A cuál cambio?",
         parse_mode="Markdown",
         reply_markup=_teclado(_PREFIJO_PROVEEDOR, disponibles),
+    )
+
+
+def _teclado_tools(agente) -> InlineKeyboardMarkup:
+    """Un boton por categoria, con marca de encendida/apagada.
+
+    Lleva SIEMPRE "⬅ Cerrar" al final: es la convencion del 27/07 para
+    cualquier menu ("Volver"/"Cancelar" visible). Se llama "Cerrar" y no
+    "Volver" porque en Telegram no hay un paso anterior al que volver - el
+    menu es lo primero que sale.
+    """
+    from src.tools import categorias_disponibles, nombres_de
+
+    filas = []
+    for categoria in categorias_disponibles():
+        encendida = categoria in agente.categorias_activas
+        marca = "✅" if encendida else "⬜"
+        etiqueta = f"{marca} {categoria} — {', '.join(nombres_de(categoria))}"
+        filas.append([InlineKeyboardButton(
+            etiqueta[:60], callback_data=f"{_PREFIJO_TOOLS}{categoria}",
+        )])
+    # Ver a que sitios puede ir de verdad la categoria "web": tenerla
+    # encendida no dice nada si no sabes la lista blanca (Jordi, 30/07).
+    filas.append([InlineKeyboardButton(
+        "🌐 Ver sitios autorizados", callback_data=_VER_SITIOS,
+    )])
+    filas.append([InlineKeyboardButton("⬅ Cerrar", callback_data=_CANCELAR)])
+    return InlineKeyboardMarkup(filas)
+
+
+async def cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Enciende o apaga grupos de herramientas (ADR-006).
+
+    Por que existe: la ficha de CADA herramienta activa viaja en CADA
+    peticion al modelo, asi que tenerlas todas encendidas se paga en tokens
+    en todos los turnos - y ademas el modelo acierta peor al elegir cuantas
+    mas opciones parecidas tenga delante.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+    await mensaje.reply_text(
+        "Toca para encender o apagar cada grupo:",
+        reply_markup=_teclado_tools(_agente_de(usuario.id)),
     )
 
 
@@ -944,6 +997,46 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     agente = _agente_de(usuario.id)
+
+    # Lista blanca de sitios, sin salir del menu de /tools.
+    if dato == _VER_SITIOS:
+        from src.config import obtener_dominios_permitidos
+
+        dominios = sorted(obtener_dominios_permitidos())
+        if dominios:
+            texto = "Puedo leer estos sitios:\n" + "\n".join(f"· {d}" for d in dominios)
+            texto += "\n\n(se añaden en DOMINIOS_PERMITIDOS_WEB del .env)"
+        else:
+            texto = (
+                "⚠️ No hay ningún sitio autorizado, así que no puedo leer "
+                "ninguna web. Añádelos a DOMINIOS_PERMITIDOS_WEB en el .env."
+            )
+        await consulta.edit_message_text(texto, reply_markup=_teclado_tools(agente))
+        return
+
+    # ADR-006: conmutar una categoria y REDIBUJAR el menu (no cerrarlo).
+    if dato.startswith(_PREFIJO_TOOLS):
+        from src.tools import categorias_disponibles
+
+        categoria = dato[len(_PREFIJO_TOOLS):]
+        # El callback_data vuelve de Telegram: dato NO confiable. Se valida
+        # contra las categorias reales antes de tocar nada, igual que se
+        # hace con el modelo y el proveedor.
+        if categoria not in categorias_disponibles():
+            await consulta.edit_message_text("Ese grupo de herramientas ya no existe.")
+            return
+        async with _cerrojo_de(usuario.id):
+            if categoria in agente.categorias_activas:
+                agente.categorias_activas.discard(categoria)
+            else:
+                agente.categorias_activas.add(categoria)
+            activas = sorted(agente.categorias_activas)
+        await consulta.edit_message_text(
+            ("Activas: " + ", ".join(activas)) if activas
+            else "Todas apagadas: responderé sin usar herramientas.",
+            reply_markup=_teclado_tools(agente),
+        )
+        return
 
     if dato.startswith(_PREFIJO_MODELO):
         elegido = dato[len(_PREFIJO_MODELO):]
@@ -1089,6 +1182,7 @@ def construir_aplicacion() -> Application:
     aplicacion.add_handler(CommandHandler("recuerdo", cmd_recuerdo))
     aplicacion.add_handler(CommandHandler("salir", cmd_salir))
     aplicacion.add_handler(CommandHandler("borrar", cmd_borrar))
+    aplicacion.add_handler(CommandHandler("tools", cmd_tools))
     # Los botones de /modelo y /proveedor vuelven como CallbackQuery. Pasan
     # por la allowlist igual que todo lo demas (TypeHandler del grupo -1).
     aplicacion.add_handler(CallbackQueryHandler(manejar_boton))

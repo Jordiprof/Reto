@@ -9,8 +9,11 @@ from src.llm_router import construir_cadena
 # Traemos de storage.py la funcion que guarda la conversacion en disco.
 from src.storage import guardar_conversacion
 
-# TOOLS: herramientas disponibles; se pasan al router en cada turno normal.
-from src.tools import TOOLS
+# ADR-006 (/tools): el Agente ya no manda SIEMPRE el catalogo entero. Manda
+# solo las categorias activas, porque la ficha de cada tool viaja en CADA
+# peticion (coste en todos los turnos) y el modelo elige peor cuantas mas
+# opciones parecidas tiene delante.
+from src.tools import categorias_disponibles, tools_de
 
 
 class Agente:
@@ -33,6 +36,11 @@ class Agente:
         # El historial ES la memoria de la conversacion (ver F3.1) -
         # arranca con el system prompt y solo crece.
         self.historial = [{"role": "system", "content": system_prompt}]
+        # ADR-006: categorias de herramientas encendidas. TODAS por defecto
+        # -el comportamiento de siempre- y se apagan a mano con /tools. Un
+        # default que apagara cosas sorprenderia a quien actualice el
+        # proyecto y no sepa que existe el comando.
+        self.categorias_activas = set(categorias_disponibles())
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
@@ -60,7 +68,9 @@ class Agente:
             # 2) El router prueba la cadena (primario + fallbacks) y resuelve
             #    por dentro el tool-calling con la calculadora (F4.3-F4.5).
             #    Solo lanza ErrorLLM si TODOS los proveedores fallaron.
-            respuesta = self.router.responder(self.historial, tools=TOOLS)
+            respuesta = self.router.responder(
+                self.historial, tools=tools_de(self.categorias_activas)
+            )
         except ErrorLLM as error:
             # F5.0/T2: un fallo real (auth, conexion, limite...) NO se
             # guarda en el historial como si el asistente lo hubiera dicho

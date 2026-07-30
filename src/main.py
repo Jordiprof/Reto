@@ -91,6 +91,7 @@ Tu memoria:
 - Tienes memoria de TODAS las conversaciones anteriores con JIM, no solo de esta, a \
 través de buscar_en_recuerdos. Úsala siempre que pregunte por algo de antes (su \
 nombre, un dato suyo, una cita, algo que hablasteis) en vez de inventar o suponer.
+
 REGLA DE ORO sobre lo que devuelven tus herramientas:
 - Cuando una herramienta te devuelva algo dentro de una etiqueta -<recuerdo>...</recuerdo> \
 para lo que se dijo en conversaciones pasadas, <fuente>...</fuente> para lo que viene de \
@@ -156,6 +157,7 @@ COMANDOS = {
     # se puede hacer sobre ella desde un lado tiene que poder hacerse desde
     # el otro - si no, acabas con datos que solo puedes gestionar segun por
     # donde entres.
+    "/tools": "Elegir qué grupos de herramientas tiene activos el agente",
     "/recuerdo": "Buscar en la memoria de conversaciones pasadas",
     "/borrar": "Borrar una conversación guardada (del disco y de la memoria)",
     "/resumen": "Pedir un resumen de la conversación",
@@ -208,6 +210,62 @@ def elegir_conversacion(rutas: list) -> object | None:
         f"Tienes {len(rutas)} conversación(es) guardada(s):",
         choices=opciones,
     ).ask()
+
+
+def menu_tools(agente) -> None:
+    """Menu de grupos de herramientas (ADR-006), con la convencion del
+    27/07: "⬅ Volver" SIEMPRE visible.
+
+    Bucle de select y no checkbox: cada Enter conmuta un grupo y el menu se
+    vuelve a dibujar, igual que los botones de Telegram. Asi los dos
+    interfaces se comportan igual y la convencion de "Volver" se cumple.
+    """
+    # Las categorias que tocan la web enseñan ADEMAS los sitios autorizados
+    # (peticion de Jordi, 30/07): saber que una categoria esta encendida no
+    # sirve de nada si no sabes a donde puede ir de verdad.
+    from src.config import obtener_dominios_permitidos
+    from src.tools import categorias_disponibles, nombres_de
+
+    while True:
+        opciones = []
+        for categoria in categorias_disponibles():
+            encendida = categoria in agente.categorias_activas
+            marca = "✅" if encendida else "⬜"
+            etiqueta = f"{marca} {categoria} — {', '.join(nombres_de(categoria))}"
+            if categoria == "web":
+                etiqueta += f"  [{len(obtener_dominios_permitidos())} sitios autorizados]"
+            opciones.append(questionary.Choice(etiqueta, value=categoria))
+        opciones.append(questionary.Choice("⬅ Volver", value=VOLVER))
+
+        elegida = questionary.select(
+            "Herramientas del agente (Enter para encender/apagar):",
+            choices=opciones,
+        ).ask()
+
+        # None (Ctrl+C) o VOLVER: se sale SIN tocar nada. Cancelar nunca
+        # debe apagarle las herramientas al agente por sorpresa.
+        if elegida is None or elegida is VOLVER:
+            activas = sorted(agente.categorias_activas)
+            print(f"Herramientas activas: {', '.join(activas) or '(ninguna)'}")
+            return
+
+        if elegida in agente.categorias_activas:
+            agente.categorias_activas.discard(elegida)
+        else:
+            agente.categorias_activas.add(elegida)
+
+        # Al encender "web" se listan los sitios: es la unica categoria
+        # donde "que puede hacer" depende de una configuracion externa.
+        if elegida == "web" and elegida in agente.categorias_activas:
+            dominios = sorted(obtener_dominios_permitidos())
+            if dominios:
+                print("  Sitios que puede leer:")
+                for dominio in dominios:
+                    print(f"    · {dominio}")
+                print("  (se añaden en DOMINIOS_PERMITIDOS_WEB del .env)")
+            else:
+                print("  ⚠️ No hay ningún sitio autorizado: no podrá leer ninguna web.")
+                print("  Añádelos a DOMINIOS_PERMITIDOS_WEB en el .env.")
 
 
 def mostrar_conversacion(ruta) -> None:
@@ -397,6 +455,20 @@ def main():
                 # se borra, solo se cierra el menu.
                 if elegida is not None and elegida is not VOLVER:
                     mostrar_conversacion(elegida)
+                continue
+
+            # ADR-006: elegir que grupos de herramientas van activos.
+            #
+            # Bucle de `select` (una a una, redibujando) y NO `checkbox`,
+            # por dos motivos que salieron al probarlo (Jordi, 30/07):
+            #  1. La CONVENCION del 27/07 exige "⬅ Volver" visible en TODO
+            #     menu de flechas. Un checkbox no lo admite de forma natural
+            #     (marcar "volver" seria una opcion mas), asi que se estaba
+            #     incumpliendo la convencion sin darse cuenta.
+            #  2. Asi el comportamiento es IGUAL que en Telegram, donde los
+            #     botones tambien conmutan de uno en uno.
+            if comando == "/tools":
+                menu_tools(agente)
                 continue
 
             # F5.2+ (28/07, idea de Jordi probando el bot): busca a mano en

@@ -24,6 +24,10 @@ from collections.abc import Callable
 # debe poder modificarse en caliente.
 from dataclasses import dataclass
 
+# HTMLParser: de la biblioteca estandar, para sacar el texto visible de una
+# pagina web sin añadir BeautifulSoup como dependencia (F5.5 #6).
+from html.parser import HTMLParser
+
 # pydantic: valida datos a partir de una DECLARACION (una clase con
 # tipos), en vez de con comprobaciones a mano repartidas por el codigo.
 # Ya estaba instalado como dependencia indirecta (lo arrastran groq y
@@ -554,9 +558,11 @@ class ArgsFotoAstronomica(BaseModel):
         default="",
         max_length=10,
         description=(
-            "Fecha en formato AAAA-MM-DD para ver la foto de un dia concreto. "
-            "Vacio (por defecto) para la de hoy. La primera disponible es "
-            "1995-06-16."
+            "OBLIGATORIO si preguntan por un dia que no es hoy. Formato "
+            "AAAA-MM-DD, ej. '1995-06-16'. Dejalo vacio SOLO para la foto de "
+            "hoy. Si te preguntan por una fecha pasada y no rellenas esto, "
+            "recibiras la foto de HOY y estaras respondiendo otra cosa. La "
+            "primera foto disponible es la del 1995-06-16."
         ),
     )
 
@@ -601,20 +607,195 @@ def consultar_foto_astronomica(fecha: str = "") -> str:
     autor = _texto_seguro(datos.get("copyright", ""), limite=100)
     dia = _texto_seguro(datos.get("date", ""), limite=10)
 
+    # DEFENSA CONTRA ALUCINACION (30/07, encontrada probando en real).
+    #
+    # Que paso: Jordi pregunto por la foto del 16/06/1995. El modelo llamo a
+    # la tool pero SIN rellenar `fecha`, asi que recibio la de HOY - y en vez
+    # de decirlo, se invento un titulo plausible ("The Sombrero Galaxy")
+    # cuando la real era "Neutron Star Earth". Se vio en el log: las tres
+    # llamadas devolvian 1100 caracteres, el tamaño de la foto de hoy.
+    #
+    # La descripcion del parametro se reforzo, pero eso solo hace la
+    # equivocacion menos probable. Esto la hace VISIBLE: si la fecha que
+    # vuelve no es la que se pidio, el propio resultado lo dice en la
+    # primera linea, donde el modelo no puede pasarlo por alto. Una tool que
+    # solo devuelve datos correctos no basta si el modelo puede
+    # malinterpretar cuales son.
+    aviso = ""
+    pedida = fecha.strip()
+    if pedida and dia and pedida != dia:
+        aviso = (
+            f"⚠️ ATENCIÓN: se pidió la foto del {pedida} pero esta es la del "
+            f"{dia}. NO la presentes como si fuera del {pedida}.\n"
+        )
+
     cabecera = f'"{titulo}" ({dia})'
     if autor:
         cabecera += f" — de {autor}"
     if datos.get("media_type") == "video":
         cabecera += " [es un vídeo, no una foto]"
 
+    # El enlace va ETIQUETADO ("Imagen: ..."), no suelto en una linea: sin
+    # etiqueta el modelo no sabia que era y no lo pasaba al usuario (lo noto
+    # Jordi al probar - le llego la descripcion pero nunca la foto).
+    #
     # Solo la explicacion va envuelta: es la unica prosa larga y libre. El
     # titulo y el autor ya pasan por _texto_seguro, que quita caracteres de
     # control - suficiente para campos cortos que ademas se muestran como
     # etiqueta, no como texto a interpretar.
     return (
-        f"{cabecera}\n{enlace}\n"
+        f"{aviso}{cabecera}\n"
+        f"Imagen (dale este enlace al usuario): {enlace}\n"
         + _envolver(_ETIQUETA_FUENTE, datos.get("explanation", ""))
     )
+
+
+# ---------------------------------------------------------------------------
+# F5.5 #6 - Resumir una URL. PRIMERA tool cuyo DESTINO elige el modelo.
+# ---------------------------------------------------------------------------
+# Es la razon de ser del guardian (src/red_segura.py). Hasta ahora todas las
+# tools de red iban a una URL constante del codigo; aqui la direccion sale
+# de un argumento, asi que el modelo puede apuntar a donde quiera - incluida
+# la red interna de Jordi. Nada se pide sin pasar antes por validar_url().
+#
+# Ademas es la primera con contenido externo ARBITRARIO: una pagina web no
+# la modera nadie. Por eso el texto va envuelto en <fuente> (SEG-07
+# generalizado) y ademas RECORTADO: una web puede tener megas de texto y
+# entero acabaria en el contexto del modelo, disparando coste y desplazando
+# la conversacion real.
+_MAX_CARACTERES_PAGINA = 6000
+
+# Tope de bytes que se descargan. Sin esto, una pagina de 500 MB (o un
+# fichero binario disfrazado) se cargaria entera en memoria.
+_MAX_BYTES_DESCARGA = 2_000_000
+
+# Solo texto: si el servidor devuelve un PDF, un zip o una imagen, no se
+# intenta interpretar como HTML (eso es trabajo de la tool de documentos).
+_TIPOS_DE_TEXTO = ("text/html", "text/plain", "application/xhtml+xml")
+
+
+class _ExtractorDeTexto(HTMLParser):
+    """Saca el texto visible de una pagina, sin dependencias nuevas.
+
+    Se usa html.parser de la biblioteca estandar en vez de BeautifulSoup a
+    proposito: una dependencia menos es una superficie menos de cadena de
+    suministro (criterio de ADR-006), y para "quedarse con el texto" no
+    hace falta un parser tolerante a HTML roto.
+
+    Se ignoran script y style: su contenido no es texto para leer, y ademas
+    seria justo donde alguien escondería instrucciones para el modelo sin
+    que se vean en la pagina.
+    """
+
+    _IGNORADAS = {"script", "style", "noscript", "svg", "head"}
+
+    def __init__(self):
+        super().__init__()
+        self._trozos: list[str] = []
+        self._saltando = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._IGNORADAS:
+            self._saltando += 1
+
+    def handle_endtag(self, tag):
+        if tag in self._IGNORADAS and self._saltando:
+            self._saltando -= 1
+
+    def handle_data(self, data):
+        if not self._saltando and data.strip():
+            self._trozos.append(data.strip())
+
+    @property
+    def texto(self) -> str:
+        return " ".join(self._trozos)
+
+
+class ArgsResumirUrl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(
+        max_length=500,
+        description=(
+            "Direccion completa de la pagina, empezando por https://. Solo "
+            "funciona con sitios que JIM haya autorizado previamente; si no "
+            "lo esta, te lo dire y podras pedirle que lo añada."
+        ),
+    )
+
+
+def _pedir_texto(url: str) -> str:
+    """Descarga una pagina y devuelve su texto visible.
+
+    La URL ya viene validada por el guardian; aqui se controla lo demas:
+    tamaño, tipo de contenido y redirecciones.
+    """
+    import httpx
+
+    try:
+        # follow_redirects=False es SEGURIDAD, no una opcion de comodidad:
+        # el guardian valida la direccion que se le da, y si se siguieran
+        # las redirecciones un dominio autorizado podria mandar la peticion
+        # a 127.0.0.1 y el control quedaria esquivado.
+        with httpx.stream(
+            "GET", url, timeout=_TIMEOUT_TOOLS, follow_redirects=False
+        ) as respuesta:
+            if respuesta.is_redirect:
+                destino = respuesta.headers.get("location", "otro sitio")
+                return (
+                    f"Esa dirección redirige a {_texto_seguro(destino, 120)} y no "
+                    "sigo redirecciones por seguridad. Pide la dirección final."
+                )
+            respuesta.raise_for_status()
+
+            tipo = respuesta.headers.get("content-type", "").split(";")[0].strip()
+            if tipo and tipo not in _TIPOS_DE_TEXTO:
+                return f"Eso no es una página de texto (es {_texto_seguro(tipo, 40)})."
+
+            # Se lee a trozos y se corta: un content-length puede mentir, asi
+            # que el limite se aplica sobre lo que de verdad llega.
+            crudo = b""
+            for bloque in respuesta.iter_bytes():
+                crudo += bloque
+                if len(crudo) > _MAX_BYTES_DESCARGA:
+                    break
+    except httpx.TimeoutException:
+        return "Esa página ha tardado demasiado en responder."
+    except httpx.HTTPStatusError as error:
+        return f"Esa página respondió con error {error.response.status_code}."
+    except httpx.HTTPError:
+        return "No he podido conectar con esa página."
+
+    extractor = _ExtractorDeTexto()
+    extractor.feed(crudo.decode("utf-8", errors="replace"))
+    return extractor.texto
+
+
+def resumir_url(url: str) -> str:
+    """Trae el texto de una pagina autorizada para que el modelo lo lea.
+
+    La tool NO resume: trae el texto y lo entrega marcado como <fuente>.
+    Resumir es justo lo que el modelo sabe hacer sin ayuda (por eso se
+    descarto "resumir/traducir" como tool en ADR-006); lo que no puede
+    hacer solo es SALIR A BUSCARLO.
+    """
+    from src.red_segura import UrlNoPermitida, validar_url
+
+    try:
+        # Nada se descarga antes de esta linea.
+        limpia = validar_url(url)
+    except UrlNoPermitida as error:
+        return str(error)
+
+    texto = _pedir_texto(limpia)
+    if not texto.strip():
+        return "Esa página no tiene texto que pueda leer (puede ser toda imágenes o JavaScript)."
+
+    recortado = texto[:_MAX_CARACTERES_PAGINA]
+    aviso = "" if len(texto) <= _MAX_CARACTERES_PAGINA else (
+        f"\n[Solo he leído los primeros {_MAX_CARACTERES_PAGINA} caracteres de la página.]"
+    )
+    return _envolver(_ETIQUETA_FUENTE, recortado) + aviso
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +906,12 @@ class Herramienta:
     # Una tool con efectos reales NUNCA lleva True.
     repetible: bool = False
 
+    # ADR-006: categoria para /tools. La ficha de CADA tool activa viaja en
+    # CADA peticion al modelo, asi que tenerlas todas encendidas se paga en
+    # tokens en todos los turnos - y ademas el modelo acierta peor cuantas
+    # mas opciones parecidas tenga delante. Se activan por grupos.
+    categoria: str = "general"
+
 
 HERRAMIENTAS = {
     "calcular": Herramienta(
@@ -738,6 +925,7 @@ HERRAMIENTAS = {
             "division). Usala siempre que el usuario pida un calculo, en vez "
             "de inventar el resultado de memoria."
         ),
+        categoria="calculo",
     ),
     "consultar_tiempo": Herramienta(
         funcion=consultar_tiempo,
@@ -754,6 +942,7 @@ HERRAMIENTAS = {
         # en la misma ciudad no cambia. Reutilizar el resultado en un
         # reintento ahorra una llamada y ademas evita que el modelo vea dos
         # temperaturas distintas en la misma conversacion.
+        categoria="informacion",
     ),
     "buscar_en_recuerdos": Herramienta(
         funcion=buscar_en_recuerdos,
@@ -770,6 +959,7 @@ HERRAMIENTAS = {
             "CUANTAS conversaciones hay o CUANDO fueron, usa "
             "consultar_historial en su lugar."
         ),
+        categoria="memoria",
     ),
     "consultar_foto_astronomica": Herramienta(
         funcion=consultar_foto_astronomica,
@@ -780,6 +970,7 @@ HERRAMIENTAS = {
             "de hoy; con fecha (AAAA-MM-DD) la de ese dia."
         ),
         # repetible=False (el default): la foto de un dia no cambia.
+        categoria="informacion",
     ),
     "consultar_historial": Herramienta(
         funcion=consultar_historial,
@@ -793,6 +984,19 @@ HERRAMIENTAS = {
         ),
         # repetible=False (el default): la lista no cambia a mitad de un
         # turno, asi que reutilizarla es correcto y ahorra leer el disco.
+        categoria="memoria",
+    ),
+    "resumir_url": Herramienta(
+        funcion=resumir_url,
+        args=ArgsResumirUrl,
+        descripcion=(
+            "Lee el texto de una pagina web y te lo entrega para que puedas "
+            "resumirla o responder sobre ella. Solo funciona con sitios que "
+            "JIM haya autorizado antes; con cualquier otro te dira que no "
+            "esta permitido. NO la uses para buscar: hace falta la direccion "
+            "exacta."
+        ),
+        categoria="web",
     ),
 }
 
@@ -826,3 +1030,43 @@ def _ficha_tool(nombre: str, herramienta: Herramienta) -> dict:
 # Lo que se manda al LLM en cada turno. Ya no se escribe a mano: se
 # deriva del registro, asi que no puede desincronizarse de las funciones.
 TOOLS = [_ficha_tool(nombre, herramienta) for nombre, herramienta in HERRAMIENTAS.items()]
+
+
+# --- ADR-006: activacion por categorias (/tools) ---------------------------
+
+# Categorias que existen, en el orden en que se enseñan. Se deriva del
+# registro y no se escribe a mano: añadir una tool con una categoria nueva
+# la hace aparecer sola en el menu.
+def categorias_disponibles() -> list[str]:
+    """Categorias existentes, sin repetir y en orden estable."""
+    vistas = []
+    for herramienta in HERRAMIENTAS.values():
+        if herramienta.categoria not in vistas:
+            vistas.append(herramienta.categoria)
+    return vistas
+
+
+def tools_de(categorias) -> list:
+    """Las fichas JSON Schema de las categorias indicadas.
+
+    Esto es lo que se manda al modelo. Devolver una lista mas corta no es
+    solo ahorro: menos opciones parecidas delante = el modelo acierta mas
+    al elegir (ver contexto de ADR-006).
+
+    Si no queda ninguna, devuelve None y no [] a proposito: el bucle de
+    tools trata None como "modo sin herramientas", mientras que una lista
+    vacia se le mandaria igualmente a la API como un campo `tools` vacio,
+    que algunos proveedores rechazan.
+    """
+    activas = set(categorias)
+    fichas = [
+        _ficha_tool(nombre, herramienta)
+        for nombre, herramienta in HERRAMIENTAS.items()
+        if herramienta.categoria in activas
+    ]
+    return fichas or None
+
+
+def nombres_de(categoria: str) -> list[str]:
+    """Nombres de las tools de una categoria, para enseñarlos en el menu."""
+    return [n for n, h in HERRAMIENTAS.items() if h.categoria == categoria]
