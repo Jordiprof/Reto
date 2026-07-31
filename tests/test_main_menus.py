@@ -176,7 +176,7 @@ def test_elegir_conversacion_incluye_volver_al_final(monkeypatch, tmp_path):
 # --- F5.2+: simetria de comandos CLI <-> Telegram ----------------------
 
 
-def test_los_comandos_de_memoria_existen_en_LOS_DOS_interfaces():
+def test_los_comandos_de_memoria_existen_en_LOS_DOS_interfaces(monkeypatch):
     """LA INVARIANTE QUE IMPORTA A FUTURO (28/07).
 
     La CLI y el bot comparten la MISMA memoria (conversations/ + chroma_db/),
@@ -188,8 +188,19 @@ def test_los_comandos_de_memoria_existen_en_LOS_DOS_interfaces():
     NO se exige identidad TOTAL a proposito: /start es convencion de
     Telegram y en una terminal no significa nada. Lo que se fija aqui es lo
     que toca la memoria compartida.
+
+    REGRESION real (31/07): faltaban estos dos monkeypatch.setenv. En mi
+    maquina el test pasaba igual porque tenia un .env real cargado con
+    token y clave de verdad - en GitHub Actions, sin .env, construir_aplicacion()
+    revienta pidiendo TELEGRAM_BOT_TOKEN antes de llegar a lo que el test
+    de verdad comprueba. Mismo patron que el resto de este fichero: nunca
+    tocar la config real, sustituir la costura (ver ProveedorFalso en
+    conftest.py y _configuracion_por_defecto en test_telegram_seguridad.py).
     """
-    from src import telegram_bot
+    from src import config, telegram_bot
+
+    monkeypatch.setenv(config.TELEGRAM_TOKEN_ENV, "123456:token-de-mentira")
+    monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, "111")
 
     aplicacion = telegram_bot.construir_aplicacion()
     en_telegram = set()

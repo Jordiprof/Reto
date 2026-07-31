@@ -1143,6 +1143,14 @@ def test_escapar_markdown_no_toca_texto_sin_caracteres_especiales():
 
 
 def test_ver_sitios_lista_los_dominios_agrupados(monkeypatch):
+    # REGRESION (31/07): manejar_boton llama a _agente_de() antes de mirar
+    # el boton pulsado, y eso lee la API key real del .env. En mi maquina
+    # pasaba (tenia un .env real); en GitHub Actions, sin .env, revienta
+    # antes de llegar a lo que este test de verdad comprueba. Mismo patron
+    # que el resto del fichero (ver test_cada_usuario_tiene_su_propio_agente).
+    monkeypatch.setattr(
+        telegram_bot, "_configuracion_por_defecto", lambda: ("groq", "m", "k")
+    )
     monkeypatch.setattr(
         "src.config.obtener_dominios_agrupados",
         lambda: {"Nivel 1: Oficial": ["nasa.gov", "esa.int"]},
@@ -1160,6 +1168,9 @@ def test_ver_sitios_escapa_un_titulo_con_guion_bajo(monkeypatch):
     """REGRESION: sin el escapado, un titulo con '_' habria roto el
     Markdown y Telegram habria devuelto un error en vez del mensaje."""
     monkeypatch.setattr(
+        telegram_bot, "_configuracion_por_defecto", lambda: ("groq", "m", "k")
+    )
+    monkeypatch.setattr(
         "src.config.obtener_dominios_agrupados",
         lambda: {"Nivel_uno_importante": ["a.com"]},
     )
@@ -1172,6 +1183,9 @@ def test_ver_sitios_escapa_un_titulo_con_guion_bajo(monkeypatch):
 
 
 def test_ver_sitios_sin_ninguno_autorizado_lo_dice(monkeypatch):
+    monkeypatch.setattr(
+        telegram_bot, "_configuracion_por_defecto", lambda: ("groq", "m", "k")
+    )
     monkeypatch.setattr("src.config.obtener_dominios_agrupados", lambda: {})
     editado = []
 
@@ -1211,9 +1225,12 @@ def _update_documento(user_id=111, datos=b"", nombre="informe.pdf", enviados=Non
     return SimpleNamespace(effective_user=usuario, effective_message=mensaje)
 
 
-def test_un_pdf_valido_se_guarda_en_el_agente_del_usuario():
+def test_un_pdf_valido_se_guarda_en_el_agente_del_usuario(monkeypatch):
     from tests.test_documentos import _pdf_con_texto
 
+    monkeypatch.setattr(
+        telegram_bot, "_configuracion_por_defecto", lambda: ("groq", "m", "k")
+    )
     enviados = []
     update = _update_documento(
         datos=_pdf_con_texto("Hola"), nombre="informe.pdf", enviados=enviados
@@ -1249,7 +1266,7 @@ def test_un_documento_sin_nombre_se_rechaza():
     assert "no tiene nombre" in " ".join(enviados)
 
 
-def test_recibir_un_documento_NO_enciende_la_categoria_por_su_cuenta():
+def test_recibir_un_documento_NO_enciende_la_categoria_por_su_cuenta(monkeypatch):
     """Sutil pero importante: `documentos` arranca ENCENDIDA (decisión del
     31/07 — entregar el fichero ya es la autorización), pero eso es el
     DEFAULT, no algo que haga este handler.
@@ -1260,6 +1277,9 @@ def test_recibir_un_documento_NO_enciende_la_categoria_por_su_cuenta():
     si el handler la encendiera, este test se pondría rojo."""
     from tests.test_documentos import _pdf_con_texto
 
+    monkeypatch.setattr(
+        telegram_bot, "_configuracion_por_defecto", lambda: ("groq", "m", "k")
+    )
     telegram_bot._agente_de(111).categorias_activas.discard("documentos")
     enviados = []
     update = _update_documento(datos=_pdf_con_texto("Hola"), enviados=enviados)
