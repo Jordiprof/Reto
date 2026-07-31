@@ -3,6 +3,9 @@
 # Excepcion base de fallos al hablar con un proveedor (F5.0/T2) - antes se
 # detectaba un fallo mirando si el texto empezaba por "⚠️". La lanza el
 # router cuando TODOS los proveedores de la cadena han fallado.
+# F5.5 #7: el adjunto (PDF/Word) que este Agente tiene "puesto sobre la
+# mesa" vive AQUI, no en la tool - ver el porque en src/documentos.py.
+from src.documentos import DocumentoAdjunto, fijar_documento_actual, restaurar_documento_actual
 from src.llm_errors import ErrorLLM
 from src.llm_router import construir_cadena
 
@@ -13,7 +16,7 @@ from src.storage import guardar_conversacion
 # solo las categorias activas, porque la ficha de cada tool viaja en CADA
 # peticion (coste en todos los turnos) y el modelo elige peor cuantas mas
 # opciones parecidas tiene delante.
-from src.tools import tools_de
+from src.tools import categorias_por_defecto, tools_de
 
 
 class Agente:
@@ -36,8 +39,14 @@ class Agente:
         # El historial ES la memoria de la conversacion (ver F3.1) -
         # arranca con el system prompt y solo crece.
         self.historial = [{"role": "system", "content": system_prompt}]
-        # Herramientas apagas por defecto al arrancar. Se activan a demanda con /tools.
-        self.categorias_activas = set()
+        # ADR-006 (revision 31/07): arrancan encendidas todas MENOS las que
+        # exponen algo hacia fuera - memoria (manda conversaciones
+        # descifradas al proveedor) y web (destino elegido por el modelo).
+        # Ver CATEGORIAS_APAGADAS_AL_ARRANCAR en src/tools.py.
+        self.categorias_activas = categorias_por_defecto()
+        # F5.5 #7: el ultimo PDF/Word que le han dado a JIM (/documento en
+        # CLI, adjunto en Telegram). None = no hay ninguno puesto.
+        self.documento_pendiente: DocumentoAdjunto | None = None
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
@@ -61,6 +70,11 @@ class Agente:
         # 1) La pregunta entra al historial ANTES de llamar.
         self.historial.append({"role": "user", "content": pregunta})
 
+        # F5.5 #7: se fija el ContextVar a lo que ESTE Agente tiene
+        # guardado, se restaura pase lo que pase (finally) - si no se
+        # restaurara, un turno sin documento heredaria el del turno
+        # anterior mientras el hilo siga vivo.
+        token = fijar_documento_actual(self.documento_pendiente)
         try:
             # 2) El router prueba la cadena (primario + fallbacks) y resuelve
             #    por dentro el tool-calling con la calculadora (F4.3-F4.5).
@@ -75,6 +89,8 @@ class Agente:
             # turnos futuros (mismo principio que F3.1, ahora con una
             # excepcion tipada en vez de mirar el texto de la respuesta).
             return error.mensaje_usuario
+        finally:
+            restaurar_documento_actual(token)
 
         self.historial.append({"role": "assistant", "content": respuesta})
         return respuesta
@@ -86,6 +102,10 @@ class Agente:
         OJO: no toca lo ya guardado en disco ni la memoria semantica -
         solo el historial de ESTA sesion en memoria."""
         self.historial = self.historial[:1]
+        # F5.5 #7: "empezamos de cero" incluye el documento puesto sobre la
+        # mesa - si no se soltara aqui, una charla nueva podria seguir
+        # leyendo un PDF de la charla anterior sin que nadie lo haya pedido.
+        self.documento_pendiente = None
 
     def resumir(self) -> str:
         """F3.6: pide al modelo un resumen de la conversacion hasta

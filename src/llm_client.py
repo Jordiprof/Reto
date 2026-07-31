@@ -150,6 +150,26 @@ def _ejecutar_tool(nombre: str, argumentos: dict, turno: Turno | None = None) ->
         estado = "inexistente"
         resultado = f"Error: la herramienta '{nombre}' no existe."
     else:
+        # BUG REAL de Telegram (31/07): "no mandar nada" no se dice igual en
+        # todos los proveedores. `leer_documento` es la primera tool SIN
+        # parametros del proyecto, y ahi es donde se nota: Gemini mandaba
+        # `{}` (funcionaba en la CLI) y Groq mandaba `null`. Con `**None`
+        # Python lanza TypeError, asi que la tool NUNCA se ejecutaba y el
+        # modelo recibia "argumentos no validos" - que en el chat se veia
+        # como "no puedo leer un documento que no me has proporcionado",
+        # culpando al usuario con el fichero ya cargado.
+        #
+        # Se normaliza AQUI porque este es el unico punto por el que pasan
+        # TODAS las tools de TODOS los proveedores: es la misma capa de
+        # traduccion de dialectos que ya existe (ver src/llm_types.py).
+        # Hacerlo dentro de cada tool obligaria a acordarse una vez por
+        # tool, que es como se olvidan las cosas.
+        #
+        # OJO, solo `None` y la cadena vacia: son las dos formas de decir
+        # "nada". Una lista o un numero NO son ausencia de argumentos, son
+        # un error del modelo y se siguen rechazando (tiene test).
+        if argumentos is None or argumentos == "":
+            argumentos = {}
         try:
             # F5.4: el modelo Pydantic decide si lo que manda el LLM es
             # aceptable ANTES de llamar a la funcion. Antes se llamaba a
@@ -160,11 +180,15 @@ def _ejecutar_tool(nombre: str, argumentos: dict, turno: Turno | None = None) ->
             validados = herramienta.args(**argumentos)
         except (ValidationError, TypeError) as error:
             estado = "args_invalidos"
-            detalle = (
-                _resumir_validacion(error)
-                if isinstance(error, ValidationError)
-                else str(error)
-            )
+            if isinstance(error, ValidationError):
+                detalle = _resumir_validacion(error)
+            else:
+                # str(TypeError) trae el nombre de nuestra clase interna y
+                # sintaxis de Python ("ArgsX() argument after ** must be a
+                # mapping"), que no es vocabulario del modelo. Se sustituye
+                # por lo unico que necesita saber para reintentar bien
+                # (misma politica que _resumir_validacion, F5.4).
+                detalle = "se esperaba un objeto con los parametros, no otra cosa"
             resultado = f"Error: argumentos no validos para '{nombre}' - {detalle}"
         else:
             try:

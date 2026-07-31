@@ -799,6 +799,86 @@ def resumir_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# F5.5 #7 - Leer PDF/Word. Nivel 4 en ADR-006: "contenido_externo
+# ARBITRARIO" sin red - el riesgo no es a donde va (no sale a ningun
+# sitio), es que un documento puede llevar texto que Jordi nunca ha visto
+# (blanco sobre blanco, tamaño 1) y que el modelo si procesa. Por eso pasa
+# por el MISMO saneado <fuente> que NASA APOD y resumir_url.
+#
+# A diferencia de esas dos, aqui el modelo NO ELIGE nada: no hay parametro
+# de ruta ni de URL (decision de Jordi, 31/07 - "comando + adjunto"). El
+# fichero lo trae Jordi con /documento en la CLI o quien le escribe por
+# Telegram como adjunto; la tool solo lee "lo que hay puesto sobre la
+# mesa ahora mismo" (ver src/documentos.py: fijar_documento_actual/
+# documento_actual). Por eso NO hace falta guardian: sin argumento que
+# rellenar, no hay path traversal ni SSRF posibles.
+_MAX_CARACTERES_DOCUMENTO = 8000
+
+
+class ArgsLeerDocumento(BaseModel):
+    """Sin campos a proposito: el modelo no elige NADA sobre que fichero
+    leer, solo que la tool actue sobre el que ya se le dio."""
+    model_config = ConfigDict(extra="forbid")
+
+
+def leer_documento() -> str:
+    """Extrae el texto del PDF/Word que se le dio a JIM en este turno y lo
+    entrega envuelto en <fuente>, igual que resumir_url."""
+    from src.documentos import DocumentoNoValido, documento_actual, extraer_texto
+
+    adjunto = documento_actual()
+    if adjunto is None:
+        return (
+            "No tengo ningún documento que leer. Mándamelo primero: en Telegram "
+            "adjúntalo directamente, en la CLI usa /documento <ruta>."
+        )
+
+    try:
+        texto = extraer_texto(adjunto)
+    except DocumentoNoValido as error:
+        return str(error)
+
+    if not texto.strip():
+        return (
+            f"«{adjunto.nombre}» no tiene texto que pueda leer (puede ser un "
+            "documento escaneado sin OCR, o estar vacío)."
+        )
+
+    recortado = texto[:_MAX_CARACTERES_DOCUMENTO]
+    if len(texto) <= _MAX_CARACTERES_DOCUMENTO:
+        return _envolver(_ETIQUETA_FUENTE, recortado)
+
+    # DEFENSA CONTRA ALUCINACION (31/07, encontrada probando en real).
+    #
+    # Que paso: de un PDF de 10.527 caracteres el modelo recibio 8.000
+    # (el 76%). Jordi pregunto "¿que NO dice sobre seguridad?" y el modelo
+    # contesto, muy convencido, que no hablaba de auditorias externas ni de
+    # pruebas de penetracion... cuando el 24% que NO habia leido contenia
+    # "Pruebas de Seguridad: OWASP ZAP, Burp Suite, Nessus, Nikto,
+    # OpenVAS". Afirmo una AUSENCIA mirando una parte.
+    #
+    # El aviso ya existia, pero (a) iba al FINAL, detras de 8.000
+    # caracteres, y (b) estaba redactado como una nota informativa. Ahora
+    # va PRIMERO y como PROHIBICION explicita, que es exactamente lo que
+    # funciono con la alucinacion de fecha de NASA APOD: cuando una
+    # respuesta incorrecta es indistinguible de una correcta, no basta con
+    # que el dato sea cierto - hay que impedir la conclusion falsa en el
+    # sitio donde el modelo no pueda pasarla por alto.
+    #
+    # Sigue siendo un texto que el modelo PUEDE ignorar; lo que no puede es
+    # no haberlo visto. Recortar no es opcional (el documento entero
+    # dispararia el coste del turno y desplazaria la conversacion real).
+    aviso = (
+        f"⚠️ ATENCIÓN: «{adjunto.nombre}» tiene {len(texto)} caracteres y solo "
+        f"has recibido los primeros {_MAX_CARACTERES_DOCUMENTO}. NO afirmes que "
+        "el documento no menciona algo, ni que no trata un tema: no has visto el "
+        "final. Si te preguntan por lo que falta, di que solo has leído esa "
+        "primera parte.\n"
+    )
+    return aviso + _envolver(_ETIQUETA_FUENTE, recortado)
+
+
+# ---------------------------------------------------------------------------
 # F5.5 #3 - Consultar el propio historial de conversaciones.
 # ---------------------------------------------------------------------------
 # NO se solapa con buscar_en_recuerdos, y la diferencia importa porque el
@@ -994,9 +1074,35 @@ HERRAMIENTAS = {
             "resumirla o responder sobre ella. Solo funciona con sitios que "
             "JIM haya autorizado antes; con cualquier otro te dira que no "
             "esta permitido. NO la uses para buscar: hace falta la direccion "
-            "exacta."
+            "exacta. "
+            # 31/07, alucinacion real: al preguntarle "¿que webs puedes
+            # acceder?" el modelo contesto "no tengo una lista predefinida,
+            # la lista es la que tu decidas" - falso, hay 36 dominios fijos
+            # en el .env. Improviso porque no tiene forma de verlos. La
+            # lista NO se mete aqui a proposito (36 dominios en la ficha de
+            # cada peticion es justo el coste que /tools viene a evitar):
+            # se le dice que existe y donde mirarla, que es lo unico que
+            # necesita para no inventarse una respuesta.
+            "Existe una lista fija de sitios autorizados que TU NO PUEDES "
+            "VER. Si te preguntan a que webs puedes entrar, no te la "
+            "inventes ni digas que no hay lista: di que la lista existe y "
+            "que puede verla entera con el comando /tools."
         ),
         categoria="web",
+    ),
+    "leer_documento": Herramienta(
+        funcion=leer_documento,
+        args=ArgsLeerDocumento,
+        descripcion=(
+            "Lee el texto del PDF o Word que te acaban de dar (adjunto en Telegram, "
+            "o /documento en la CLI) para que puedas resumirlo o responder preguntas "
+            "sobre el. Sin argumentos: siempre actua sobre el ultimo documento dado, "
+            "nunca sobre uno que tu elijas. Si no hay ninguno, te lo dira."
+        ),
+        # repetible=False (el default, LOG-07): basta con el default -
+        # dentro del MISMO turno reutilizar el resultado ya evita releer el
+        # documento dos veces, y no hay ningun motivo para cambiarlo.
+        categoria="documentos",
     ),
 }
 
@@ -1033,6 +1139,43 @@ TOOLS = [_ficha_tool(nombre, herramienta) for nombre, herramienta in HERRAMIENTA
 
 
 # --- ADR-006: activacion por categorias (/tools) ---------------------------
+
+# Categorias APAGADAS al arrancar (decision de Jordi, 31/07, revisando la
+# del 30/07 que las apagaba TODAS). El criterio ya no es "ante la duda,
+# todo apagado" sino QUE EXPONE cada categoria hacia fuera:
+#
+#   - memoria: `buscar_en_recuerdos` manda al proveedor del LLM tus
+#     conversaciones pasadas DESCIFRADAS. Es justo la fuga que este
+#     proyecto lleva cerrando desde el 27/07 (PII en logs) y desde F5.3
+#     (cifrado en reposo): de nada sirve cifrar en disco si el contenido
+#     sale en claro por otro canal. Apagada, no sale nada.
+#   - web: `resumir_url` es la unica cuyo DESTINO elige el modelo, y trae
+#     contenido arbitrario que no modera nadie (nivel 5 en ADR-006, el mas
+#     alto del catalogo construido).
+#
+# Las demas se encienden solas porque su coste real es solo de tokens, no
+# de exposicion: `calcular` es local y puro; `consultar_tiempo` y
+# `consultar_foto_astronomica` van a un destino FIJO del codigo y a fuentes
+# publicas; y `leer_documento` solo puede leer un fichero que Jordi acaba
+# de entregar a mano - **el acto de entregarlo YA es la autorizacion**,
+# pedir un segundo permiso por /tools era friccion sin ninguna seguridad a
+# cambio (era lo que pasaba el 31/07 al probar en real).
+CATEGORIAS_APAGADAS_AL_ARRANCAR = frozenset({"memoria", "web"})
+
+
+def categorias_por_defecto() -> set[str]:
+    """Las que arrancan ENCENDIDAS. Se calcula restando las apagadas al
+    catalogo real, no se escribe a mano: si mañana se añade una tool con
+    una categoria nueva, entra encendida por defecto y hay que decidir
+    A PROPOSITO si merece estar en la lista de apagadas - al reves (lista
+    blanca escrita a mano) una categoria nueva se quedaria apagada en
+    silencio y nadie se enteraria de que existe."""
+    return {
+        categoria
+        for categoria in categorias_disponibles()
+        if categoria not in CATEGORIAS_APAGADAS_AL_ARRANCAR
+    }
+
 
 # Categorias que existen, en el orden en que se enseñan. Se deriva del
 # registro y no se escribe a mano: añadir una tool con una categoria nueva

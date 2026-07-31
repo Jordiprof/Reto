@@ -443,14 +443,63 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await mensaje.reply_text(trozo)
 
 
+async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """F5.5 #7 - "comando + adjunto" (decision de Jordi, 31/07): el modelo
+    nunca elige que fichero lee, lo elige quien se lo manda a JIM. Aqui
+    SOLO se valida y se guarda en el Agente de ESTE usuario - no se
+    extrae texto todavia, eso lo hace leer_documento() cuando (y si) el
+    modelo la llama, y solo si la categoria 'documentos' esta activa.
+    Va ANTES que manejar_no_texto en el registro de handlers (mas
+    especifico gana)."""
+    mensaje = update.effective_message
+    usuario = update.effective_user
+    if mensaje is None or usuario is None or mensaje.document is None:
+        return
+
+    documento = mensaje.document
+    if not documento.file_name:
+        await mensaje.reply_text("Ese adjunto no tiene nombre de fichero; no sé qué es.")
+        return
+
+    from src.documentos import DocumentoNoValido, validar_adjunto
+
+    async with _cerrojo_de(usuario.id):
+        try:
+            archivo = await documento.get_file()
+            datos = bytes(await archivo.download_as_bytearray())
+        except Exception as error:
+            logging.error("Telegram: fallo descargando adjunto (%s)", type(error).__name__)
+            await mensaje.reply_text("⚠️ No he podido descargar ese fichero.")
+            return
+
+        try:
+            adjunto = validar_adjunto(datos, documento.file_name)
+        except DocumentoNoValido as error:
+            await mensaje.reply_text(f"⚠️ {error}")
+            return
+
+        agente = _agente_de(usuario.id)
+        agente.documento_pendiente = adjunto
+
+    aviso_categoria = (
+        "" if "documentos" in agente.categorias_activas
+        else " Actívalo antes con /tools → categoría 'documentos'."
+    )
+    await mensaje.reply_text(
+        f"Documento recibido: {adjunto.nombre} ({len(datos) // 1000} KB). "
+        f"Pregúntame algo sobre él.{aviso_categoria}"
+    )
+
+
 async def manejar_no_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fotos, notas de voz, documentos... Sin esto, un adjunto de 20 MB
-    llega a un bot que no sabe que hacer con el y acaba en el error
-    handler. Transcripcion y OCR estan en el tier "si sobra tiempo" de
-    F5.5, no aqui."""
+    """Fotos, notas de voz... Sin esto, un adjunto de 20 MB llega a un bot
+    que no sabe que hacer con el y acaba en el error handler.
+    Transcripcion y OCR estan en el tier "si sobra tiempo" de F5.5, no
+    aqui. Los documentos (PDF/Word) ya NO caen aqui: los coge
+    manejar_documento antes (F5.5 #7)."""
     if update.effective_message:
         await update.effective_message.reply_text(
-            "De momento solo entiendo texto."
+            "De momento solo entiendo texto (y PDF/Word como adjunto)."
         )
 
 
@@ -482,6 +531,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/modelo — cambiar el modelo (mismo proveedor)\n"
             "/proveedor — cambiar de proveedor (y modelo)\n"
             "/ayuda — esto\n\n"
+            "📄 Mándame un PDF o Word como adjunto y podré leerlo (activa la "
+            "categoría 'documentos' en /tools).\n\n"
             "Voy guardando solo según hablamos, así que no se pierde nada aunque "
             "me apaguen. Si una charla no merece la pena, ciérrala con /salir y "
             "elige «descartar».\n"
@@ -1026,7 +1077,7 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         agrupados = obtener_dominios_agrupados()
         if agrupados:
-            bloques = ["Puedo leer estos sitios (organizados por niveles):\n"]
+            bloques = ["Puedo leer estos sitios (copia y pega la dirección):\n"]
             for grupo, doms in agrupados.items():
                 # El titulo del grupo lo escribe Jordi libremente en el .env
                 # (el texto que va tras el "#"). Se escapa antes de meterlo
@@ -1035,8 +1086,17 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 # Telegram devuelve error en vez del mensaje - un titulo
                 # como "Nivel_1" bastaria para tumbar la respuesta entera.
                 titulo = _escapar_markdown(grupo)
-                bloques.append(f"📌 *{titulo}*:\n{', '.join(doms)}\n")
-            texto = "\n".join(bloques) + "(se añaden en DOMINIOS_PERMITIDOS_WEB del .env)"
+                # URL completa y una por linea, igual que en la CLI (31/07):
+                # `resumir_url` no busca, necesita la direccion exacta, asi
+                # que una lista de dominios sueltos obliga a reescribirlos a
+                # mano y acaba mirandose pero no usandose.
+                urls = "\n".join(f"https://{d}/" for d in doms)
+                bloques.append(f"📌 *{titulo}*:\n{urls}\n")
+            texto = (
+                "\n".join(bloques)
+                + "(se añaden en DOMINIOS_PERMITIDOS_WEB del .env)\n"
+                + "(si alguna redirige, pídeme la dirección final: no sigo redirecciones)"
+            )
         else:
             texto = (
                 "⚠️ No hay ningún sitio autorizado, así que no puedo leer "
@@ -1223,6 +1283,10 @@ def construir_aplicacion() -> Application:
     aplicacion.add_handler(MessageHandler(filters.COMMAND, cmd_desconocido))
 
     aplicacion.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
+    # F5.5 #7: filters.Document.ALL va ANTES que el generico ~filters.TEXT -
+    # PTB entrega el update al primer handler cuyo filtro encaje, asi que
+    # el orden de alta decide cual de los dos coge un documento adjunto.
+    aplicacion.add_handler(MessageHandler(filters.Document.ALL, manejar_documento))
     aplicacion.add_handler(MessageHandler(~filters.TEXT, manejar_no_texto))
 
     aplicacion.add_error_handler(manejar_error)

@@ -67,10 +67,14 @@ _RECUERDOS_MOSTRADOS = 5
 # recibia todo el prompt como un unico parrafo aplastado (mismo bug que
 # ya se documento en el diario el 17/07, F2.6b - coleado aqui tambien).
 # Con """ los saltos de linea son literales y no hay forma de que pase.
-SYSTEM_PROMPT = """Eres el asistente personal de JIM, y JIM es el jefe: sus \
-indicaciones mandan siempre. Hablas en español, de tú, con tono cercano, cálido y con \
-chispa - como un amigo de confianza que sabe de lo que habla, no como un bot \
-corporativo. Tienes personalidad propia y puedes opinar; no suenes neutro todo el rato.
+SYSTEM_PROMPT = """Te llamas JIMMY. Eres el asistente personal de JIM, y JIM es el \
+jefe: sus indicaciones mandan siempre. Hablas en español, de tú, con tono cercano, \
+cálido y con chispa - como un amigo de confianza que sabe de lo que habla, no como un \
+bot corporativo. Tienes personalidad propia y puedes opinar; no suenes neutro todo el \
+rato.
+
+Tu nombre es JIMMY y ya lo sabes: no hace falta que lo busques en la memoria ni que \
+preguntes cómo te llamas.
 
 Honestidad (esto es lo más importante de todo):
 - NUNCA te inventes nada: ni nombres, ni fechas, ni datos, ni hechos. Si no lo sabes, \
@@ -91,6 +95,14 @@ Tu memoria:
 - Tienes memoria de TODAS las conversaciones anteriores con JIM, no solo de esta, a \
 través de buscar_en_recuerdos. Úsala siempre que pregunte por algo de antes (su \
 nombre, un dato suyo, una cita, algo que hablasteis) en vez de inventar o suponer.
+- Dentro de un <recuerdo>, distingue SIEMPRE de quién es lo que lees. "JIM dijo" es un \
+HECHO que te contó él. "tú respondiste" es algo que dijiste TÚ en el pasado, y eso NO \
+demuestra que sea verdad: pudiste equivocarte entonces. Nunca uses una respuesta tuya \
+antigua como prueba de un dato; si lo único que encuentras es algo que dijiste tú, \
+trátalo como lo que es y admite que no tienes el dato de JIM.
+- Si buscas y solo te salen PREGUNTAS parecidas ("¿cómo me llamo?") pero no la \
+respuesta, es que el dato no está: dilo. Que la pregunta aparezca varias veces no \
+significa que alguna vez se contestara.
 
 REGLA DE ORO sobre lo que devuelven tus herramientas:
 - Cuando una herramienta te devuelva algo dentro de una etiqueta -<recuerdo>...</recuerdo> \
@@ -158,6 +170,7 @@ COMANDOS = {
     # el otro - si no, acabas con datos que solo puedes gestionar segun por
     # donde entres.
     "/tools": "Elegir qué grupos de herramientas tiene activos el agente",
+    "/documento": "Darle un PDF o Word para que lo lea (actívalo en /tools)",
     "/recuerdo": "Buscar en la memoria de conversaciones pasadas",
     "/borrar": "Borrar una conversación guardada (del disco y de la memoria)",
     "/resumen": "Pedir un resumen de la conversación",
@@ -212,6 +225,44 @@ def elegir_conversacion(rutas: list) -> object | None:
     ).ask()
 
 
+# Centinela de la opcion "ver sitios" del menu de /tools. Un object() por el
+# mismo motivo que VOLVER: no puede coincidir NUNCA con el nombre de una
+# categoria real, ni siquiera si algun dia existe una llamada "ver-sitios".
+_VER_SITIOS = object()
+
+
+def _imprimir_sitios(agrupados: dict) -> None:
+    """La lista blanca, tal y como se le enseña a Jordi en la CLI.
+
+    En UNA funcion y no repetida en los dos sitios que la enseñan (al
+    encender `web` y en la opcion "ver sitios"): dos copias del mismo texto
+    es como acaban divergiendo, que es justo el problema que ya se
+    corrigio con los dos parseos del .env el 30/07.
+    """
+    if not agrupados:
+        print("  ⚠️ No hay ningún sitio autorizado: no podrá leer ninguna web.")
+        print("  Añádelos a DOMINIOS_PERMITIDOS_WEB en el .env.")
+        return
+
+    # URL COMPLETA y una por linea (peticion de Jordi, 31/07, tras probar
+    # en real): la lista blanca guarda DOMINIOS, pero lo que hay que
+    # pegarle al agente es una direccion exacta - `resumir_url` no busca.
+    # Teniendo que reescribir "docs.python.org" como "https://docs.python.org/"
+    # a mano cada vez, la lista se miraba pero no se usaba.
+    print("  Sitios que puede leer (copia y pega la dirección):")
+    for grupo, dominios in agrupados.items():
+        print(f"    📌 {grupo}:")
+        for dominio in dominios:
+            print(f"       https://{dominio}/")
+    print("  (se añaden en DOMINIOS_PERMITIDOS_WEB del .env)")
+    # Aviso honesto: la lista autoriza el DOMINIO, no garantiza que la
+    # portada exista en esa forma exacta. Caso real: https://dgt.es/
+    # redirige, y como NO seguimos redirecciones (es seguridad, no
+    # comodidad) hay que pedir la direccion final. Sin este aviso, un 301
+    # parece un fallo nuestro.
+    print("  (si alguna redirige, pídeme la dirección final: no sigo redirecciones)")
+
+
 def menu_tools(agente) -> None:
     """Menu de grupos de herramientas (ADR-006), con la convencion del
     27/07: "⬅ Volver" SIEMPRE visible.
@@ -242,6 +293,13 @@ def menu_tools(agente) -> None:
             if categoria == "web":
                 etiqueta += f"  [{len(obtener_dominios_permitidos())} sitios autorizados]"
             opciones.append(questionary.Choice(etiqueta, value=categoria))
+        # Ver los sitios SIN tener que conmutar nada (peticion de Jordi,
+        # 31/07). Antes la lista solo se imprimia al ENCENDER web, asi que
+        # con web ya encendida la unica forma de volver a verla era apagarla
+        # y encenderla otra vez - justo lo que le paso probando en real.
+        # Telegram si tenia su boton "ver sitios" desde el principio; esto
+        # es la SIMETRIA que el proyecto exige entre los dos interfaces.
+        opciones.append(questionary.Choice("🌐 Ver los sitios autorizados", value=_VER_SITIOS))
         opciones.append(questionary.Choice("⬅ Volver", value=VOLVER))
 
         elegida = questionary.select(
@@ -256,6 +314,10 @@ def menu_tools(agente) -> None:
             print(f"Herramientas activas: {', '.join(activas) or '(ninguna)'}")
             return
 
+        if elegida is _VER_SITIOS:
+            _imprimir_sitios(obtener_dominios_agrupados())
+            continue
+
         if elegida in agente.categorias_activas:
             agente.categorias_activas.discard(elegida)
         else:
@@ -264,16 +326,7 @@ def menu_tools(agente) -> None:
         # Al encender "web" se listan los sitios: es la unica categoria
         # donde "que puede hacer" depende de una configuracion externa.
         if elegida == "web" and elegida in agente.categorias_activas:
-            agrupados = obtener_dominios_agrupados()
-            if agrupados:
-                print("  Sitios que puede leer (organizados por niveles):")
-                for grupo, doms in agrupados.items():
-                    print(f"    📌 {grupo}:")
-                    print(f"       {', '.join(doms)}")
-                print("  (se añaden en DOMINIOS_PERMITIDOS_WEB del .env)")
-            else:
-                print("  ⚠️ No hay ningún sitio autorizado: no podrá leer ninguna web.")
-                print("  Añádelos a DOMINIOS_PERMITIDOS_WEB en el .env.")
+            _imprimir_sitios(obtener_dominios_agrupados())
 
 
 def mostrar_conversacion(ruta) -> None:
@@ -483,6 +536,48 @@ def main():
             #     botones tambien conmutan de uno en uno.
             if comando == "/tools":
                 menu_tools(agente)
+                continue
+
+            # F5.5 #7: "comando + adjunto" (decision de Jordi, 31/07) - el
+            # modelo nunca elige la ruta, la escribe Jordi aqui a mano.
+            # questionary.path() sale de "comando" y NO de la version en
+            # minusculas de la linea (comando ya esta en minusculas y una
+            # ruta puede tener mayusculas de verdad).
+            if comando == "/documento":
+                ruta_texto = questionary.path("Ruta del PDF o Word:").ask()
+                if not ruta_texto:
+                    print("Cancelado.")
+                    continue
+                from pathlib import Path
+
+                from src.documentos import DocumentoNoValido, validar_adjunto
+
+                ruta = Path(ruta_texto)
+                try:
+                    datos = ruta.read_bytes()
+                except OSError as error:
+                    print(f"⚠️ No he podido leer ese fichero: {error}")
+                    continue
+                try:
+                    agente.documento_pendiente = validar_adjunto(datos, ruta.name)
+                except DocumentoNoValido as error:
+                    print(f"⚠️ {error}")
+                    continue
+                # El aviso de activar la categoria SOLO si de verdad esta
+                # apagada (31/07): antes salia siempre, asi que al probar en
+                # real Jordi lo leyo teniendola YA activa, fue a /tools y la
+                # apago y encendio de nuevo buscando un problema que no
+                # existia. Un aviso que se da cuando no toca no es
+                # informacion, es ruido que manda a la gente por mal camino.
+                # Mismo criterio que en el bot (ver manejar_documento).
+                aviso = (
+                    "" if "documentos" in agente.categorias_activas
+                    else " Actívalo antes en /tools → categoría 'documentos'."
+                )
+                print(
+                    f"Documento recibido: {ruta.name} ({len(datos) // 1000} KB). "
+                    f"Pregúntame algo sobre él.{aviso}"
+                )
                 continue
 
             # F5.2+ (28/07, idea de Jordi probando el bot): busca a mano en

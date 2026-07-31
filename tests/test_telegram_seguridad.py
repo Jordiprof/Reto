@@ -1179,3 +1179,123 @@ def test_ver_sitios_sin_ninguno_autorizado_lo_dice(monkeypatch):
     asyncio.run(telegram_bot.manejar_boton(boton, _context()))
 
     assert "No hay ningún sitio autorizado" in " ".join(editado)
+
+
+# --- F5.5 #7: adjunto PDF/Word ("comando + adjunto", Jordi 31/07) --------
+# El modelo NUNCA elige que fichero lee - lo maneja este handler, que solo
+# valida y GUARDA en el Agente del usuario. No se prueba red real de
+# Telegram: get_file()/download_as_bytearray() se sustituyen por
+# funciones async de mentira, igual que send_chat_action en _context().
+
+
+def _documento_falso(datos: bytes, nombre="informe.pdf"):
+    async def download_as_bytearray():
+        return bytearray(datos)
+
+    async def get_file():
+        return SimpleNamespace(download_as_bytearray=download_as_bytearray)
+
+    return SimpleNamespace(file_name=nombre, get_file=get_file)
+
+
+def _update_documento(user_id=111, datos=b"", nombre="informe.pdf", enviados=None):
+    enviados = enviados if enviados is not None else []
+
+    async def reply_text(texto_respuesta, *a, **kw):
+        enviados.append(texto_respuesta)
+
+    mensaje = SimpleNamespace(
+        document=_documento_falso(datos, nombre), reply_text=reply_text, enviados=enviados
+    )
+    usuario = SimpleNamespace(id=user_id, first_name="Jordi", username="Jordi")
+    return SimpleNamespace(effective_user=usuario, effective_message=mensaje)
+
+
+def test_un_pdf_valido_se_guarda_en_el_agente_del_usuario():
+    from tests.test_documentos import _pdf_con_texto
+
+    enviados = []
+    update = _update_documento(
+        datos=_pdf_con_texto("Hola"), nombre="informe.pdf", enviados=enviados
+    )
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    agente = telegram_bot._agente_de(111)
+    assert agente.documento_pendiente is not None
+    assert agente.documento_pendiente.nombre == "informe.pdf"
+    assert "recibido" in " ".join(enviados)
+
+
+def test_un_fichero_no_pdf_ni_docx_se_rechaza_sin_guardarse():
+    enviados = []
+    update = _update_documento(datos=b"lo que sea", nombre="cancion.mp3", enviados=enviados)
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    assert 111 not in telegram_bot._agentes
+    assert ".pdf o .docx" in " ".join(enviados)
+
+
+def test_un_documento_sin_nombre_se_rechaza():
+    """document.file_name puede venir vacio segun el cliente que lo mande
+    - sin nombre no hay extension que validar."""
+    enviados = []
+    update = _update_documento(datos=b"x", nombre=None, enviados=enviados)
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    assert 111 not in telegram_bot._agentes
+    assert "no tiene nombre" in " ".join(enviados)
+
+
+def test_recibir_un_documento_NO_enciende_la_categoria_por_su_cuenta():
+    """Sutil pero importante: `documentos` arranca ENCENDIDA (decisión del
+    31/07 — entregar el fichero ya es la autorización), pero eso es el
+    DEFAULT, no algo que haga este handler.
+
+    Si Jordi la apaga a propósito con /tools, mandar un adjunto NO debe
+    volver a encenderla a su espalda: el handler guarda el fichero y avisa,
+    nunca decide por él. Por eso se apaga a mano antes de la comprobación —
+    si el handler la encendiera, este test se pondría rojo."""
+    from tests.test_documentos import _pdf_con_texto
+
+    telegram_bot._agente_de(111).categorias_activas.discard("documentos")
+    enviados = []
+    update = _update_documento(datos=_pdf_con_texto("Hola"), enviados=enviados)
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    agente = telegram_bot._agente_de(111)
+    assert "documentos" not in agente.categorias_activas
+    # Y como está apagada, el aviso se lo dice en vez de encenderla solo.
+    assert "documentos" in " ".join(enviados)
+
+
+def test_un_docx_demasiado_grande_no_llega_a_guardarse(monkeypatch):
+    import src.documentos as documentos
+
+    monkeypatch.setattr(documentos, "_MAX_BYTES_ADJUNTO", 5)
+    enviados = []
+    update = _update_documento(datos=b"x" * 6, nombre="grande.pdf", enviados=enviados)
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    assert 111 not in telegram_bot._agentes
+    assert "pesa demasiado" in " ".join(enviados)
+
+
+def test_los_documentos_pasan_por_la_allowlist():
+    """Mismo argumento que con los botones (ADR-005): manejar_documento
+    esta en el mismo grupo 0 que el resto, y el grupo -1 con las dos
+    puertas corre siempre antes - una via de entrada nueva no obliga a
+    acordarse de protegerla."""
+    aplicacion = telegram_bot.construir_aplicacion()
+    grupo_puertas = min(aplicacion.handlers)
+
+    grupos_con_documentos = [
+        g for g, hs in aplicacion.handlers.items()
+        if any(h.callback is telegram_bot.manejar_documento for h in hs)
+    ]
+
+    assert grupos_con_documentos and min(grupos_con_documentos) > grupo_puertas
