@@ -116,7 +116,7 @@ Investigado el 28/07 contra documentación oficial:
 
 ### Generalizar el saneado de contenido externo (revisión del 28/07)
 
-Pregunta de Jordi: con NASA APOD y "resumir URL" entrando después de
+Me lo pregunté al planificar: con NASA APOD y "resumir URL" entrando después de
 `buscar_en_recuerdos`, ¿hay que añadir un párrafo nuevo al `SYSTEM_PROMPT` por cada
 herramienta que traiga contenido externo?
 
@@ -163,11 +163,11 @@ un olvido al declarar, el comportamiento resultante debe ser el conservador.
 herramienta si aplica a CLI, a bot o a los dos, con el motivo.
 
 **3. El guardián de URLs es INFRAESTRUCTURA COMPARTIDA, no parte de una herramienta.**
-Bloquea IPs internas/loopback y admite lista blanca de dominios. Corrección de Jordi el
+Bloquea IPs internas/loopback y admite lista blanca de dominios. Me corregí el
 28/07: el problema no es de "vigilar una web", es de cualquier cosa que acepte una URL.
 
-**Cuándo hace falta, dicho con precisión** (enmienda del 28/07, tras una segunda
-observación de Jordi): el guardián debe existir **antes de la primera herramienta cuyo
+**Cuándo hace falta, dicho con precisión** (enmienda del 28/07, tras darle una segunda
+vuelta): el guardián debe existir **antes de la primera herramienta cuyo
 DESTINO lo decida el modelo o el usuario** — no antes de la primera que salga a internet.
 No es lo mismo:
 

@@ -132,11 +132,11 @@ ese canal, no del código, pero conviene saberlo: matiza el requisito RNF-06 del
 | Documento | Qué contiene |
 |---|---|
 | [docs/diario_decisiones.md](docs/diario_decisiones.md) | ⭐ Tabla oficial de decisiones técnicas con fecha |
-| [docs/E1_Especificacion_Requisitos.md](docs/E1_Especificacion_Requisitos.md) | Requisitos, alcance y riesgos |
-| [docs/E2_Arquitectura.md](docs/E2_Arquitectura.md) | Arquitectura y diagrama global |
-| [docs/E3_Estado_Arte_Planificacion.md](docs/E3_Estado_Arte_Planificacion.md) | Estado del arte y planificación por fases |
-| [docs/E4_Entrega_Final.md](docs/E4_Entrega_Final.md) | Entrega final (se redacta al cierre) |
-| [docs/ADR/](docs/ADR/) | Decisiones de arquitectura (ADRs) |
+| [docs/E1_Especificacion_Requisitos.md](docs/E1_Especificacion_Requisitos.md) | Requisitos (RF/RNF), catálogo de herramientas, riesgos y trazabilidad |
+| [docs/E2_Arquitectura.md](docs/E2_Arquitectura.md) | Arquitectura, componentes y **diagramas** de flujo, seguridad y datos |
+| [docs/E3_Estado_Arte_Planificacion.md](docs/E3_Estado_Arte_Planificacion.md) | Estado del arte, comparativas, OWASP LLM y plan de fases |
+| [docs/E4_Entrega_Final.md](docs/E4_Entrega_Final.md) | Entrega final: cifras, tests, cómo ejecutar, límites y reflexión |
+| [docs/ADR/](docs/ADR/) | Las 6 decisiones de arquitectura (ADR-001 … ADR-006) |
 
 ## Normas del proyecto
 

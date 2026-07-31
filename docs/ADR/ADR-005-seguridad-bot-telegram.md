@@ -5,7 +5,7 @@
 
 ## Contexto
 
-Hasta ahora el agente se usaba desde la terminal de Jordi: el "control de acceso" era
+Hasta ahora el agente se usaba desde mi terminal: el "control de acceso" era
 tener acceso físico al ordenador. Exponerlo por Telegram cambia el modelo de amenaza
 por completo — **cualquiera que descubra el @usuario del bot puede escribirle**, y los
 nombres de bot son fáciles de encontrar o adivinar.
@@ -13,7 +13,7 @@ nombres de bot son fáciles de encontrar o adivinar.
 Lo que está en juego no es solo la cuota del LLM. Desde F5.3 el agente tiene la
 herramienta `buscar_en_recuerdos`, que consulta la memoria semántica y **descifra**
 conversaciones anteriores para responder. Un bot sin control de acceso le entregaría a
-un desconocido las conversaciones privadas de Jordi con solo preguntar — la misma fuga
+un desconocido mis conversaciones privadas con solo preguntar — la misma fuga
 que se cerró en los logs el 27/07 (ver E1 §4.1), pero por la puerta principal y a
 petición del atacante.
 

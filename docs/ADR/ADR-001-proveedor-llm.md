@@ -31,10 +31,10 @@ Diseño que la sostiene: `src/llm_client.py` abstrae el proveedor → cambiar = 
 - **07/2026 — Anthropic (pricing oficial):** sin free tier; `claude-haiku-4-5` $1/$5 MTok,
   `claude-sonnet-4-6` $3/$15. Válido como plan C de pago mínimo.
 - **Groq:** pendiente de verificar (F1.1) — modelos, límites del free tier y tool calling.
-  Hipótesis sin probar de Jordi (16/07): `llama-3.3-70b-versatile` podría funcionar bien
+  Mi hipótesis, sin probar todavía (16/07): `llama-3.3-70b-versatile` podría funcionar bien
   en Groq aunque en OpenRouter esté en cola — confirmar en F1.3, no dar por bueno todavía.
 
-## Pruebas reales — 16/07/2026 (Jordi, vía `ollama launch` / OpenCode)
+## Pruebas reales que hice — 16/07/2026 (vía `ollama launch` / OpenCode)
 
 **Ollama Cloud — ampliación de la prueba de F1.2 (adelantada):**
 
@@ -57,10 +57,10 @@ como hallazgos, la decisión de si entran en `llm_client.py` se toma en **F1.4**
 | Google AI Studio | `gemini-3.5-flash` | ⚠️ Parcial | Arrancó vía OpenCode, ejecutó tool calls (Glob, Read) — interrumpido antes de respuesta final, sin confirmación completa |
 | Google AI Studio | `gemini-2.5-pro` | ❌ Descartado | Cola por alta demanda del modelo |
 | OpenRouter | modelo de código Qwen (ID exacto pendiente) | ❌ Descartado | Cola / disponibilidad, igual que gemini-2.5-pro |
-| OpenRouter | `poolside/laguna-xs-2.1:free` | ✅ Funciona | Según prueba directa de Jordi |
-| OpenRouter | `poolside/laguna-m.1:free` | ✅ Funciona | Según prueba directa de Jordi |
-| OpenRouter | `tencent/hy3:free` | ✅ Funciona | Según prueba directa de Jordi |
-| OpenRouter | `nvidia/nemotron-3-ultra-550b-a55b:free` | ✅ Funciona | Según prueba directa de Jordi |
+| OpenRouter | `poolside/laguna-xs-2.1:free` | ✅ Funciona | Probado por mí directamente |
+| OpenRouter | `poolside/laguna-m.1:free` | ✅ Funciona | Probado por mí directamente |
+| OpenRouter | `tencent/hy3:free` | ✅ Funciona | Probado por mí directamente |
+| OpenRouter | `nvidia/nemotron-3-ultra-550b-a55b:free` | ✅ Funciona | Probado por mí directamente |
 | OpenRouter | "Llama 3.3 70B Instruct" | ❌ Descartado | Cola / disponibilidad, igual que Qwen y gemini-2.5-pro |
 
 **Riesgo anotado:** ampliar la cadena de proveedores en Fase 0 aumenta el alcance
@@ -73,21 +73,21 @@ todavía** — eso se decide con datos completos en F1.4.
 - Free tier con rate limits por modelo, ejemplo: `llama-3.3-70b-versatile` y los `gpt-oss` →
   **30 RPM, 6K–15K TPM**; `qwen/qwen3-32b` → 60 RPM. Límites a nivel de organización, no de usuario.
 - **Tool use confirmado para TODOS los modelos alojados**, cita textual: *"All models hosted
-  on Groq support tool use"*. Confirma la hipótesis de Jordi: `llama-3.3-70b-versatile` sí
+  on Groq support tool use"*. Confirma mi hipótesis: `llama-3.3-70b-versatile` sí
   soporta tools. ✅
 
 **Google AI Studio / Gemini API** (`ai.google.dev`):
 - Existe free tier, pero la doc no publica cifras exactas de RPM/RPD en la página de rate
   limits — remite al dashboard personal en `aistudio.google.com/rate-limit` (solo visible
-  con cuenta creada). **Pendiente:** mirar ese dashboard cuando Jordi tenga cuenta.
+  con cuenta creada). **Pendiente:** mirar ese dashboard cuando tenga cuenta.
 - Function calling confirmado en la serie **Gemini 3** (incluye `gemini-3.5-flash`, que
-  Jordi ya vio ejecutando tool calls en la prueba interrumpida).
+  ya vi ejecutando tool calls en la prueba interrumpida).
 
 **OpenRouter** (`openrouter.ai/docs`):
 - Modelos `:free` **sin compra previa de créditos**: **20 RPM / 50 RPD** (peticiones por día).
 - Con al menos **$10 en créditos comprados** (de por vida, no saldo actual): sube a **20 RPM
   / 1000 RPD**.
-- Esto explica en parte las "colas" que veía Jordi: 50 peticiones/día en el nivel más bajo
+- Esto explica en parte las "colas" que yo veía: 50 peticiones/día en el nivel más bajo
   se agotan muy rápido probando modelos a mano.
 
 **Anthropic** (`platform.claude.com/docs`, actualizado 16/07):
@@ -103,7 +103,7 @@ todavía** — eso se decide con datos completos en F1.4.
   modelo `gpt-oss:20b`. Respuesta real recibida de punta a punta.
 - **16/07/2026 — Groq ✅** — `scripts/prueba_test_groq.py`, SDK oficial `groq` v1.5.0,
   modelo `llama-3.3-70b-versatile`. Respuesta real recibida; confirma la hipótesis de
-  tool use de Jordi (y lo que decía la doc oficial de Groq).
+  tool use que hice yo (y lo que decía la doc oficial de Groq).
 - **16/07/2026 — Google AI Studio (Gemini) ✅** — `scripts/prueba_test_gemini.py`, SDK
   oficial `google-genai` v2.12.0, modelo `gemini-3.5-flash`. Respuesta real y completa
   (a diferencia de la prueba anterior vía OpenCode, que se interrumpió). Nota corregida:
@@ -160,7 +160,7 @@ Gemini no está disponible en la UE/España. Se verificó contra el texto legal 
 (`ai.google.dev/gemini-api/terms`) y es **falso**: en la UE se aplican las condiciones de
 privacidad de "Paid Services" también al nivel gratuito (los prompts no se usan para
 entrenar), pero el acceso gratuito sí funciona — confirmado además por el smoke test real
-de Jordi. Se descarta la fuente no oficial que afirmaba lo contrario.
+que hice yo. Se descarta la fuente no oficial que afirmaba lo contrario.
 
 ## Consecuencias
 

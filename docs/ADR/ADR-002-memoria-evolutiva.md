@@ -60,7 +60,7 @@ este ADR. Se detecta ahora, al empezar F5.3, comparando el ADR con el código re
 
 - El escalón 3 existía para poder **consultar** las conversaciones pasadas con SQL. El
   escalón 4 (búsqueda semántica) cubre ese mismo caso de uso, y mejor para lo que de
-  verdad se quiere ("¿qué me dijo Jordi sobre X hace días?"): con SQL harían falta
+  verdad se quiere ("¿qué le conté sobre X hace unos días?"): con SQL harían falta
   `LIKE '%palabra%'` y coincidencia literal; con embeddings se busca por significado.
 - Normalizar `mensajes` ahora sería trabajo cuyo único consumidor previsto (el propio
   RAG) va a leer igualmente de los JSON. Sería duplicar el contenido una tercera vez
