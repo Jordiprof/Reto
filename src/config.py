@@ -267,8 +267,66 @@ NASA_API_KEY_ENV = "NASA_API_KEY"
 _NASA_CLAVE_DEMO = "DEMO_KEY"
 
 
+def _normalizar_dominio(texto: str) -> str:
+    """Un dominio tal y como lo compara el guardian: minusculas y sin
+    'www.'. UNA sola funcion para las dos lecturas de mas abajo - antes
+    cada una normalizaba por su cuenta, y dos sitios que hacen lo mismo por
+    separado es donde un dia divergen sin que nadie se entere."""
+    return texto.strip().lower().removeprefix("www.")
+
+
+def obtener_dominios_agrupados() -> dict[str, list[str]]:
+    """Dominios autorizados, agrupados por las cabeceras de comentario (#)
+    que los preceden en el .env (peticion de Jordi, 30/07: ver la lista
+    blanca organizada, no como una sola linea de 41 dominios).
+
+    Formato admitido (multilinea, dentro de comillas - ver DOMINIOS_WEB_ENV
+    en .env.example):
+        DOMINIOS_PERMITIDOS_WEB="
+          # Nivel 1: Organismos oficiales
+          nasa.gov, esa.int,
+          # Nivel 2: Empresas de IA
+          anthropic.com, openai.com
+        "
+    Un comentario "# ..." abre un grupo nuevo; los dominios que le siguen
+    (hasta el proximo comentario) caen dentro. Sin ningun comentario antes,
+    van a "Otros dominios" - asi una lista de una sola linea (el formato de
+    toda la vida) sigue funcionando sin tener que agruparla a mano.
+
+    ESTA es la funcion que de verdad parsea el .env: obtener_dominios_
+    permitidos() (mas abajo) reutiliza su resultado en vez de volver a leer
+    la variable por su cuenta - una sola pasada, no dos parseos que puedan
+    desincronizarse.
+    """
+    crudo = os.environ.get(DOMINIOS_WEB_ENV, "")
+    agrupados: dict[str, list[str]] = {}
+    grupo_actual = "Otros dominios"
+
+    for linea_cruda in crudo.splitlines():
+        linea = linea_cruda.strip()
+        if not linea:
+            continue
+        if linea.startswith("#"):
+            titulo = linea.lstrip("#").strip()
+            if titulo:
+                grupo_actual = titulo
+            continue
+
+        # El resto de la linea, quitando un comentario que viniera DETRAS
+        # de dominios en la misma linea (ej. "a.com, b.com  # nota").
+        sin_comentario = linea.split("#")[0].strip()
+        for token in sin_comentario.split(","):
+            dominio = _normalizar_dominio(token)
+            if dominio and dominio not in agrupados.get(grupo_actual, []):
+                agrupados.setdefault(grupo_actual, []).append(dominio)
+
+    return {grupo: doms for grupo, doms in agrupados.items() if doms}
+
+
 def obtener_dominios_permitidos() -> frozenset[str]:
-    """Dominios autorizados, en minusculas y sin espacios.
+    """Dominios autorizados, en minusculas y sin 'www.', SIN los grupos -
+    lo que de verdad consulta el guardian (src/red_segura.py) para decidir
+    si visita una URL o no.
 
     Devuelve un conjunto VACIO si no hay ninguno configurado, y eso es
     deliberado: quien llama (red_segura.validar_url) trata el conjunto
@@ -276,12 +334,8 @@ def obtener_dominios_permitidos() -> frozenset[str]:
     del bot - una lista de permitidos que al estar vacia permitiera todo
     seria un control de acceso al reves.
     """
-    crudo = os.environ.get(DOMINIOS_WEB_ENV, "")
-    return frozenset(
-        d.strip().lower().removeprefix("www.")
-        for d in crudo.split(",")
-        if d.strip()
-    )
+    agrupados = obtener_dominios_agrupados()
+    return frozenset(d for dominios in agrupados.values() for d in dominios)
 
 
 def obtener_clave_nasa() -> str:

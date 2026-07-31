@@ -817,6 +817,28 @@ _PREFIJO_TOOLS = "t:"
 # categorias y buscaria una categoria llamada "ver-sitios".
 _VER_SITIOS = "ver-sitios"
 
+# Caracteres especiales del Markdown "legacy" de Telegram (NO MarkdownV2,
+# que exige escapar muchos mas). "\\" va primero: si se escapara despues de
+# los demas, escaparia tambien las barras que ya hemos metido nosotros.
+_MARKDOWN_ESPECIALES = ("\\", "_", "*", "`", "[")
+
+
+def _escapar_markdown(texto: str) -> str:
+    """Deja un texto libre listo para ir DENTRO de *negrita* sin romper el
+    parseo de Telegram.
+
+    Hace falta porque el titulo de cada grupo de /tools -> "ver sitios" lo
+    escribe Jordi a mano en el .env (el texto tras el "#" de cada bloque),
+    y un "_" sin escapar ahi dentro abriria una cursiva a medias: Telegram
+    rechaza el mensaje ENTERO con un error de parseo en vez de mostrarlo.
+    No es SEG-07 (esto no es contenido ajeno que pueda dar ordenes, es tuyo
+    propio) - es solo que el formato de Telegram es fragil con estos
+    caracteres, venga de donde venga el texto.
+    """
+    for caracter in _MARKDOWN_ESPECIALES:
+        texto = texto.replace(caracter, "\\" + caracter)
+    return texto
+
 
 def _teclado(prefijo: str, opciones: list[str]) -> InlineKeyboardMarkup:
     """Un boton por opcion, uno por fila (los nombres de modelo son largos)."""
@@ -1000,18 +1022,29 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # Lista blanca de sitios, sin salir del menu de /tools.
     if dato == _VER_SITIOS:
-        from src.config import obtener_dominios_permitidos
+        from src.config import obtener_dominios_agrupados
 
-        dominios = sorted(obtener_dominios_permitidos())
-        if dominios:
-            texto = "Puedo leer estos sitios:\n" + "\n".join(f"· {d}" for d in dominios)
-            texto += "\n\n(se añaden en DOMINIOS_PERMITIDOS_WEB del .env)"
+        agrupados = obtener_dominios_agrupados()
+        if agrupados:
+            bloques = ["Puedo leer estos sitios (organizados por niveles):\n"]
+            for grupo, doms in agrupados.items():
+                # El titulo del grupo lo escribe Jordi libremente en el .env
+                # (el texto que va tras el "#"). Se escapa antes de meterlo
+                # entre *asteriscos*: en el Markdown "legacy" de Telegram,
+                # un "_" sin escapar dentro del texto rompe el parseo y
+                # Telegram devuelve error en vez del mensaje - un titulo
+                # como "Nivel_1" bastaria para tumbar la respuesta entera.
+                titulo = _escapar_markdown(grupo)
+                bloques.append(f"📌 *{titulo}*:\n{', '.join(doms)}\n")
+            texto = "\n".join(bloques) + "(se añaden en DOMINIOS_PERMITIDOS_WEB del .env)"
         else:
             texto = (
                 "⚠️ No hay ningún sitio autorizado, así que no puedo leer "
                 "ninguna web. Añádelos a DOMINIOS_PERMITIDOS_WEB en el .env."
             )
-        await consulta.edit_message_text(texto, reply_markup=_teclado_tools(agente))
+        await consulta.edit_message_text(
+            texto, reply_markup=_teclado_tools(agente), parse_mode="Markdown"
+        )
         return
 
     # ADR-006: conmutar una categoria y REDIBUJAR el menu (no cerrarlo).

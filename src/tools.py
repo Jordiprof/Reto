@@ -925,7 +925,7 @@ HERRAMIENTAS = {
             "division). Usala siempre que el usuario pida un calculo, en vez "
             "de inventar el resultado de memoria."
         ),
-        categoria="calculo",
+        categoria="calculadora",
     ),
     "consultar_tiempo": Herramienta(
         funcion=consultar_tiempo,
@@ -942,7 +942,7 @@ HERRAMIENTAS = {
         # en la misma ciudad no cambia. Reutilizar el resultado en un
         # reintento ahorra una llamada y ademas evita que el modelo vea dos
         # temperaturas distintas en la misma conversacion.
-        categoria="informacion",
+        categoria="tiempo",
     ),
     "buscar_en_recuerdos": Herramienta(
         funcion=buscar_en_recuerdos,
@@ -970,7 +970,7 @@ HERRAMIENTAS = {
             "de hoy; con fecha (AAAA-MM-DD) la de ese dia."
         ),
         # repetible=False (el default): la foto de un dia no cambia.
-        categoria="informacion",
+        categoria="foto_astronomica",
     ),
     "consultar_historial": Herramienta(
         funcion=consultar_historial,

@@ -223,7 +223,7 @@ def menu_tools(agente) -> None:
     # Las categorias que tocan la web enseñan ADEMAS los sitios autorizados
     # (peticion de Jordi, 30/07): saber que una categoria esta encendida no
     # sirve de nada si no sabes a donde puede ir de verdad.
-    from src.config import obtener_dominios_permitidos
+    from src.config import obtener_dominios_agrupados, obtener_dominios_permitidos
     from src.tools import categorias_disponibles, nombres_de
 
     while True:
@@ -231,7 +231,14 @@ def menu_tools(agente) -> None:
         for categoria in categorias_disponibles():
             encendida = categoria in agente.categorias_activas
             marca = "✅" if encendida else "⬜"
-            etiqueta = f"{marca} {categoria} — {', '.join(nombres_de(categoria))}"
+            if categoria == "memoria":
+                descr = f"memoria (recuerdos e historial) — {', '.join(nombres_de(categoria))}"
+            elif categoria == "web":
+                descr = f"web (urls seguras) — {', '.join(nombres_de(categoria))}"
+            else:
+                descr = f"{categoria} — {', '.join(nombres_de(categoria))}"
+
+            etiqueta = f"{marca} {descr}"
             if categoria == "web":
                 etiqueta += f"  [{len(obtener_dominios_permitidos())} sitios autorizados]"
             opciones.append(questionary.Choice(etiqueta, value=categoria))
@@ -257,11 +264,12 @@ def menu_tools(agente) -> None:
         # Al encender "web" se listan los sitios: es la unica categoria
         # donde "que puede hacer" depende de una configuracion externa.
         if elegida == "web" and elegida in agente.categorias_activas:
-            dominios = sorted(obtener_dominios_permitidos())
-            if dominios:
-                print("  Sitios que puede leer:")
-                for dominio in dominios:
-                    print(f"    · {dominio}")
+            agrupados = obtener_dominios_agrupados()
+            if agrupados:
+                print("  Sitios que puede leer (organizados por niveles):")
+                for grupo, doms in agrupados.items():
+                    print(f"    📌 {grupo}:")
+                    print(f"       {', '.join(doms)}")
                 print("  (se añaden en DOMINIOS_PERMITIDOS_WEB del .env)")
             else:
                 print("  ⚠️ No hay ningún sitio autorizado: no podrá leer ninguna web.")
@@ -303,17 +311,23 @@ def elegir_modelo(proveedor: str, permitir_volver: bool = False) -> str | object
     choices, asi que si el modelo del .env no esta en el catalogo, no se pasa
     (queda seleccionado el primero de la lista).
 
-    permitir_volver (25/07): si True, añade al FINAL una opcion "Volver" que
-    devuelve el centinela VOLVER (no un modelo real) - asi quien llame puede
-    reabrir el menu de proveedor sin que Esc/Ctrl+C sea la unica salida.
-    Desde /modelo no tiene sentido (no hay "proveedor" al que volver), por
-    eso el flag es False por defecto y no un comportamiento fijo."""
+    permitir_volver (25/07, ampliado 30/07): si True, añade al FINAL una
+    opcion "Volver" que devuelve el centinela VOLVER (no un modelo real).
+    Desde el flujo proveedor->modelo tiene sentido literal (vuelve a elegir
+    proveedor); desde el comando /modelo standalone no hay "proveedor" al
+    que volver, pero AUN ASI se pasa True (30/07): sin ella, /modelo violaba
+    la convencion del 27/07 de que todo menu debe tener una salida VISIBLE,
+    y la unica forma de cancelar era Ctrl+C. Aqui "Volver" y "cancelar"
+    hacen lo mismo (mantener el modelo anterior); el nombre es el mismo en
+    los dos sitios para no enseñar dos palabras distintas para una cosa
+    igual."""
     # Copia, no el catalogo original: igual que _limpiar_schema_para_gemini
-    # con TOOLS, no se muta una lista compartida por todo el programa.
+    # con TOOLS, no se muta una lista compartida por todo el programa. Al
+    # añadir "Volver" se modificaria MODELOS[proveedor] para siempre.
     catalogo = MODELOS[proveedor]
     opciones = list(catalogo)
     if permitir_volver:
-        opciones.append(questionary.Choice("⬅ Volver a elegir proveedor", value=VOLVER))
+        opciones.append(questionary.Choice("⬅ Volver", value=VOLVER))
 
     por_defecto = obtener_modelo_por_defecto(proveedor)
     return questionary.select(
@@ -556,11 +570,8 @@ def main():
 
             # Comando para cambiar solo el modelo, sin tocar el proveedor.
             if comando == "/modelo":
-                nuevo_modelo = elegir_modelo(proveedor)
-                # Esc (o Ctrl+C dentro del menu) devuelve None sin avisar -
-                # mismo bug que en el arranque (ver comentario en main()).
-                # "atras" en questionary ES Esc: cancela y vuelve aqui.
-                if nuevo_modelo is None:
+                nuevo_modelo = elegir_modelo(proveedor, permitir_volver=True)
+                if nuevo_modelo is None or nuevo_modelo is VOLVER:
                     print("Cancelado, sigues con el modelo anterior.")
                     continue
                 modelo = nuevo_modelo

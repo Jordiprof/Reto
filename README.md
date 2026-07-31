@@ -1,6 +1,6 @@
 # Agente de IA en Python — Reto DataQuantum
 
-**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Niveles Básico, Intermedio y Avanzado completos (Fases 2–4, con tag). **Nivel Experto (Fase 5) en curso:** memoria semántica con RAG local, validación de herramientas con Pydantic y **bot de Telegram** ya funcionando; pendiente el catálogo completo de herramientas
+**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Niveles Básico, Intermedio y Avanzado completos (Fases 2–4, con tag). **Nivel Experto (Fase 5) en curso:** memoria semántica con RAG local, validación de herramientas con Pydantic, **bot de Telegram** funcionando con memoria compartida con la CLI, y catálogo de herramientas por categorías (`/tools`) en marcha (ver [ADR-006](docs/ADR/ADR-006-catalogo-y-riesgo-de-herramientas.md))
 
 Agente de IA ejecutado desde la terminal, construido de forma incremental en 4 niveles:
 chat simple contra un LLM (**Básico**) → conversación con memoria (**Intermedio**) →
@@ -51,10 +51,21 @@ sin salir de la conversación):
 | `/resumen` | Pide al modelo un resumen de la conversación hasta ahora, sin guardarlo como turno |
 | `/limpiar` | Borra la conversación actual y empieza de cero (no toca lo ya guardado) |
 | `/guardar` | Guarda la conversación ahora mismo, sin salir, con nombre opcional |
+| `/recuerdo <texto>` | Busca a mano en la memoria semántica y enseña lo encontrado en crudo, sin pasar por el modelo (útil para comprobar qué hay indexado) |
+| `/borrar` | Elige una conversación guardada y la borra de verdad (fichero + índice de memoria); pide confirmación porque es irreversible |
+| `/tools` | Activa o desactiva categorías de herramientas para esta sesión (todas empiezan apagadas por defecto) |
 | `/salir` (o `salir`) | Termina; pregunta si quieres guardar (también se guarda si cortas con `Ctrl+C`) |
 
-Todo menú de flechas (`/proveedor`→modelo, `/comandos`, `/historial`) tiene una opción
-"⬅ Volver"/"Cancelar" para no perder el paso anterior sin cerrar el menú entero.
+Todo menú de flechas (`/proveedor`→modelo, `/comandos`, `/historial`, `/tools`) tiene una
+opción "⬅ Volver"/"Cancelar" para no perder el paso anterior sin cerrar el menú entero.
+
+**Herramientas disponibles** (activables por categoría con `/tools`, catálogo completo y
+criterio de riesgo en [ADR-006](docs/ADR/ADR-006-catalogo-y-riesgo-de-herramientas.md)):
+calculadora, tiempo y previsión (Open-Meteo, sin clave), consulta de historial propio,
+foto astronómica del día (NASA APOD) y resumen de una página web — esta última solo
+acepta URLs de un listado de dominios oficiales autorizado en `.env`
+(`DOMINIOS_PERMITIDOS_WEB`), validado además contra IPs internas antes de descargar nada
+(`src/red_segura.py`, protección anti-SSRF).
 
 Cada conversación queda guardada en `conversations/<fecha>_<hora>.json` — **cifrada con
 Fernet** si configuraste `CONVERSATIONS_KEY` en el `.env` (ver `.env.example`; si no, se
@@ -98,9 +109,18 @@ Por el mismo motivo **solo se admite un `user_id`**: la memoria semántica es co
 el histórico y todavía no distingue de quién es cada recuerdo, así que dos usuarios
 autorizados se leerían mutuamente. Con más de uno, el bot se niega a arrancar.
 
-Comandos dentro del chat de Telegram: `/start`, `/ayuda`, `/limpiar` (empezar de cero) y
-`/resumen`. Las respuestas largas se parten automáticamente en varios mensajes, porque
-Telegram corta a 4096 caracteres y si te pasas no llega nada.
+**La memoria es compartida con la CLI**: lo que guardas desde el terminal se puede buscar
+desde Telegram y viceversa (mismo almacén cifrado + mismo índice semántico). Comandos
+dentro del chat de Telegram: `/start`, `/ayuda`, `/limpiar` (empezar de cero), `/resumen`,
+`/historial`, `/guardar <nombre>`, `/recuerdo <texto>` (busca en la memoria sin pasar por
+el modelo), `/borrar` (borra una conversación guardada, con confirmación — el nombre viaja
+como dato de Telegram y se valida contra el catálogo real antes de tocar ningún fichero,
+nunca se concatena en una ruta), `/tools` (activar/desactivar categorías de herramientas,
+igual que en la CLI) y `/salir` (cierra la conversación actual preguntando si guardarla o
+descartarla; a diferencia de la CLI, no termina el programa). `/modelo` y `/proveedor`
+usan botones inline en vez de menús de flechas. Las respuestas largas se parten
+automáticamente en varios mensajes, porque Telegram corta a 4096 caracteres y si te pasas
+no llega nada.
 
 **Sobre privacidad:** los mensajes que envías a un bot de Telegram **no van cifrados de
 extremo a extremo** — pasan por los servidores de Telegram. Es una consecuencia de usar

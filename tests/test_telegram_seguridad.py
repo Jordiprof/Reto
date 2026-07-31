@@ -1116,3 +1116,66 @@ def test_borrar_sin_conversaciones_lo_dice(monkeypatch):
     asyncio.run(telegram_bot.cmd_borrar(_update(enviados=enviados), _context()))
 
     assert "No hay ninguna" in " ".join(enviados)
+
+
+# --- F5.5: /tools -> "ver sitios autorizados" (30/07) --------------------
+
+
+def test_escapar_markdown_neutraliza_los_caracteres_especiales():
+    """Un '_' sin escapar dentro de *negrita* abre una cursiva a medias y
+    Telegram rechaza el MENSAJE ENTERO con un error de parseo. El titulo de
+    cada grupo lo escribe Jordi libremente en el .env (el texto tras el
+    "#"), asi que puede llevar cualquiera de estos caracteres sin querer."""
+    sucio = "Nivel_1 *importante* con `codigo` y [link]"
+
+    limpio = telegram_bot._escapar_markdown(sucio)
+
+    for especial in ("_", "*", "`", "["):
+        assert ("\\" + especial) in limpio
+    # El texto en si no se pierde, solo se escapa.
+    assert "Nivel" in limpio and "importante" in limpio
+
+
+def test_escapar_markdown_no_toca_texto_sin_caracteres_especiales():
+    normal = "Nivel 1: Organismos Oficiales"
+
+    assert telegram_bot._escapar_markdown(normal) == normal
+
+
+def test_ver_sitios_lista_los_dominios_agrupados(monkeypatch):
+    monkeypatch.setattr(
+        "src.config.obtener_dominios_agrupados",
+        lambda: {"Nivel 1: Oficial": ["nasa.gov", "esa.int"]},
+    )
+    editado = []
+
+    boton = _update_boton(telegram_bot._VER_SITIOS, editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    texto = " ".join(editado)
+    assert "nasa.gov" in texto and "esa.int" in texto
+
+
+def test_ver_sitios_escapa_un_titulo_con_guion_bajo(monkeypatch):
+    """REGRESION: sin el escapado, un titulo con '_' habria roto el
+    Markdown y Telegram habria devuelto un error en vez del mensaje."""
+    monkeypatch.setattr(
+        "src.config.obtener_dominios_agrupados",
+        lambda: {"Nivel_uno_importante": ["a.com"]},
+    )
+    editado = []
+
+    boton = _update_boton(telegram_bot._VER_SITIOS, editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    assert "Nivel\\_uno\\_importante" in " ".join(editado)
+
+
+def test_ver_sitios_sin_ninguno_autorizado_lo_dice(monkeypatch):
+    monkeypatch.setattr("src.config.obtener_dominios_agrupados", lambda: {})
+    editado = []
+
+    boton = _update_boton(telegram_bot._VER_SITIOS, editado=editado)
+    asyncio.run(telegram_bot.manejar_boton(boton, _context()))
+
+    assert "No hay ningún sitio autorizado" in " ".join(editado)

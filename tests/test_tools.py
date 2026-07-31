@@ -1080,7 +1080,7 @@ def test_cada_tool_declara_su_categoria():
 def test_tools_de_filtra_por_categoria():
     from src.tools import tools_de
 
-    solo_calculo = tools_de({"calculo"})
+    solo_calculo = tools_de({"calculadora"})
     nombres = {t["function"]["name"] for t in solo_calculo}
 
     assert nombres == {"calcular"}
@@ -1095,12 +1095,40 @@ def test_sin_categorias_activas_devuelve_None_no_lista_vacia():
     assert tools_de(set()) is None
 
 
-def test_el_agente_arranca_con_TODAS_las_categorias():
-    """Un default que apagara cosas sorprendería a quien no sepa que
-    existe /tools."""
+def test_el_agente_arranca_sin_categorias_activas_por_defecto():
+    """El agente arranca con todas las herramientas apagadas por defecto."""
     from src.agent import Agente
-    from src.tools import categorias_disponibles
 
     agente = Agente("prompt", "groq", "clave", "modelo")
 
-    assert agente.categorias_activas == set(categorias_disponibles())
+    assert agente.categorias_activas == set()
+
+
+def test_el_agente_arranca_SIN_herramientas_activas():
+    """Decision de Jordi (30/07): el agente arranca con TODO apagado y se
+    enciende a demanda con /tools.
+
+    Yo había puesto el default al revés (todas encendidas) argumentando que
+    apagarlas sorprendería a quien no conozca el comando. Su criterio pesa
+    más y es coherente con el resto del proyecto: ante la duda, lo
+    conservador. El agente no sale a internet ni toca la memoria hasta que
+    se le autoriza explícitamente.
+
+    Este test se repone porque desapareció al hacer el cambio: sin él,
+    nada impide que el default vuelva a cambiar sin querer."""
+    from src.agent import Agente
+
+    agente = Agente("prompt", "groq", "clave", "modelo")
+
+    assert agente.categorias_activas == set()
+
+
+def test_sin_categorias_el_agente_no_manda_NINGUNA_tool():
+    """Consecuencia directa del default: el primer turno no lleva fichas de
+    herramientas, así que no gasta tokens en ellas."""
+    from src.agent import Agente
+    from src.tools import tools_de
+
+    agente = Agente("prompt", "groq", "clave", "modelo")
+
+    assert tools_de(agente.categorias_activas) is None

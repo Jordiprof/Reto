@@ -13,7 +13,7 @@ from src.storage import guardar_conversacion
 # solo las categorias activas, porque la ficha de cada tool viaja en CADA
 # peticion (coste en todos los turnos) y el modelo elige peor cuantas mas
 # opciones parecidas tiene delante.
-from src.tools import categorias_disponibles, tools_de
+from src.tools import tools_de
 
 
 class Agente:
@@ -36,11 +36,8 @@ class Agente:
         # El historial ES la memoria de la conversacion (ver F3.1) -
         # arranca con el system prompt y solo crece.
         self.historial = [{"role": "system", "content": system_prompt}]
-        # ADR-006: categorias de herramientas encendidas. TODAS por defecto
-        # -el comportamiento de siempre- y se apagan a mano con /tools. Un
-        # default que apagara cosas sorprenderia a quien actualice el
-        # proyecto y no sepa que existe el comando.
-        self.categorias_activas = set(categorias_disponibles())
+        # Herramientas apagas por defecto al arrancar. Se activan a demanda con /tools.
+        self.categorias_activas = set()
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
