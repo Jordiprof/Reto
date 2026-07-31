@@ -40,6 +40,7 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kubernetes==36.0.3
 loguru==0.7.3
+lxml==6.1.1
 markdown-it-py==4.2.0
 mdurl==0.1.2
 mmh3==5.2.1
@@ -72,10 +73,12 @@ pydantic==2.13.4
 pydantic-settings==2.14.2
 pydantic_core==2.46.4
 Pygments==2.20.0
+pypdf==6.14.2
 PyPika==0.51.1
 pyproject_hooks==1.2.0
 pytest==9.1.1
 python-dateutil==2.9.0.post0
+python-docx==1.2.0
 python-dotenv==1.2.2
 python-telegram-bot==22.8
 PyYAML==6.0.3
