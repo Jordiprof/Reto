@@ -27,6 +27,7 @@ def estado_limpio(monkeypatch):
     telegram_bot._cerrojos.clear()
     telegram_bot._marcas.clear()
     telegram_bot._rutas.clear()
+    telegram_bot._voz_activa.clear()
     monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, "111")
     monkeypatch.setenv(config.TELEGRAM_TOKEN_ENV, "123456:token-de-mentira")
     yield
@@ -34,17 +35,26 @@ def estado_limpio(monkeypatch):
     telegram_bot._cerrojos.clear()
     telegram_bot._marcas.clear()
     telegram_bot._rutas.clear()
+    telegram_bot._voz_activa.clear()
 
 
-def _update(user_id=111, texto="hola", nombre="Jordi", enviados=None):
-    """Update falso: solo los atributos que leen nuestros callbacks."""
+def _update(user_id=111, texto="hola", nombre="Jordi", enviados=None, teclados=None):
+    """Update falso: solo los atributos que leen nuestros callbacks.
+
+    `teclados` guarda el reply_markup de cada respuesta: desde el 31/07 hay
+    menus (historial, /voz, /ayuda) cuyo contenido esta en los BOTONES y no
+    en el texto, y sin esto un test no puede verlos.
+    """
     enviados = enviados if enviados is not None else []
+    teclados = teclados if teclados is not None else []
 
     async def reply_text(texto_respuesta, *a, **kw):
         enviados.append(texto_respuesta)
+        teclados.append(kw.get("reply_markup"))
 
     mensaje = SimpleNamespace(
-        text=texto, chat_id=user_id, reply_text=reply_text, enviados=enviados
+        text=texto, chat_id=user_id, reply_text=reply_text,
+        enviados=enviados, teclados=teclados,
     )
     usuario = (
         None
@@ -710,12 +720,22 @@ def test_historial_lista_sin_descifrar(monkeypatch):
         telegram_bot, "leer_metadatos",
         lambda ruta: {"fecha": "2026-07-28T10:00", "nombre": "chiste malo", "cifrado": True},
     )
-    # Si alguien metiera un cargar_conversacion aqui, este espia lo cazaria.
-    enviados = []
+    # El espia que la docstring prometia y no existia (31/07): si alguien
+    # mete un cargar_conversacion en el LISTADO, esto lo caza.
+    descifrados = []
+    monkeypatch.setattr(
+        telegram_bot, "cargar_conversacion", lambda ruta: descifrados.append(ruta)
+    )
+    enviados, teclados = [], []
+    update = _update(enviados=enviados, teclados=teclados)
 
-    asyncio.run(telegram_bot.cmd_historial(_update(enviados=enviados), _context()))
+    asyncio.run(telegram_bot.cmd_historial(update, _context()))
 
-    assert "chiste malo" in " ".join(enviados)
+    assert descifrados == [], "listar NO debe descifrar ninguna conversación"
+    # Desde el 31/07 los nombres van en los BOTONES (para poder abrirlas),
+    # no en el texto del mensaje.
+    etiquetas = [b.text for fila in teclados[0].inline_keyboard for b in fila]
+    assert any("chiste malo" in e for e in etiquetas)
 
 
 def test_historial_vacio_lo_dice(monkeypatch):
@@ -771,7 +791,7 @@ def test_un_nombre_larguisimo_se_rechaza():
 # --- Botones de /modelo y /proveedor: el dato que vuelve NO se confia ---
 
 
-def _consulta(dato, respondido=None):
+def _consulta(dato, respondido=None, mensaje=None):
     """CallbackQuery falso (lo que manda Telegram al pulsar un boton)."""
     editado = respondido if respondido is not None else []
 
@@ -781,14 +801,27 @@ def _consulta(dato, respondido=None):
     async def edit_message_text(texto, *a, **kw):
         editado.append(texto)
 
-    return SimpleNamespace(data=dato, answer=answer, edit_message_text=edit_message_text)
-
-
-def _update_boton(dato, user_id=111, editado=None):
     return SimpleNamespace(
-        callback_query=_consulta(dato, editado),
+        data=dato, answer=answer, edit_message_text=edit_message_text, message=mensaje
+    )
+
+
+def _update_boton(dato, user_id=111, editado=None, enviados=None, teclados=None):
+    """Update falso de pulsar un boton.
+
+    effective_message NO es None: apunta al MISMO mensaje que
+    callback_query.message, igual que en un Update real de PTB
+    (Update.effective_message cae a callback_query.message cuando no hay
+    update.message - verificado en el codigo fuente de la libreria). Hace
+    falta desde el 31/07: el menu de /comandos plano REUTILIZA los propios
+    cmd_historial/cmd_tools/cmd_voz... al pulsar un boton, y esas funciones
+    leen update.effective_message.reply_text() directamente.
+    """
+    mensaje = _update(user_id=user_id, enviados=enviados, teclados=teclados).effective_message
+    return SimpleNamespace(
+        callback_query=_consulta(dato, editado, mensaje=mensaje),
         effective_user=SimpleNamespace(id=user_id, first_name="Jordi", username="Jordi"),
-        effective_message=None,
+        effective_message=mensaje,
     )
 
 
@@ -1219,7 +1252,12 @@ def _update_documento(user_id=111, datos=b"", nombre="informe.pdf", enviados=Non
         enviados.append(texto_respuesta)
 
     mensaje = SimpleNamespace(
-        document=_documento_falso(datos, nombre), reply_text=reply_text, enviados=enviados
+        document=_documento_falso(datos, nombre), reply_text=reply_text,
+        enviados=enviados,
+        # Un mensaje real de Telegram SIEMPRE trae chat_id; el doble no lo
+        # tenia y se noto el 01/08, al empezar a mandar "escribiendo..."
+        # mientras se prepara el documento.
+        chat_id=user_id,
     )
     usuario = SimpleNamespace(id=user_id, first_name="Jordi", username="Jordi")
     return SimpleNamespace(effective_user=usuario, effective_message=mensaje)

@@ -200,3 +200,77 @@ def test_agrupado_vacio_si_no_hay_variable(monkeypatch):
     monkeypatch.delenv(config.DOMINIOS_WEB_ENV, raising=False)
 
     assert config.obtener_dominios_agrupados() == {}
+
+
+# --- El catalogo de modelos caduca solo (01/08) ----------------------------
+# minimax-m2.5 se retiro el 31/07 y el catalogo siguio ofreciendolo: Jordi lo
+# eligio en el menu y TODOS sus mensajes cayeron al fallback. Ademas
+# .env.example recomendaba "gpt-oss:120b-cloud", que NO esta en el catalogo
+# del menu (aunque el modelo si funciona: se comprobo).
+#
+# Estos tests NO tocan la red (no pueden saber si un modelo sigue vivo). Lo
+# que vigilan es la COHERENCIA interna, que es lo que se rompio las dos
+# veces: que lo que se recomienda exista en el catalogo, y que lo retirado
+# no vuelva a colarse.
+
+
+def _valor_env_example(clave):
+    from pathlib import Path
+
+    ruta = Path(__file__).resolve().parent.parent / ".env.example"
+    for linea in ruta.read_text(encoding="utf-8").splitlines():
+        limpia = linea.strip()
+        if limpia.startswith(f"{clave}="):
+            return limpia.split("=", 1)[1].strip()
+    return None
+
+
+def test_los_modelos_de_env_example_estan_en_el_catalogo():
+    """Si .env.example recomienda un modelo que el menu no conoce, es que
+    uno de los dos esta desactualizado - y quien clona el repo se lleva el
+    error."""
+    from src.config import MODELOS
+
+    for proveedor, clave in [("groq", "GROQ_MODEL"), ("ollama", "OLLAMA_MODEL"),
+                             ("gemini", "GEMINI_MODEL")]:
+        valor = _valor_env_example(clave)
+        assert valor, f"{clave} no esta en .env.example"
+        assert valor in MODELOS[proveedor], (
+            f"{clave}={valor} no esta en el catalogo de {proveedor}: "
+            "uno de los dos se ha quedado viejo"
+        )
+
+
+def test_los_modelos_retirados_no_vuelven_al_catalogo():
+    """Lista de lapidas. Cada nombre esta aqui porque se comprobo con una
+    llamada REAL que ya no sirve, con su motivo y su fecha."""
+    from src.config import MODELOS
+
+    # OJO con lo que entra en esta lista. El 01/08 metí aqui
+    # "gpt-oss:120b-cloud" dandolo por retirado porque lo decia un
+    # comentario del 23/07... y al comprobarlo con una llamada real
+    # RESPONDE PERFECTAMENTE. Es exactamente el fallo que este proyecto
+    # lleva persiguiendo desde el 15/07 (no fiarse de lo que dice una nota,
+    # verificar), cometido sobre una nota propia. Regla: aqui solo entra lo
+    # que se haya probado con una llamada de verdad, y el motivo se escribe
+    # con el codigo HTTP que devolvio.
+    retirados = {
+        "minimax-m2.5": "HTTP 410 'was retired at 2026-07-31' (probado 01/08)",
+        "gemini-3-flash-preview": "HTTP 410, retirado el 15/07/2026 (probado 01/08)",
+        "qwen/qwen3-32b": "HTTP 404, ya no existe en Groq (probado 01/08)",
+        # Existen, pero piden suscripcion Pro: ofrecerlos en el menu seria
+        # ofrecer un 403. Probados los nueve el 01/08.
+        "minimax-m2.7": "HTTP 403 'requires a subscription'",
+        "glm-5.2": "HTTP 403 'requires a subscription'",
+        "glm-5.1": "HTTP 403 'requires a subscription'",
+        "kimi-k3": "HTTP 403 'requires a subscription'",
+        "kimi-k2.6": "HTTP 403 'requires a subscription'",
+        "kimi-k2.7-code": "HTTP 403 'requires a subscription'",
+        "qwen3.5": "HTTP 403 'requires a subscription'",
+        "deepseek-v4-pro": "HTTP 403 'requires a subscription'",
+        "deepseek-v4-flash": "HTTP 403 'requires a subscription'",
+    }
+    todos = {m for lista in MODELOS.values() for m in lista}
+
+    for modelo, motivo in retirados.items():
+        assert modelo not in todos, f"{modelo}: {motivo}"

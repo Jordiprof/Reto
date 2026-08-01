@@ -296,3 +296,329 @@ def test_fijar_y_restaurar_documento_actual():
         restaurar_documento_actual(token)
 
     assert documento_actual() is None
+
+
+# --- Trocear + buscar por relevancia (01/08) -------------------------------
+# Antes, de un documento largo el modelo recibia los primeros 8.000
+# caracteres y punto: medido con un PDF de 19.193, le llegaba hasta la
+# seccion 17 de 40 y el final NO existia para el. Ahora se trocea y se le
+# mandan los trozos que hablan de lo que se pregunta.
+
+
+def test_trocear_cubre_todo_el_texto():
+    from src.documentos import trocear
+
+    texto = "\n".join(f"linea {i} con algo de contenido" for i in range(400))
+    trozos = trocear(texto)
+
+    assert len(trozos) > 1
+    # Nada se pierde: la primera y la ultima linea tienen que estar.
+    assert "linea 0 " in trozos[0]
+    assert "linea 399" in trozos[-1]
+
+
+def test_los_trozos_se_solapan():
+    """Sin solape, una frase que cae justo en la frontera se parte y no se
+    parece a nada al buscar."""
+    from src.documentos import trocear
+
+    texto = "x" * 5000
+    trozos = trocear(texto, tamaño=1000, solape=200)
+
+    assert sum(len(t) for t in trozos) > len(texto)
+
+
+def test_trocear_texto_vacio_no_revienta():
+    from src.documentos import trocear
+
+    assert trocear("") == []
+
+
+def test_encuentra_lo_que_esta_AL_FINAL_del_documento():
+    """EL test de esta funcionalidad: lo que antes era imposible. El dato
+    esta en el ultimo tramo, muy por detras del limite de 8.000."""
+    from src.documentos import buscar_en_documento
+
+    relleno = "\n".join(
+        f"Seccion {i}: hablamos de bases de datos y de rendimiento general."
+        for i in range(120)
+    )
+    texto = relleno + "\nSeccion final: el protocolo de CIFRADO usa AES-256-GCM."
+
+    elegidos = buscar_en_documento(texto, "que cifrado usa")
+
+    assert any("AES-256-GCM" in trozo for _i, trozo in elegidos)
+
+
+def test_los_fragmentos_vuelven_en_ORDEN_del_documento():
+    """Se eligen por relevancia pero se entregan en el orden en que estan
+    escritos: al modelo se le da el documento, no un ranking."""
+    from src.documentos import buscar_en_documento
+
+    texto = "\n".join(f"Seccion {i}: contenido variado sobre redes." for i in range(200))
+
+    elegidos = buscar_en_documento(texto, "redes")
+    posiciones = [i for i, _t in elegidos]
+
+    assert posiciones == sorted(posiciones)
+
+
+def test_un_documento_corto_se_devuelve_entero_sin_buscar():
+    """Si cabe, no hay nada que elegir - y asi no se paga el coste de
+    calcular vectores para nada."""
+    from src.documentos import buscar_en_documento
+
+    texto = "Un documento cortito.\nCon dos lineas."
+
+    elegidos = buscar_en_documento(texto, "lo que sea")
+
+    assert len(elegidos) == len(texto.split("\n")) or len(elegidos) >= 1
+    assert "".join(t for _i, t in elegidos).replace("\n", "") != ""
+
+
+def test_leer_documento_con_consulta_llega_al_final(monkeypatch):
+    """De punta a punta por la tool, que es como lo usa el modelo."""
+    from src.documentos import (
+        DocumentoAdjunto,
+        fijar_documento_actual,
+        restaurar_documento_actual,
+    )
+    from src.tools import leer_documento
+
+    # 800 secciones (~44.000 caracteres): el documento tiene que NO caber en
+    # _MAX_CARACTERES_DOCUMENTO -20.000 desde el 01/08- o este test dejaria
+    # de probar el troceo y probaria el camino "cabe entero".
+    relleno = "\n".join(
+        f"Seccion {i}: contenido de relleno sobre arquitectura." for i in range(800)
+    )
+    texto = relleno + "\nCONCLUSION: la clave del informe es ZANAHORIA-7788."
+
+    monkeypatch.setattr("src.documentos.extraer_texto", lambda a: texto)
+    # Se guarda el token y se restaura: el ContextVar es GLOBAL del hilo, y
+    # dejarlo puesto contaminaba a otros tests (paso el 01/08: un test que
+    # comprueba "no hay documento" fallaba solo al correr la suite entera).
+    token = fijar_documento_actual(
+        DocumentoAdjunto(datos=b"x", nombre="largo.pdf", tipo="pdf")
+    )
+    try:
+        sin_consulta = leer_documento()
+        con_consulta = leer_documento(consulta="cual es la clave del informe")
+    finally:
+        restaurar_documento_actual(token)
+
+    assert "ZANAHORIA-7788" not in sin_consulta, "sin consulta se manda el principio"
+    assert "ZANAHORIA-7788" in con_consulta, "con consulta tiene que llegar al final"
+    assert "fragmento" in con_consulta, "hay que decirle de que parte sale cada trozo"
+
+
+def test_el_aviso_de_troceo_prohibe_afirmar_ausencias(monkeypatch):
+    """Misma leccion que el 31/07: afirmo que el documento NO hablaba de
+    pruebas de penetracion mirando solo el 76%."""
+    from src.documentos import (
+        DocumentoAdjunto,
+        fijar_documento_actual,
+        restaurar_documento_actual,
+    )
+    from src.tools import leer_documento
+
+    # Mismo motivo que el test de arriba: debe superar los 20.000 caracteres.
+    texto = "\n".join(f"Seccion {i}: contenido de relleno variado." for i in range(900))
+    monkeypatch.setattr("src.documentos.extraer_texto", lambda a: texto)
+    token = fijar_documento_actual(
+        DocumentoAdjunto(datos=b"x", nombre="largo.pdf", tipo="pdf")
+    )
+    try:
+        r = leer_documento(consulta="seguridad")
+    finally:
+        restaurar_documento_actual(token)
+
+    assert "NO afirmes que el documento no menciona algo" in r
+    assert "NO son" in r and "consecutivos" in r
+
+
+def test_el_documento_NO_entra_en_la_memoria_permanente(monkeypatch):
+    """Los trozos de un adjunto no deben acabar en ChromaDB: un documento
+    que se lee una vez no es una conversacion, y ensuciaria para siempre las
+    busquedas de recuerdos."""
+    import src.rag as rag
+    from src.documentos import buscar_en_documento
+
+    def prohibido(*a, **kw):
+        raise AssertionError("buscar en un adjunto NO debe tocar el indice")
+
+    monkeypatch.setattr(rag, "_coleccion", prohibido)
+
+    texto = "\n".join(f"Seccion {i}: contenido sobre redes." for i in range(200))
+    buscar_en_documento(texto, "redes")
+
+
+# --- leer_fichero: rutas tal y como las escribe una persona (01/08) --------
+# Jordi intento adjuntar un PDF por la CLI cuatro veces y fallaron las
+# cuatro, ninguna por culpa suya. La funcionalidad estaba bien y aun asi era
+# inusable, que a efectos practicos es lo mismo que estar rota.
+
+
+def test_una_carpeta_se_explica_como_carpeta(tmp_path):
+    """Antes: "[Errno 13] Permission denied", que manda a buscar un problema
+    de permisos que no existe."""
+    from src.documentos import DocumentoNoValido, leer_fichero
+
+    with pytest.raises(DocumentoNoValido) as error:
+        leer_fichero(str(tmp_path))
+
+    assert "carpeta" in str(error.value)
+
+
+def test_acepta_la_ruta_con_el_ampersand_de_windows(tmp_path):
+    r"""`& 'C:\...'` es LITERALMENTE lo que pega Windows con "Copiar como
+    ruta" y al arrastrar un fichero a PowerShell."""
+    from src.documentos import leer_fichero
+
+    fichero = tmp_path / "informe.pdf"
+    fichero.write_bytes(b"%PDF-1.4 contenido")
+
+    datos, nombre = leer_fichero(f"& '{fichero}'")
+
+    assert datos == b"%PDF-1.4 contenido"
+    assert nombre == "informe.pdf"
+
+
+def test_acepta_la_ruta_entre_comillas(tmp_path):
+    """Windows las pone solo cuando la ruta lleva espacios - y son del
+    SHELL, no del nombre del fichero."""
+    from src.documentos import leer_fichero
+
+    fichero = tmp_path / "con espacios.pdf"
+    fichero.write_bytes(b"x")
+
+    for entrecomillada in (f'"{fichero}"', f"'{fichero}'"):
+        datos, nombre = leer_fichero(entrecomillada)
+        assert nombre == "con espacios.pdf"
+        assert datos == b"x"
+
+
+def test_un_fichero_que_no_existe_lo_dice_claro(tmp_path):
+    from src.documentos import DocumentoNoValido, leer_fichero
+
+    with pytest.raises(DocumentoNoValido) as error:
+        leer_fichero(str(tmp_path / "no_existe.pdf"))
+
+    assert "No encuentro" in str(error.value)
+
+
+def test_una_ruta_vacia_no_revienta():
+    from src.documentos import DocumentoNoValido, leer_fichero
+
+    for vacia in ("", "   ", None):
+        with pytest.raises(DocumentoNoValido):
+            leer_fichero(vacia)
+
+
+def test_los_espacios_sobrantes_no_estorban(tmp_path):
+    """Al pegar una ruta se cuela un espacio delante o detras mas veces de
+    las que parece."""
+    from src.documentos import leer_fichero
+
+    fichero = tmp_path / "informe.pdf"
+    fichero.write_bytes(b"x")
+
+    _datos, nombre = leer_fichero(f"   {fichero}  ")
+
+    assert nombre == "informe.pdf"
+
+
+# --- Cache de vectores y preparacion previa (01/08) ------------------------
+# Con un PDF real de 1,1 MB cada llamada a leer_documento tardaba 40-69
+# SEGUNDOS porque re-troceaba y re-incrustaba el documento entero. Y como
+# ese mismo dia la tool se marco repetible=True, el modelo la llamo SEIS
+# veces en un turno: ~4 minutos parado hasta agotar las rondas de tools.
+# Los dos cambios eran correctos por separado y desastrosos juntos.
+
+
+def test_los_vectores_de_un_documento_se_calculan_UNA_vez(monkeypatch):
+    import src.documentos as d
+
+    veces = []
+    real = d.trocear
+
+    def contar(textos):
+        veces.append(len(textos))
+        return [[0.1] * 8 for _ in textos]
+
+    monkeypatch.setattr("src.rag.incrustar_textos", contar)
+    d._CACHE_VECTORES.clear()
+    texto = "\n".join(f"Seccion {i}: contenido variado." for i in range(400))
+
+    d.buscar_en_documento(texto, "primera consulta")
+    d.buscar_en_documento(texto, "segunda consulta")
+    d.buscar_en_documento(texto, "tercera consulta")
+
+    # 1 vez el documento entero (cientos de trozos) + 1 texto por consulta.
+    grandes = [n for n in veces if n > 5]
+    assert len(grandes) == 1, f"el documento se incrusto {len(grandes)} veces"
+    assert veces.count(1) == 3, "la consulta si se incrusta en cada llamada"
+    assert real is d.trocear
+
+
+def test_la_cache_no_crece_sin_limite(monkeypatch):
+    """Vive en RAM mientras el proceso siga vivo: una tarde adjuntando PDFs
+    se comeria la memoria."""
+    import src.documentos as d
+
+    monkeypatch.setattr(
+        "src.rag.incrustar_textos", lambda textos: [[0.1] * 8 for _ in textos]
+    )
+    d._CACHE_VECTORES.clear()
+
+    for n in range(10):
+        texto = "\n".join(f"Doc {n} seccion {i}: contenido." for i in range(400))
+        d.buscar_en_documento(texto, "algo")
+
+    assert len(d._CACHE_VECTORES) <= d._MAX_DOCUMENTOS_EN_CACHE
+
+
+def test_preparar_deja_la_busqueda_lista(monkeypatch):
+    """Lo que convierte "40 segundos en mitad de tu pregunta" en "40
+    segundos al adjuntar, avisando"."""
+    import src.documentos as d
+
+    llamadas = []
+    monkeypatch.setattr(
+        "src.rag.incrustar_textos",
+        lambda textos: llamadas.append(len(textos)) or [[0.1] * 8 for _ in textos],
+    )
+    d._CACHE_VECTORES.clear()
+    texto = "\n".join(f"Seccion {i}: contenido." for i in range(400))
+    monkeypatch.setattr(d, "extraer_texto", lambda a: texto)
+
+    fragmentos = d.preparar(d.DocumentoAdjunto(datos=b"x", nombre="a.pdf", tipo="pdf"))
+
+    assert fragmentos > 0
+    de_preparar = list(llamadas)
+    d.buscar_en_documento(texto, "una consulta")
+    # Tras preparar, la busqueda solo incrusta la CONSULTA (1 texto).
+    assert llamadas[len(de_preparar):] == [1]
+
+
+def test_preparar_no_lanza_si_el_documento_es_ilegible(monkeypatch):
+    """Un fallo al preparar no puede impedir que el documento se acepte."""
+    import src.documentos as d
+
+    def ilegible(a):
+        raise d.DocumentoNoValido("PDF dañado")
+
+    monkeypatch.setattr(d, "extraer_texto", ilegible)
+
+    assert d.preparar(d.DocumentoAdjunto(datos=b"x", nombre="a.pdf", tipo="pdf")) == 0
+
+
+def test_preparar_no_hace_nada_si_el_documento_cabe_entero(monkeypatch):
+    import src.documentos as d
+
+    def prohibido(textos):
+        raise AssertionError("un documento corto no necesita vectores")
+
+    monkeypatch.setattr("src.rag.incrustar_textos", prohibido)
+    monkeypatch.setattr(d, "extraer_texto", lambda a: "Documento cortito.")
+
+    assert d.preparar(d.DocumentoAdjunto(datos=b"x", nombre="a.pdf", tipo="pdf")) == 0

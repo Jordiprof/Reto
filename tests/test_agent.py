@@ -3,7 +3,15 @@
 # aqui sustituimos ese router por uno FALSO tras crear el agente - no toca
 # ni red ni la cadena real.
 from src.agent import Agente
+from src.documentos import DocumentoAdjunto
 from src.llm_errors import ErrorAutenticacion
+
+# Doble de documento adjunto. Era un str suelto hasta el 01/08; se pasa al
+# tipo REAL porque desde entonces Agente lee su .nombre para avisar al modelo
+# de que hay un adjunto (ver _mensajes_del_turno). Un doble que no cumple el
+# tipo prometido esconde justo esa clase de fallo.
+_ADJUNTO_FALSO = DocumentoAdjunto(datos=b"x", nombre="falso.pdf", tipo="pdf")
+
 
 
 class _RouterFalso:
@@ -83,11 +91,11 @@ def test_preguntar_fija_el_documento_pendiente_durante_la_llamada():
 
     agente = Agente(system_prompt="p", proveedor="groq", api_key="x", modelo="fake")
     agente.router = _RouterQueMira()
-    agente.documento_pendiente = "un-adjunto-de-mentira"
+    agente.documento_pendiente = _ADJUNTO_FALSO
 
     agente.preguntar("Hola")
 
-    assert visto_durante_la_llamada == ["un-adjunto-de-mentira"]
+    assert visto_durante_la_llamada == [_ADJUNTO_FALSO]
 
 
 def test_el_documento_se_restaura_a_None_despues_del_turno():
@@ -98,7 +106,7 @@ def test_el_documento_se_restaura_a_None_despues_del_turno():
 
     agente = Agente(system_prompt="p", proveedor="groq", api_key="x", modelo="fake")
     agente.router = _RouterFalso(texto="ok")
-    agente.documento_pendiente = "un-adjunto-de-mentira"
+    agente.documento_pendiente = _ADJUNTO_FALSO
 
     agente.preguntar("Hola")
 
@@ -110,7 +118,7 @@ def test_el_documento_se_restaura_incluso_si_el_router_falla():
 
     agente = Agente(system_prompt="p", proveedor="groq", api_key="x", modelo="fake")
     agente.router = _RouterFalso(error=ErrorAutenticacion("Groq", "clave invalida"))
-    agente.documento_pendiente = "un-adjunto-de-mentira"
+    agente.documento_pendiente = _ADJUNTO_FALSO
 
     agente.preguntar("Hola")
 
@@ -130,8 +138,86 @@ def test_limpiar_historial_tambien_suelta_el_documento():
     sin esto, una charla nueva podria seguir leyendo el PDF de la charla
     anterior sin que nadie lo hubiera vuelto a pedir."""
     agente = Agente(system_prompt="p", proveedor="groq", api_key="x", modelo="fake")
-    agente.documento_pendiente = "un-adjunto-de-mentira"
+    agente.documento_pendiente = _ADJUNTO_FALSO
 
     agente.limpiar_historial()
 
     assert agente.documento_pendiente is None
+
+
+# --- El aviso de documento adjunto (bug real del 01/08) --------------------
+# Jordi adjunto un PDF, el bot dijo "Documento recibido", pregunto "de que
+# trata" y el modelo contesto "por favor sube el PDF". Verificado con el log
+# (que registra cada tool ejecutada): NUNCA llamo a leer_documento. La
+# tuberia funcionaba; lo que faltaba era que el modelo SUPIERA que hay un
+# documento - el "Documento recibido" es un mensaje del bot a Telegram y no
+# entra en el historial.
+
+
+def _agente_con(monkeypatch, documento=None):
+    from types import SimpleNamespace
+
+    from src.agent import Agente
+
+    monkeypatch.setattr("src.agent.construir_cadena", lambda *a, **kw: None)
+    agente = Agente("SOY EL PROMPT", "groq", "x", "m")
+    visto = []
+    agente.router = SimpleNamespace(
+        responder=lambda mensajes, tools=None: visto.append(mensajes) or "ok"
+    )
+    agente.documento_pendiente = documento
+    return agente, visto
+
+
+def test_sin_documento_el_historial_va_intacto(monkeypatch):
+    agente, visto = _agente_con(monkeypatch)
+
+    agente.preguntar("hola")
+
+    assert visto[0] == agente.historial
+
+
+def test_con_documento_se_avisa_al_modelo(monkeypatch):
+    from src.documentos import DocumentoAdjunto
+
+    doc = DocumentoAdjunto(datos=b"x", nombre="informe.pdf", tipo="pdf")
+    agente, visto = _agente_con(monkeypatch, doc)
+
+    agente.preguntar("de que trata")
+
+    ultimo = visto[0][-1]["content"]
+    assert "informe.pdf" in ultimo
+    assert "leer_documento" in ultimo
+    assert "de que trata" in ultimo, "la pregunta original no puede perderse"
+
+
+def test_el_aviso_NO_se_guarda_en_el_historial(monkeypatch):
+    """Es andamiaje del turno. Si se guardara, acabaria en el JSON, en el
+    RAG y repetido en todos los turnos siguientes."""
+    from src.documentos import DocumentoAdjunto
+
+    doc = DocumentoAdjunto(datos=b"x", nombre="informe.pdf", tipo="pdf")
+    agente, _visto = _agente_con(monkeypatch, doc)
+
+    agente.preguntar("de que trata")
+
+    guardado = " ".join(m["content"] for m in agente.historial)
+    assert "Aviso del sistema" not in guardado
+    assert "informe.pdf" not in guardado
+
+
+def test_el_aviso_no_rompe_a_gemini(monkeypatch):
+    """Por esto el aviso se pega al mensaje del usuario en vez de mandarse
+    como role="system": Gemini no admite "system" dentro de la lista y su
+    traductor se queda con el ULTIMO, asi que un system inyectado aqui
+    habria BORRADO el SYSTEM_PROMPT de verdad."""
+    from src.documentos import DocumentoAdjunto
+    from src.llm_client import traducir_historial_gemini
+
+    doc = DocumentoAdjunto(datos=b"x", nombre="informe.pdf", tipo="pdf")
+    agente, visto = _agente_con(monkeypatch, doc)
+
+    agente.preguntar("de que trata")
+    _contents, instruccion = traducir_historial_gemini(visto[0])
+
+    assert instruccion == "SOY EL PROMPT"

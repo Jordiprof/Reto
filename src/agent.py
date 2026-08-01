@@ -16,7 +16,7 @@ from src.storage import guardar_conversacion
 # solo las categorias activas, porque la ficha de cada tool viaja en CADA
 # peticion (coste en todos los turnos) y el modelo elige peor cuantas mas
 # opciones parecidas tiene delante.
-from src.tools import categorias_por_defecto, tools_de
+from src.tools import categorias_por_defecto, fijar_bandeja, restaurar_bandeja, tools_de
 
 
 class Agente:
@@ -47,6 +47,11 @@ class Agente:
         # F5.5 #7: el ultimo PDF/Word que le han dado a JIM (/documento en
         # CLI, adjunto en Telegram). None = no hay ninguno puesto.
         self.documento_pendiente: DocumentoAdjunto | None = None
+        # Lo que una tool ha dejado para ENSEÑAR en este turno y no cabe en
+        # el texto de la respuesta (hoy: la foto de la NASA). Lo recoge quien
+        # sepa mostrarlo -Telegram con send_photo- y lo ignora quien no -la
+        # CLI-. Se vacia en cada turno; ver fijar_bandeja en tools.py.
+        self.media_pendiente: list = []
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
@@ -75,12 +80,17 @@ class Agente:
         # restaurara, un turno sin documento heredaria el del turno
         # anterior mientras el hilo siga vivo.
         token = fijar_documento_actual(self.documento_pendiente)
+        # La bandeja se VACIA (no se sustituye) para que quien ya tenga la
+        # referencia -telegram_bot- siga mirando la misma lista, y para que
+        # una foto del turno anterior no se enseñe otra vez en este.
+        self.media_pendiente.clear()
+        token_bandeja = fijar_bandeja(self.media_pendiente)
         try:
             # 2) El router prueba la cadena (primario + fallbacks) y resuelve
             #    por dentro el tool-calling con la calculadora (F4.3-F4.5).
             #    Solo lanza ErrorLLM si TODOS los proveedores fallaron.
             respuesta = self.router.responder(
-                self.historial, tools=tools_de(self.categorias_activas)
+                self._mensajes_del_turno(), tools=tools_de(self.categorias_activas)
             )
         except ErrorLLM as error:
             # F5.0/T2: un fallo real (auth, conexion, limite...) NO se
@@ -91,6 +101,7 @@ class Agente:
             return error.mensaje_usuario
         finally:
             restaurar_documento_actual(token)
+            restaurar_bandeja(token_bandeja)
 
         self.historial.append({"role": "assistant", "content": respuesta})
         return respuesta
@@ -106,6 +117,50 @@ class Agente:
         # mesa - si no se soltara aqui, una charla nueva podria seguir
         # leyendo un PDF de la charla anterior sin que nadie lo haya pedido.
         self.documento_pendiente = None
+
+    def _mensajes_del_turno(self) -> list:
+        """El historial que se manda al modelo en ESTE turno.
+
+        Normalmente es el historial tal cual. La excepcion es cuando hay un
+        documento adjunto: entonces se antepone un aviso al ULTIMO mensaje
+        del usuario.
+
+        POR QUE HACE FALTA (bug real del 01/08, encontrado por Jordi
+        probando y diagnosticado con el log): adjuntó un PDF, el bot
+        contesto "Documento recibido", pregunto "de que trata" y el modelo
+        respondio "por favor sube el PDF". **El modelo nunca llamo a
+        leer_documento** - verificado por AUSENCIA en el log, que registra
+        cada tool ejecutada. Y no era un fallo del codigo (la tuberia
+        funciona de punta a punta): era que **el modelo no tenia forma de
+        saber que habia un documento**. El "Documento recibido" es un
+        mensaje del bot a Telegram, no entra en el historial; lo unico que
+        veia el modelo era una herramienta disponible, y tenia que ADIVINAR
+        por como estuviera redactada la pregunta. A veces acertaba y a
+        veces no - de ahi que funcionara unos dias y fallara otros.
+
+        POR QUE UN AVISO PEGADO AL MENSAJE Y NO UN MENSAJE role="system":
+        Gemini no admite "system" dentro de la lista, y su traductor se
+        queda con el ULTIMO que encuentre (ver traducir_historial_gemini) -
+        inyectar uno aqui le habria borrado el SYSTEM_PROMPT de verdad.
+        Pegarlo al texto funciona igual en los tres proveedores.
+
+        NO se toca self.historial: el aviso es andamiaje de este turno, no
+        algo que dijera JIM. Si se guardara, acabaria en el JSON, en el RAG
+        y en todos los turnos siguientes.
+        """
+        if self.documento_pendiente is None or not self.historial:
+            return self.historial
+
+        ultimo = self.historial[-1]
+        aviso = (
+            f"[Aviso del sistema: JIM acaba de adjuntar el documento "
+            f"«{self.documento_pendiente.nombre}». Si la pregunta va sobre él, "
+            f"usa la herramienta leer_documento (no lleva argumentos). NO le "
+            f"pidas que lo suba: ya lo ha hecho.]\n\n"
+        )
+        return self.historial[:-1] + [
+            {**ultimo, "content": aviso + ultimo["content"]}
+        ]
 
     def resumir(self) -> str:
         """F3.6: pide al modelo un resumen de la conversacion hasta

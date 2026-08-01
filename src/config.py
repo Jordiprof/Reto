@@ -120,12 +120,34 @@ MODELOS = {
     # nombre distinto). Se descartaron por error 403 (piden suscripcion
     # Pro): glm-5.1, kimi-k2.6, kimi-k2.7-code, deepseek-v4-flash, qwen3.5
     # y qwen3.5:397b.
+    # RETIRADO el 31/07/2026 y quitado de aqui el 01/08: "minimax-m2.5"
+    # devolvia HTTP 410 con el mensaje "was retired at 2026-07-31". Se
+    # descubrio porque Jordi lo eligio en el menu y TODOS sus mensajes
+    # cayeron al fallback. Es el aviso del diario cumpliendose sobre este
+    # mismo repo: un catalogo de modelos NO es una constante, envejece solo
+    # y sin avisar. Los otros cinco se reverificaron ese dia, uno a uno y
+    # con llamada real (con tools y sin tools): los cinco responden.
+    # Comprobado en vivo el 01/08 al buscarle sustituto: "minimax-m2.7" y
+    # "minimax-m2.7:cloud" dan 403 ("this model requires a subscription"),
+    # asi que NO son la alternativa - caen en el mismo saco que glm-5.1 y
+    # los kimi. El relevo gratuito de minimax-m2.5 es "minimax-m3", que ya
+    # estaba en esta lista y responde: no hay nada que añadir.
+    # AUDITADO EL CATALOGO ENTERO el 01/08 contra la lista oficial de
+    # modelos cloud de Ollama (ollama.com/search?c=cloud) y probando LOS 17
+    # con la clave real. Resultado: 7 gratis, 9 dan 403 (piden Pro) y 3 no
+    # existen. La pagina de precios NO dice cuales son gratis - solo habla
+    # de "niveles"-, asi que la unica fuente fiable es la llamada real.
+    # Los 6 de aqui son los gratis con soporte de tools verificado uno a uno.
+    #
+    # Se añade "gpt-oss:20b" (01/08): gratis, con tools, y es el "nivel 1"
+    # ligero de Ollama. Interesa tenerlo a mano precisamente porque Groq se
+    # queda sin cuota a menudo y este es el mas barato de la cadena.
     "ollama": [
         "gpt-oss:120b",
+        "gpt-oss:20b",
         "gemma4:31b",
         "minimax-m3",
         "nemotron-3-super",
-        "minimax-m2.5",
         "nemotron-3-ultra",
     ],
     # Gemini: "gemini-3.0-flash" no existe (404 real) y "gemini-2.5-pro"
@@ -347,6 +369,31 @@ def obtener_clave_nasa() -> str:
     proyecto. Lo unico que se pierde es cuota.
     """
     return os.environ.get(NASA_API_KEY_ENV, "").strip() or _NASA_CLAVE_DEMO
+
+
+# F5.5 #8 - Voz. La voz de Piper es un fichero .onnx de 63 MB que se
+# descarga aparte (no lo instala pip) y vive en voces/, ignorada por git
+# igual que .modelos_cache/: es un binario descargado, no codigo del
+# proyecto. La variable del .env existe para poder apuntar a otra voz sin
+# tocar el codigo, pero tiene un valor por defecto util para que el
+# proyecto funcione recien clonado + descargada la voz recomendada.
+PIPER_VOZ_ENV = "PIPER_VOZ"
+_VOZ_POR_DEFECTO = "es_ES-davefx-medium.onnx"
+VOCES_DIR = Path(__file__).resolve().parent.parent / "voces"
+
+
+def obtener_ruta_voz() -> Path:
+    """Ruta del modelo de voz de Piper.
+
+    Devuelve la ruta AUNQUE NO EXISTA el fichero: quien llama decide que
+    hacer (voz.motivo_no_disponible() la usa justo para poder decir "falta
+    esto y se descarga asi"). Lanzar aqui obligaria a envolver en try cada
+    sitio que solo quiere saber donde deberia estar.
+    """
+    configurada = os.environ.get(PIPER_VOZ_ENV, "").strip()
+    if configurada:
+        return Path(configurada)
+    return VOCES_DIR / _VOZ_POR_DEFECTO
 
 
 # ---------------------------------------------------------------------------

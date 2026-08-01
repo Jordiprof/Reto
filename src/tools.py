@@ -18,6 +18,7 @@ import re
 
 # Callable: el tipo "una funcion cualquiera", para el type hint del registro.
 from collections.abc import Callable
+from contextvars import ContextVar
 
 # dataclass: crea una clase "contenedor de datos" sin escribir __init__
 # a mano. frozen=True la hace inmutable: el registro de herramientas no
@@ -242,7 +243,17 @@ def buscar_en_recuerdos(consulta: str) -> str:
     """
     from src.rag import buscar
 
-    resultados = buscar(consulta)
+    # 5 y no 3 (01/08). Medido con un caso real: Jordi pregunto por Telegram
+    # "cual es mi color favorito" y el bot dijo que no lo sabia TENIENDO el
+    # dato indexado. Al mirar la busqueda a mano, los 3 primeros resultados
+    # eran las tres VECES QUE HABIA PREGUNTADO lo mismo, y la respuesta caia
+    # en la 4a posicion. Con n=3 no llegaba; con n=5 si (comprobado).
+    #
+    # No arregla el limite de fondo -que se indexa mensaje a mensaje, y por
+    # eso las preguntas compiten con las respuestas; el arreglo de verdad es
+    # indexar PARES pregunta-respuesta, en el backlog- pero sube mucho la
+    # probabilidad de acertar por dos recuerdos mas de contexto.
+    resultados = buscar(consulta, 5)
     if not resultados:
         # Sin envolver a proposito: esta frase la escribimos NOSOTROS, no
         # sale de ninguna conversacion. Envolverla en <recuerdo> seria
@@ -551,6 +562,59 @@ def consultar_tiempo(ciudad: str, dias: int = 0) -> str:
 _APOD_URL = "https://api.nasa.gov/planetary/apod"
 
 
+# --- Salida binaria: la "bandeja" de imagenes del turno --------------------
+# ADR-006 avisaba de que la primera tool que devolviera algo que NO es texto
+# obligaria a tocar la tuberia, porque _ejecutar_tool devuelve `str`. Aqui
+# esta, y se resuelve SIN cambiar esa firma: la tool sigue devolviendo texto
+# para el modelo y, ademas, DEJA la imagen en una bandeja aparte que recoge
+# quien sepa enseñarla (Telegram con send_photo; la CLI la ignora y enseña
+# el enlace, que es lo unico que puede hacer una terminal).
+#
+# POR QUE UNA LISTA COMPARTIDA Y NO UN ContextVar CON EL VALOR DENTRO:
+# `documentos.py` usa un ContextVar para la ENTRADA y funciona porque se
+# fija ANTES de lanzar el hilo. Aqui es al reves -es SALIDA- y eso no
+# valdria: asyncio.to_thread ejecuta la funcion en una COPIA del contexto,
+# asi que un .set() hecho dentro del hilo NO se ve desde fuera. Lo que si
+# cruza esa frontera es MUTAR un objeto que ya existia: el ContextVar lleva
+# la referencia a una lista que creo Agente.preguntar, la tool le hace
+# append, y el que la creo ve el cambio porque es la MISMA lista.
+_BANDEJA: ContextVar[list | None] = ContextVar("bandeja_media", default=None)
+
+
+def fijar_bandeja(bandeja: list | None):
+    """La llama Agente.preguntar al empezar el turno. Devuelve el token
+    para restaurarla al salir (mismo contrato que fijar_documento_actual)."""
+    return _BANDEJA.set(bandeja)
+
+
+def restaurar_bandeja(token) -> None:
+    _BANDEJA.reset(token)
+
+
+def _dejar_imagen(url: str, titulo: str) -> None:
+    """Deja una imagen en la bandeja del turno, si hay bandeja y si la URL
+    es de fiar.
+
+    La URL viene DENTRO de la respuesta de una API externa, o sea que es
+    `contenido_externo`: aunque el endpoint sea fijo, lo que devuelve no lo
+    escribimos nosotros. Y esta URL no la abrimos aqui - se la damos a
+    Telegram para que la descargue EL, asi que el guardian anti-SSRF de
+    red_segura no aplica (no protege una descarga que hace otro). Por eso se
+    comprueba a mano y de forma restrictiva: https y un dominio de la NASA.
+    Sin esto, una respuesta manipulada de la API podria hacer que Telegram
+    fuese a buscar una imagen a donde dijera un tercero.
+    """
+    bandeja = _BANDEJA.get()
+    if bandeja is None or not url:
+        return
+    if not url.startswith("https://"):
+        return
+    host = url.split("/")[2].lower() if len(url.split("/")) > 2 else ""
+    if host != "nasa.gov" and not host.endswith(".nasa.gov"):
+        return
+    bandeja.append({"tipo": "foto", "url": url, "titulo": titulo[:200]})
+
+
 class ArgsFotoAstronomica(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -634,6 +698,13 @@ def consultar_foto_astronomica(fecha: str = "") -> str:
         cabecera += f" — de {autor}"
     if datos.get("media_type") == "video":
         cabecera += " [es un vídeo, no una foto]"
+    else:
+        # Solo si es FOTO: un APOD puede ser un video de YouTube, y mandarle
+        # esa URL a send_photo daria un error de Telegram. Se deja en la
+        # bandeja para que el canal la enseñe si sabe (Telegram) o la ignore
+        # si no (la CLI). Peticion de Jordi (01/08): recibia la descripcion
+        # y el enlace, pero nunca la imagen.
+        _dejar_imagen(enlace, titulo)
 
     # El enlace va ETIQUETADO ("Imagen: ..."), no suelto en una linea: sin
     # etiqueta el modelo no sabia que era y no lo pasaba al usuario (lo noto
@@ -812,18 +883,61 @@ def resumir_url(url: str) -> str:
 # mesa ahora mismo" (ver src/documentos.py: fijar_documento_actual/
 # documento_actual). Por eso NO hace falta guardian: sin argumento que
 # rellenar, no hay path traversal ni SSRF posibles.
-_MAX_CARACTERES_DOCUMENTO = 8000
+# SUBIDO de 8.000 a 20.000 el 01/08 (decision de Jordi tras probarlo).
+#
+# El coste esta medido y hay que tenerlo presente: este texto se queda en el
+# historial y se REENVIA en cada turno siguiente (AUD-03), asi que pasa de
+# ~2.000 a ~5.000 tokens por documento leido - unos 30.000 tokens extra a
+# los 10 turnos. Se acepta porque con 8.000 el resumen general de un
+# documento de 52 fragmentos salia cojo: el modelo veia solo los 13
+# primeros y avisaba el mismo de que le faltaba el resto.
+#
+# NO se sube mas: a partir de aqui el documento empieza a desplazar a la
+# conversacion en el contexto, que es el problema que AUD-03 ya tiene
+# abierto. Si hiciera falta llegar mas lejos, la solucion no es subir esto
+# otra vez sino resumir por bloques (resumir cada tercio y luego juntar).
+_MAX_CARACTERES_DOCUMENTO = 20000
 
 
 class ArgsLeerDocumento(BaseModel):
-    """Sin campos a proposito: el modelo no elige NADA sobre que fichero
-    leer, solo que la tool actue sobre el que ya se le dio."""
+    """El modelo sigue sin elegir NADA sobre QUE fichero leer -no hay
+    parametro de ruta, y por eso esta tool no necesita guardian-. Lo unico
+    que puede decir es QUE BUSCA dentro del que ya se le dio."""
     model_config = ConfigDict(extra="forbid")
 
+    # 01/08: nace del troceo. Con documentos largos ya no se manda el
+    # principio por el principio, sino los trozos que hablan de lo que se
+    # pregunta - y para elegirlos hace falta saber que se pregunta.
+    # Opcional: si no se rellena, se devuelve el principio (que es lo
+    # correcto para "¿de que trata?", donde la relevancia no aplica).
+    consulta: str = Field(
+        default="",
+        description=(
+            "Que buscar DENTRO del documento, con las palabras del usuario "
+            "(ej. 'medidas de seguridad', 'conclusiones', 'que dice del "
+            "despliegue'). Dejalo vacio solo si te piden un resumen general "
+            "o de que trata. En documentos largos esto decide QUE PARTES "
+            "llegas a ver, asi que rellenalo siempre que la pregunta sea "
+            "sobre algo concreto."
+        ),
+        max_length=300,
+    )
 
-def leer_documento() -> str:
-    """Extrae el texto del PDF/Word que se le dio a JIM en este turno y lo
-    entrega envuelto en <fuente>, igual que resumir_url."""
+
+def leer_documento(consulta: str = "") -> str:
+    """Extrae el texto del PDF/Word que se le dio a JIM y lo entrega
+    envuelto en <fuente>, igual que resumir_url.
+
+    Si el documento cabe entero, se manda entero. Si no cabe, hay DOS
+    caminos distintos y la diferencia importa (01/08):
+
+    - Con `consulta`: se trocea el documento y se mandan los trozos que
+      HABLAN DE ESO, esten donde esten. Asi el tamaño del documento deja de
+      ser un techo: en un PDF de 40 secciones se puede preguntar por la 38.
+    - Sin `consulta`: se manda el PRINCIPIO. Para "¿de que trata?" es lo
+      correcto - la relevancia no significa nada cuando la pregunta es el
+      documento entero, y el principio suele traer titulo e introduccion.
+    """
     from src.documentos import DocumentoNoValido, documento_actual, extraer_texto
 
     adjunto = documento_actual()
@@ -844,9 +958,36 @@ def leer_documento() -> str:
             "documento escaneado sin OCR, o estar vacío)."
         )
 
-    recortado = texto[:_MAX_CARACTERES_DOCUMENTO]
     if len(texto) <= _MAX_CARACTERES_DOCUMENTO:
-        return _envolver(_ETIQUETA_FUENTE, recortado)
+        return _envolver(_ETIQUETA_FUENTE, texto)
+
+    # No cabe entero. Si sabemos QUE se busca, se busca (01/08).
+    if consulta.strip():
+        from src.documentos import buscar_en_documento, trocear
+
+        total = len(trocear(texto))
+        elegidos = buscar_en_documento(texto, consulta.strip())
+        partes = [
+            f"[fragmento {i + 1} de {total}]\n{trozo}" for i, trozo in elegidos
+        ]
+        cuerpo = "\n\n(...)\n\n".join(partes)[:_MAX_CARACTERES_DOCUMENTO]
+        # Mismo criterio que el aviso de abajo: se dice PRIMERO y como
+        # prohibicion. Aqui ademas hay que decir que lo que llega NO es el
+        # documento seguido, o el modelo puede leer dos fragmentos lejanos
+        # como si fueran consecutivos y sacar una conclusion falsa.
+        aviso = (
+            f"⚠️ «{adjunto.nombre}» tiene {len(texto)} caracteres y NO te llega "
+            f"entero. Lo he troceado en {total} fragmentos y te mando los "
+            f"{len(elegidos)} más relacionados con «{consulta.strip()}», con su "
+            "número para que sepas de qué parte del documento salen. NO son "
+            "consecutivos: entre uno y otro falta texto (marcado con «(...)»). "
+            "NO afirmes que el documento no menciona algo: solo has visto los "
+            "fragmentos que te he mandado. Si necesitas otra parte, vuelve a "
+            "llamarme con una consulta distinta.\n\n"
+        )
+        return aviso + _envolver(_ETIQUETA_FUENTE, cuerpo)
+
+    recortado = texto[:_MAX_CARACTERES_DOCUMENTO]
 
     # DEFENSA CONTRA ALUCINACION (31/07, encontrada probando en real).
     #
@@ -874,6 +1015,9 @@ def leer_documento() -> str:
         "el documento no menciona algo, ni que no trata un tema: no has visto el "
         "final. Si te preguntan por lo que falta, di que solo has leído esa "
         "primera parte.\n"
+        "Para ver OTRAS partes, vuelve a llamarme rellenando `consulta` con lo "
+        "que buscas: entonces te mando los fragmentos que hablen de eso, estén "
+        "donde estén en el documento.\n"
     )
     return aviso + _envolver(_ETIQUETA_FUENTE, recortado)
 
@@ -1086,7 +1230,19 @@ HERRAMIENTAS = {
             "Existe una lista fija de sitios autorizados que TU NO PUEDES "
             "VER. Si te preguntan a que webs puedes entrar, no te la "
             "inventes ni digas que no hay lista: di que la lista existe y "
-            "que puede verla entera con el comando /tools."
+            "que puede verla entera con el comando /tools. "
+            # 01/08, el fallo CONTRARIO al de arriba y por su culpa: como el
+            # modelo no puede ver la lista, empezo a dar por hecho que las
+            # URLs NO estaban en ella y a rechazarlas SIN LLAMAR A LA TOOL.
+            # Rechazo cloud.google.com... que SI esta permitida (verificado
+            # contra el .env real: 36 dominios, la lista y el menu
+            # concuerdan). Y encima, sobre ese rechazo falso, se invento que
+            # "solicitaria el permiso". Decirle que no puede ver la lista
+            # sin decirle QUE HACER con esa incertidumbre le dejaba adivinar.
+            "COMO NO PUEDES VER LA LISTA, NUNCA ADIVINES SI UNA DIRECCION "
+            "ESTA O NO: llama SIEMPRE a la herramienta y deja que ella te "
+            "conteste. Es gratis y es la unica forma de saberlo. No digas "
+            "'no tengo acceso a esa URL' sin haberlo intentado antes."
         ),
         categoria="web",
     ),
@@ -1094,11 +1250,21 @@ HERRAMIENTAS = {
         funcion=leer_documento,
         args=ArgsLeerDocumento,
         descripcion=(
-            "Lee el texto del PDF o Word que te acaban de dar (adjunto en Telegram, "
-            "o /documento en la CLI) para que puedas resumirlo o responder preguntas "
-            "sobre el. Sin argumentos: siempre actua sobre el ultimo documento dado, "
-            "nunca sobre uno que tu elijas. Si no hay ninguno, te lo dira."
+            "Lee el PDF o Word que te acaban de dar (adjunto en Telegram, o "
+            "/documento en la CLI) para resumirlo o responder sobre el. Actua "
+            "SIEMPRE sobre el ultimo documento dado, nunca sobre uno que tu "
+            "elijas. Si el documento es largo no cabe entero: pasa en "
+            "`consulta` lo que buscas y te devolvere los fragmentos que hablen "
+            "de eso (aunque esten al final del documento). Puedes llamarme "
+            "VARIAS VECES con consultas distintas para ir viendo otras partes."
         ),
+        # repetible=True (excepcion al default de LOG-07): con `consulta`
+        # esta tool pasa a ser una BUSQUEDA, y dos busquedas distintas en el
+        # mismo turno son legitimas y necesarias - es justo como el modelo
+        # llega al final de un documento largo. Sigue sin tener efectos
+        # fuera del proceso (solo lee bytes que ya estan en RAM), que es lo
+        # que el default protegia.
+        repetible=True,
         # repetible=False (el default, LOG-07): basta con el default -
         # dentro del MISMO turno reutilizar el resultado ya evita releer el
         # documento dos veces, y no hay ningun motivo para cambiarlo.

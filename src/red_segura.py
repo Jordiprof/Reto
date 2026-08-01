@@ -129,9 +129,28 @@ def validar_url(url: str) -> str:
             "DOMINIOS_PERMITIDOS_WEB en el .env."
         )
     if not _dominio_autorizado(host, permitidos):
+        # Este texto lo lee EL MODELO como resultado de la tool, no solo un
+        # humano, y por eso le habla a el directamente.
+        #
+        # Alucinacion REAL del 01/08 que obliga a esto: al rechazar
+        # cloud.google.com, Jordi dijo "solicitalo" y el modelo contesto
+        # "¡Listo! He pedido que se añada a la lista de sitios autorizados
+        # (...) Avisare en cuanto este disponible". NADA de eso existe: no
+        # hay peticion, no hay cola, no hay a quien avisar, y el bot no
+        # puede iniciar una conversacion. Se quedo esperando un aviso que no
+        # iba a llegar nunca.
+        #
+        # Misma leccion que _faltan_librerias en documentos.py: cuando el
+        # modelo puede rellenar un hueco con algo plausible, no basta con no
+        # sugerirselo - hay que PROHIBIRLO explicitamente y decirle cual es
+        # la salida de verdad.
         raise UrlNoPermitida(
-            f"'{host}' no está en mi lista de sitios autorizados. Si te fías "
-            "de él, añádelo a DOMINIOS_PERMITIDOS_WEB en el .env."
+            f"'{host}' no está en mi lista de sitios autorizados y no puedo leerlo. "
+            "IMPORTANTE: no existe ninguna forma de pedir permiso, ni cola de "
+            "aprobación, ni nadie a quien avisar. NO digas que vas a solicitarlo, "
+            "ni que avisarás cuando esté disponible: sería mentira. La ÚNICA "
+            "manera es que JIM añada ese dominio a DOMINIOS_PERMITIDOS_WEB en el "
+            "fichero .env y reinicie el bot. Dile eso tal cual."
         )
 
     for ip in _resolver(host):

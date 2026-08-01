@@ -1388,7 +1388,10 @@ def test_el_aviso_de_recorte_va_PRIMERO_y_prohibe_afirmar_ausencias():
         nombre = "Arquitectura.pdf"
         datos = b""
 
-    with patch.object(documentos, "extraer_texto", lambda a: "x" * 10_527):
+    # 25.000 y no los 10.527 del caso original: el tope subio a 20.000 el
+    # 01/08, asi que el documento tiene que seguir sin caber para que este
+    # test siga probando el recorte (que es lo suyo) y no otra cosa.
+    with patch.object(documentos, "extraer_texto", lambda a: "x" * 25_000):
         token = fijar_documento_actual(_Adjunto())
         try:
             resultado = leer_documento()
@@ -1400,7 +1403,7 @@ def test_el_aviso_de_recorte_va_PRIMERO_y_prohibe_afirmar_ausencias():
     # 2) PROHIBICIÓN explícita de justo el error que se cometió.
     assert "NO afirmes que el documento no menciona algo" in resultado
     # 3) Dice el tamaño real, para que se note cuánto falta.
-    assert "10527" in resultado
+    assert "25000" in resultado
 
 
 def test_sin_recorte_no_hay_aviso():
@@ -1426,3 +1429,119 @@ def test_sin_recorte_no_hay_aviso():
 
     assert "ATENCIÓN" not in resultado
     assert resultado.startswith("<fuente>")
+
+
+# --- Salida binaria: la bandeja de imagenes (01/08) -------------------------
+# ADR-006 avisaba de que la primera tool con salida NO textual obligaria a
+# tocar la tuberia (_ejecutar_tool devuelve str). Se resuelve sin cambiar esa
+# firma: la tool sigue devolviendo texto y ademas DEJA la imagen aparte.
+
+
+def test_la_foto_de_la_nasa_se_deja_en_la_bandeja(monkeypatch):
+    import src.tools as t
+
+    monkeypatch.setattr(t, "_pedir_json", lambda *a, **kw: {
+        "title": "Luna de ciervo", "date": "2026-08-01",
+        "url": "https://apod.nasa.gov/apod/image/2608/luna.jpg",
+        "explanation": "una luna", "media_type": "image",
+    })
+    bandeja = []
+    token = t.fijar_bandeja(bandeja)
+    try:
+        t.consultar_foto_astronomica()
+    finally:
+        t.restaurar_bandeja(token)
+
+    assert bandeja == [{
+        "tipo": "foto",
+        "url": "https://apod.nasa.gov/apod/image/2608/luna.jpg",
+        "titulo": "Luna de ciervo",
+    }]
+
+
+def test_un_APOD_que_es_VIDEO_no_va_a_la_bandeja(monkeypatch):
+    """Un APOD puede ser un video de YouTube; mandarle esa URL a send_photo
+    daria un error de Telegram."""
+    import src.tools as t
+
+    monkeypatch.setattr(t, "_pedir_json", lambda *a, **kw: {
+        "title": "Un video", "date": "2026-08-01",
+        "url": "https://www.youtube.com/embed/xyz",
+        "explanation": "...", "media_type": "video",
+    })
+    bandeja = []
+    token = t.fijar_bandeja(bandeja)
+    try:
+        t.consultar_foto_astronomica()
+    finally:
+        t.restaurar_bandeja(token)
+
+    assert bandeja == []
+
+
+def test_una_url_que_no_es_de_la_nasa_no_va_a_la_bandeja(monkeypatch):
+    """La URL viene DENTRO de la respuesta de una API externa. No la abrimos
+    nosotros: se la damos a Telegram para que la descargue EL, asi que el
+    guardian anti-SSRF no aplica. Sin esta comprobacion, una respuesta
+    manipulada mandaria a Telegram a buscar la imagen donde dijera un
+    tercero."""
+    import src.tools as t
+
+    for mala in (
+        "https://malicioso.example/foto.jpg",
+        "http://apod.nasa.gov/foto.jpg",          # sin TLS
+        "https://apod.nasa.gov.malicioso.net/x.jpg",  # el truco del sufijo
+    ):
+        monkeypatch.setattr(t, "_pedir_json", lambda *a, **kw: {
+            "title": "x", "date": "2026-08-01", "url": mala,
+            "explanation": "...", "media_type": "image",
+        })
+        bandeja = []
+        token = t.fijar_bandeja(bandeja)
+        try:
+            t.consultar_foto_astronomica()
+        finally:
+            t.restaurar_bandeja(token)
+
+        assert bandeja == [], f"{mala} no deberia haber entrado"
+
+
+def test_sin_bandeja_la_tool_funciona_igual(monkeypatch):
+    """La CLI no fija ninguna bandeja: la tool no puede reventar por eso."""
+    import src.tools as t
+
+    monkeypatch.setattr(t, "_pedir_json", lambda *a, **kw: {
+        "title": "Luna", "date": "2026-08-01",
+        "url": "https://apod.nasa.gov/x.jpg", "explanation": "...",
+        "media_type": "image",
+    })
+
+    assert "Luna" in t.consultar_foto_astronomica()
+
+
+def test_buscar_en_recuerdos_pide_mas_de_tres(monkeypatch):
+    """01/08, caso real: Jordi pregunto "cual es mi color favorito" y el bot
+    dijo no saberlo TENIENDO el dato indexado. Los 3 primeros resultados
+    eran las tres veces que habia preguntado lo mismo y la respuesta caia en
+    la 4a posicion. Con 3 no llegaba."""
+    import src.rag as rag
+
+    pedidos = []
+    monkeypatch.setattr(
+        rag, "buscar", lambda consulta, n=3: pedidos.append(n) or []
+    )
+
+    from src.tools import buscar_en_recuerdos
+
+    buscar_en_recuerdos("cual es mi color favorito")
+
+    assert pedidos == [5]
+
+
+def test_el_tope_de_documento_no_baja_de_lo_acordado():
+    """Subido a 20.000 el 01/08 por decision de Jordi, sabiendo el coste
+    (ese texto se reenvia en cada turno, AUD-03). Si alguien lo baja sin
+    querer, el resumen general vuelve a salir cojo."""
+    from src.tools import _MAX_CARACTERES_DOCUMENTO
+
+    assert _MAX_CARACTERES_DOCUMENTO == 20000

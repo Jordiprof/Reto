@@ -33,6 +33,7 @@ from telegram.ext import (
 )
 
 from src.agent import Agente
+from src.cerrojo import CerrojoMemoria, MemoriaOcupada
 from src.config import (
     MODELOS,
     ClaveApiNoConfigurada,
@@ -53,6 +54,7 @@ from src.rag import indexar_conversacion, indexar_conversaciones, olvidar_conver
 from src.storage import (
     ConversacionNoDescifrable,
     borrar_conversacion,
+    cargar_conversacion,
     guardar_conversacion,
     leer_metadatos,
     listar_conversaciones,
@@ -110,6 +112,17 @@ _rutas: dict[int, Path] = {}
 # Etiqueta puesta con /guardar, por usuario. Se conserva entre turnos para
 # que el guardado automatico no la pise con "Telegram" al reescribir.
 _nombres: dict[int, str] = {}
+
+# F5.5 #8 - Voz: que mitades estan encendidas por usuario, subconjunto de
+# {"escuchar", "hablar"}. Empieza VACIO, o sea las dos apagadas.
+#
+# POR QUE UN DICCIONARIO APARTE Y NO UN CAMPO DEL Agente (como
+# categorias_activas): porque /limpiar y /salir hacen _agentes.pop(), y con
+# ello se llevarian por delante la preferencia de voz. Vaciar la
+# conversacion y dejar de hablarle a alguien son cosas distintas: lo
+# primero es estado de la CHARLA, lo segundo es una preferencia del CANAL,
+# y confundirlas es como se cuelan los "se me apago solo y no se por que".
+_voz_activa: dict[int, set[str]] = {}
 
 
 # --- Helpers puros (testeables sin red, sin Telegram y sin LLM) ------------
@@ -371,6 +384,31 @@ async def puerta_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     _marcas[usuario.id] = marcas
 
 
+# --- Puerta 3: soltar una peticion de texto pendiente ----------------------
+
+
+async def puerta_soltar_espera(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cualquier COMANDO cancela un "dime el nombre / dime qué busco".
+
+    Nace de una mentira en la interfaz (01/08): el propio bot dice "si
+    prefieres dejarlo, usa cualquier comando y no toco nada", y NO era
+    verdad. Los comandos los atienden los CommandHandler, que no pasan por
+    _turno, asi que el estado seguia puesto y el siguiente mensaje escrito
+    se lo comia igual.
+
+    Va en el grupo -1 (con la allowlist y el rate limit) y NO lanza
+    ApplicationHandlerStop: solo limpia y deja pasar, para que el comando se
+    ejecute normalmente despues. Puesto DESPUES de la allowlist a proposito:
+    un desconocido no debe poder tocar ni este diccionario.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None or not mensaje.text:
+        return
+    if mensaje.text.startswith("/"):
+        _esperando_texto.pop(usuario.id, None)
+
+
 # --- Handlers --------------------------------------------------------------
 
 
@@ -393,6 +431,119 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
+    await _turno(update, context, texto)
+
+
+async def _cerrar_con_nombre(update: Update, nombre: str) -> None:
+    """Guarda la conversacion en curso CON el nombre que acaba de escribir
+    el usuario y la cierra.
+
+    El estado ("estabamos esperando un nombre") ya se ha soltado ANTES de
+    llegar aqui - lo saca manejar_mensaje con un pop() previo a llamar a
+    esta funcion, no un finally aqui dentro. Asi, incluso si esta funcion
+    revienta con algo no previsto, el bot no se queda comiendose todos los
+    mensajes siguientes creyendo que aun espera un nombre.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+
+    # Mismo tope que /guardar: el nombre va EN CLARO a los metadatos del
+    # JSON (por eso /historial puede listar sin descifrar), asi que ademas
+    # de caber en la lista conviene que no sea un texto libre largo. Y
+    # cuidado con lo que se escribe aqui: consultar_historial mete los
+    # TITULOS en el contexto del modelo, y ese contexto viaja al proveedor.
+    nombre = nombre[:_MAX_NOMBRE].strip()
+    if not nombre:
+        await mensaje.reply_text("Eso está vacío; la dejo tal cual estaba.")
+        return
+    try:
+        async with _cerrojo_de(usuario.id):
+            ruta = await asyncio.to_thread(_persistir, usuario.id, nombre)
+            # Se cierra igual que en _CONSERVAR: se olvida el contexto y se
+            # suelta el fichero, para que el mensaje siguiente estrene charla.
+            _agentes.pop(usuario.id, None)
+            _rutas.pop(usuario.id, None)
+            _nombres.pop(usuario.id, None)
+        if ruta is None:
+            await mensaje.reply_text("No había nada que guardar, así que la cierro sin más.")
+        else:
+            await mensaje.reply_text(
+                f"Guardada como «{nombre}». Empezamos conversación nueva."
+            )
+    except Exception as error:
+        logging.error("Telegram: fallo al guardar con nombre (%s)", type(error).__name__)
+        await mensaje.reply_text("⚠️ No he podido guardarla con ese nombre.")
+
+
+async def _guardar_con_texto(update: Update, nombre: str) -> None:
+    """Version de /guardar pedida desde el menu de botones (31/07): el
+    nombre llega como el mensaje SIGUIENTE en vez de como argumento del
+    comando. Comparte el nucleo con cmd_guardar via _ejecutar_guardar - la
+    unica diferencia es DE DONDE sale el nombre."""
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+    await _ejecutar_guardar(usuario.id, mensaje, nombre)
+
+
+async def _recuerdo_con_texto(update: Update, consulta: str) -> None:
+    """Version de /recuerdo pedida desde el menu de botones (31/07): mismo
+    nucleo que cmd_recuerdo (_ejecutar_recuerdo), la busqueda llega en el
+    mensaje SIGUIENTE en vez de como argumento del comando."""
+    mensaje = update.effective_message
+    if mensaje is None:
+        return
+    await _ejecutar_recuerdo(mensaje, consulta)
+
+
+async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str) -> None:
+    """El turno de verdad, ya con el texto en la mano.
+
+    Separado de manejar_mensaje en F5.5 #8 porque ahora hay DOS puertas de
+    entrada al mismo turno -un mensaje escrito y una nota de voz
+    transcrita- y duplicar aqui seria duplicar el cerrojo, el manejo de
+    errores y la persistencia: los tres sitios donde este proyecto ya ha
+    encontrado bugs reales. Desde aqui hacia abajo, el bot no sabe ni le
+    importa si aquello lo dijeron o lo escribieron.
+    """
+    mensaje = update.effective_message
+    usuario = update.effective_user
+    if mensaje is None or usuario is None:
+        return
+
+    # ¿Le habiamos pedido algo por escrito (un nombre, una busqueda)? Este
+    # texto no es una pregunta para el LLM: es la respuesta a algo que
+    # preguntamos NOSOTROS.
+    #
+    # ESTA COMPROBACION VIVE AQUI Y NO EN manejar_mensaje, y es un BUG REAL
+    # del 01/08 encontrado por Jordi probando: estaba en manejar_mensaje, que
+    # solo cubre el camino ESCRITO. Contesto a "dime que busco" con una NOTA
+    # DE VOZ -> manejar_voz llama directo a _turno, se salto la comprobacion,
+    # el estado se quedo puesto Y NO SE LIMPIO NUNCA... y varios turnos
+    # despues, su siguiente mensaje escrito ("metete en esta web y
+    # resumemela") se lo comio /recuerdo en vez de contestarlo.
+    #
+    # La leccion es la de siempre en este fichero: cuando hay DOS puertas de
+    # entrada, el control va en el EMBUDO por el que pasan las dos, no en
+    # una de ellas. Aqui abajo, cualquier camino futuro queda cubierto solo.
+    #
+    # Se saca (.pop()) YA, antes de llamar a nada: asi el estado se suelta
+    # pase lo que pase, incluso si la accion revienta con algo no previsto.
+    accion = _esperando_texto.pop(usuario.id, None)
+    if accion == "salir_nombrar":
+        await _cerrar_con_nombre(update, texto)
+        return
+    if accion == "guardar":
+        await _guardar_con_texto(update, texto)
+        return
+    if accion == "recuerdo":
+        await _recuerdo_con_texto(update, texto)
+        return
+
+    fallo = False
     async with _cerrojo_de(usuario.id):
         await context.bot.send_chat_action(mensaje.chat_id, ChatAction.TYPING)
         try:
@@ -424,6 +575,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "Telegram: fallo no controlado al responder (%s)", type(error).__name__
             )
             respuesta = "⚠️ Se me ha cruzado un cable. Vuelve a intentarlo en un momento."
+            fallo = True
         else:
             # Solo se persiste si el turno fue bien: un historial que acaba
             # en un fallo no debe entrar en la memoria a largo plazo como si
@@ -439,8 +591,155 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # serializa a JSON.
             await asyncio.to_thread(_persistir, usuario.id)
 
+    # Si contesto un fallback, se dice ANTES de la respuesta: si fuera
+    # despues, se leeria la respuesta creyendo que la dio el modelo elegido.
+    aviso = getattr(getattr(_agentes.get(usuario.id), "router", None), "aviso_fallback", None)
+    if aviso and not fallo:
+        await mensaje.reply_text(aviso)
+
     for trozo in _trocear(respuesta):
         await mensaje.reply_text(trozo)
+
+    # Salida binaria (01/08, peticion de Jordi): si alguna tool dejo una
+    # imagen en la bandeja del turno, se manda como FOTO. Va despues del
+    # texto por el mismo criterio que la voz: el texto es la respuesta
+    # completa y no debe depender de que esto funcione. Un fallo aqui se
+    # registra y se sigue - Telegram puede rechazar una imagen por tamaño o
+    # por no poder descargarla, y eso no puede costarnos la respuesta.
+    if not fallo:
+        for medio in list(getattr(_agentes.get(usuario.id), "media_pendiente", [])):
+            try:
+                await mensaje.reply_photo(medio["url"], caption=medio["titulo"][:200])
+            except Exception as error:
+                logging.warning(
+                    "Telegram: no se pudo enviar la imagen (%s)", type(error).__name__
+                )
+
+    # F5.5 #8: y si ademas toca hablar, la nota de voz DESPUES del texto.
+    # Ese orden y no al reves: el texto es la respuesta completa y siempre
+    # funciona, asi que va primero y llega aunque la sintesis se caiga. La
+    # voz es el extra.
+    #
+    # `fallo` se mira aqui: leer en voz alta "se me ha cruzado un cable" no
+    # aporta nada y ademas gasta CPU en sintetizar un mensaje de error.
+    if not fallo and "hablar" in _voz_activa.get(usuario.id, set()):
+        await _hablar(update, context, respuesta)
+
+
+async def _hablar(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str) -> None:
+    """Manda la respuesta como NOTA DE VOZ, con Piper local.
+
+    Un fallo aqui NUNCA rompe el turno: el usuario ya tiene su respuesta
+    escrita, asi que como mucho se le avisa de que el audio no salio. Es la
+    misma idea que el guardado de la conversacion: lo accesorio no puede
+    tumbar lo principal.
+    """
+    from src.voz import VozNoDisponible, sintetizar
+
+    mensaje = update.effective_message
+    if mensaje is None:
+        return
+    try:
+        # RECORD_VOICE y no TYPING: el indicador que ve el usuario debe
+        # decir lo que de verdad esta pasando, y sintetizar tarda unos
+        # segundos.
+        await context.bot.send_chat_action(mensaje.chat_id, ChatAction.RECORD_VOICE)
+        # to_thread por lo mismo que Agente.preguntar(): cargar el modelo,
+        # sintetizar y llamar a ffmpeg son operaciones BLOQUEANTES de CPU
+        # y de subproceso. Aqui congelarian el bot entero.
+        audio = await asyncio.to_thread(sintetizar, texto)
+    except VozNoDisponible as error:
+        await mensaje.reply_text(f"🔇 {error}")
+        return
+    except Exception as error:
+        logging.error("Telegram: fallo generando la voz (%s)", type(error).__name__)
+        await mensaje.reply_text("🔇 No he podido mandarte el audio, pero ahí tienes el texto.")
+        return
+
+    await mensaje.reply_voice(audio)
+
+
+async def manejar_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Nota de voz -> transcripcion -> el MISMO turno que un mensaje escrito.
+
+    LA PUERTA ESTA AQUI, y es la razon de ser de este handler: si
+    "escuchar" no esta encendido, el audio NO SE DESCARGA Y NO SALE DE
+    TELEGRAM. No se transcribe "por probar" ni se cachea: sin permiso
+    explicito, la nota se queda donde esta. Es el mismo criterio que
+    `memoria` y `web` en /tools -apagado por EXPOSICION, no por costumbre-,
+    solo que aqui lo que se expone es un dato biometrico.
+
+    Y a diferencia de un documento adjunto (donde entregar el fichero YA es
+    la autorizacion, decision del 31/07), aqui mandar la nota NO puede
+    valer como permiso: una nota de voz se manda por comodidad, sin pensar
+    en que ese audio va a viajar a un tercero. Por eso la voz si necesita
+    su interruptor y los documentos no.
+    """
+    mensaje = update.effective_message
+    usuario = update.effective_user
+    if mensaje is None or usuario is None or mensaje.voice is None:
+        return
+
+    if "escuchar" not in _voz_activa.get(usuario.id, set()):
+        await mensaje.reply_text(
+            "🔇 No transcribo notas de voz porque lo tengo apagado, así que ese "
+            "audio no ha salido de Telegram.\n\n"
+            "Puedes encenderlo en /voz. Antes lee esto: para entenderte mando el "
+            "audio a Groq, y tu voz es un dato biométrico (identifica a la "
+            "persona, no solo lo que dice)."
+        )
+        return
+
+    from src.voz import VozNoDisponible, transcribir, validar_duracion
+
+    try:
+        # Con el metadato del update: aqui todavia no se ha descargado nada
+        # ni se ha tocado la cuota de Groq, asi que rechazar es gratis.
+        validar_duracion(mensaje.voice.duration)
+    except VozNoDisponible as error:
+        await mensaje.reply_text(f"⚠️ {error}")
+        return
+
+    async with _cerrojo_de(usuario.id):
+        try:
+            archivo = await mensaje.voice.get_file()
+            datos = bytes(await archivo.download_as_bytearray())
+        except Exception as error:
+            logging.error("Telegram: fallo descargando la nota de voz (%s)", type(error).__name__)
+            await mensaje.reply_text("⚠️ No he podido descargar esa nota de voz.")
+            return
+
+        try:
+            await context.bot.send_chat_action(mensaje.chat_id, ChatAction.TYPING)
+            texto = await asyncio.to_thread(transcribir, datos)
+        except VozNoDisponible as error:
+            await mensaje.reply_text(f"⚠️ {error}")
+            return
+        except Exception as error:
+            logging.error("Telegram: fallo transcribiendo (%s)", type(error).__name__)
+            await mensaje.reply_text("⚠️ No he podido entender esa nota de voz.")
+            return
+
+    # El limite de entrada tambien aqui: 5 minutos hablando pueden pasar de
+    # _LIMITE_ENTRADA, y el limite existe porque el historial se reenvia
+    # ENTERO en cada turno (AUD-03). Que el texto venga de un audio no lo
+    # hace mas barato.
+    if len(texto) > _LIMITE_ENTRADA:
+        await mensaje.reply_text(
+            f"Te he entendido, pero eso son {len(texto)} caracteres y solo "
+            f"manejo {_LIMITE_ENTRADA} de golpe. Dímelo más corto."
+        )
+        return
+
+    # SIEMPRE se enseña la transcripcion, y no es un detalle de cortesia:
+    #   1. Whisper se equivoca, y sin esto una palabra mal entendida se
+    #      convierte en una respuesta absurda sin que se sepa por que.
+    #   2. Deja constancia VISIBLE de que ese audio salio de la maquina.
+    #      Un permiso que se enciende una vez y luego actua en silencio se
+    #      olvida; asi cada nota lo recuerda.
+    await mensaje.reply_text(f"🎙️ Te he entendido: «{texto}»")
+
+    await _turno(update, context, texto)
 
 
 async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -481,25 +780,46 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         agente = _agente_de(usuario.id)
         agente.documento_pendiente = adjunto
 
+        # Se PREPARA aqui (trocear + calcular vectores) y no en la primera
+        # pregunta: en un PDF grande eso son ~40 segundos, y cayendo dentro
+        # de la pregunta el bot parece colgado. Aqui el usuario acaba de
+        # mandar un fichero y espera que tarde un momento.
+        # En to_thread porque es CPU pura y bloquearia el bucle de eventos.
+        from src.documentos import preparar
+
+        await context.bot.send_chat_action(mensaje.chat_id, ChatAction.TYPING)
+        try:
+            fragmentos = await asyncio.to_thread(preparar, adjunto)
+        except Exception as error:
+            # No impide aceptar el documento: la busqueda lo reintentara.
+            logging.warning("Telegram: no se pudo preparar el documento (%s)",
+                            type(error).__name__)
+            fragmentos = 0
+
+    aviso_troceo = (
+        f" Es largo, así que lo he partido en {fragmentos} fragmentos: "
+        "pregúntame por cualquier parte, también por el final."
+        if fragmentos else ""
+    )
     aviso_categoria = (
         "" if "documentos" in agente.categorias_activas
         else " Actívalo antes con /tools → categoría 'documentos'."
     )
     await mensaje.reply_text(
         f"Documento recibido: {adjunto.nombre} ({len(datos) // 1000} KB). "
-        f"Pregúntame algo sobre él.{aviso_categoria}"
+        f"Pregúntame algo sobre él.{aviso_troceo}{aviso_categoria}"
     )
 
 
 async def manejar_no_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fotos, notas de voz... Sin esto, un adjunto de 20 MB llega a un bot
-    que no sabe que hacer con el y acaba en el error handler.
-    Transcripcion y OCR estan en el tier "si sobra tiempo" de F5.5, no
-    aqui. Los documentos (PDF/Word) ya NO caen aqui: los coge
-    manejar_documento antes (F5.5 #7)."""
+    """Fotos, videos, stickers... Sin esto, un adjunto de 20 MB llega a un
+    bot que no sabe que hacer con el y acaba en el error handler. El OCR
+    sigue en el tier "si sobra tiempo" de F5.5. Ya NO caen aqui ni los
+    documentos PDF/Word (los coge manejar_documento, F5.5 #7) ni las notas
+    de voz (manejar_voz, F5.5 #8)."""
     if update.effective_message:
         await update.effective_message.reply_text(
-            "De momento solo entiendo texto (y PDF/Word como adjunto)."
+            "De momento entiendo texto, notas de voz y PDF/Word como adjunto."
         )
 
 
@@ -512,31 +832,171 @@ async def manejar_no_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """La bienvenida. Es lo PRIMERO que ve cualquiera al abrir el bot, y
+    hasta el 31/07 era una sola linea que no decia nada de lo que sabe
+    hacer - con 14 comandos detras, eso deja al usuario a ciegas."""
     if update.effective_message:
         await update.effective_message.reply_text(
-            "Hola JIM. Soy tu agente. Escríbeme lo que quieras, o /ayuda para ver qué sé hacer."
+            "👋 Hola JIM, soy *Jimmy*, tu agente personal.\n\n"
+            "Escríbeme normal y ya está. Además puedo:\n\n"
+            "🧠 *Acordarme* de lo que hablamos, hoy y dentro de un mes — y lo "
+            "que me cuentas se guarda cifrado en tu máquina, no en la nube.\n"
+            "🛠️ *Usar herramientas*: calcular, mirar el tiempo, leer una web "
+            "autorizada, la foto del día de la NASA…\n"
+            "📄 *Leer un PDF o un Word* que me mandes de adjunto.\n"
+            "🎙️ *Escucharte y contestarte hablando*, si lo enciendes en /voz.\n\n"
+            "Toca /ayuda para verlo por temas, o el botón de menú de aquí abajo.",
+            parse_mode="Markdown",
         )
 
 
+# --- El catalogo de comandos: UNA sola fuente de verdad --------------------
+# De aqui salen las DOS cosas que antes se escribian por separado (y por eso
+# se desincronizaban): el menu nativo de Telegram (set_my_commands) y los
+# botones de /comandos.
+#
+# REDISEÑADO el 31/07 tras la primera version (comandos agrupados en 4
+# familias con una pantalla intermedia por tema): Jordi probandolo dijo que
+# no le gustaba - veia /recuerdo "repetido" (una vez en el menu nativo de
+# Telegram, otra vez dentro de mi arbol) y prefiere UN SOLO NIVEL: /comandos
+# lista TODOS de golpe, y tocar uno lo EJECUTA de verdad en el momento (abre
+# el historial, enciende una tool...), no enseña un texto explicandolo.
+#
+# Cada entrada es (nombre sin "/", descripcion, tipo). El tipo decide que
+# hace el boton al pulsarlo:
+#   "directo": ejecuta EL MISMO comando (reutiliza cmd_historial, cmd_tools...
+#     - funciona sin duplicar nada porque, en un CallbackQuery de verdad,
+#     Update.effective_message de la propia libreria PTB YA resuelve solo al
+#     mensaje del boton -verificado en su codigo fuente-, exactamente igual
+#     que si el usuario hubiera escrito el comando).
+#   "texto": el comando necesita un dato escrito (un nombre, una busqueda).
+#     El boton lo PIDE y usa el mensaje SIGUIENTE, mismo mecanismo que ya
+#     tiene "💾 Guardar con un nombre" en /salir (ver _esperando_texto).
+#   "info": NO es un comando real - el adjunto YA es la orden (/documento
+#     solo existe en la CLI, que no tiene donde soltar un fichero). El boton
+#     solo explica, para que "no se pase ninguno" sin inventar un comando
+#     que no hace nada.
+_CATALOGO: list[tuple[str, str, str]] = [
+    ("recuerdo", "buscar en mi memoria y enseñarte lo que hay, en crudo", "texto"),
+    ("historial", "ver tus conversaciones guardadas y abrir cualquiera", "directo"),
+    ("guardar", "ponerle nombre a esta charla", "texto"),
+    ("borrar", "borrar una conversación del disco y de mi memoria", "directo"),
+    ("resumen", "resumir lo hablado hasta ahora", "directo"),
+    ("limpiar", "empezar de cero (la guarda y olvida el contexto)", "directo"),
+    # "cerrar" y NO "salir" (01/08). Se llamaba /salir por simetria con la
+    # CLI, pero ahi significa algo DISTINTO: en la terminal /salir termina el
+    # PROGRAMA, aqui solo cierra la conversacion y el bot sigue vivo. Jordi
+    # lo probo y se quedo esperando que el proceso se parara.
+    #
+    # Y no se "arregla" haciendo que /salir apague el bot, porque entonces
+    # NO SE PODRIA VOLVER A ENCENDER desde Telegram: habria que ir al PC.
+    # Un servicio no se apaga desde su propio chat. Lo que estaba mal era el
+    # NOMBRE, no el comportamiento - es la divergencia anotada el 28/07,
+    # justo la trampa que la simetria de comandos pretendia evitar.
+    ("cerrar", "cerrar esta charla: guardarla, ponerle nombre o descartarla", "directo"),
+    ("voz", "escucharte y/o contestarte hablando (los dos empiezan apagados)", "directo"),
+    ("tools", "encender o apagar grupos de herramientas", "directo"),
+    ("modelo", "cambiar el modelo (mismo proveedor)", "directo"),
+    ("proveedor", "cambiar de proveedor (y modelo)", "directo"),
+    ("documento", "mándame un PDF o un Word como adjunto — no hace falta escribirlo", "info"),
+]
+
+_CATALOGO_POR_NOMBRE = {
+    nombre: (nombre, descripcion, tipo) for nombre, descripcion, tipo in _CATALOGO
+}
+
+# Texto de "documento" al pulsarlo: la unica entrada "info" del catalogo, y
+# por eso no hace falta una estructura mas general para una sola hoja.
+#
+# OJO con el Markdown "legacy" de Telegram: la negrita es *asi*, NUNCA
+# **asi** (eso es MarkdownV2/CommonMark). Un `**` aqui puede hacer que
+# Telegram rechace el mensaje ENTERO, el mismo fallo del 30/07 con los
+# titulos de los dominios.
+_INFO_DOCUMENTO = (
+    "📄 *Documentos*: mándame un PDF o un Word *como adjunto* y podré leerlo. "
+    "No hay comando porque no hace falta: el adjunto ya es la orden (en la "
+    "terminal, donde no hay dónde soltarlo, sí existe /documento)."
+)
+
+# Lo que se pregunta al pulsar un boton "texto" (ver _CATALOGO). El mensaje
+# SIGUIENTE del usuario se toma como la respuesta - ver _esperando_texto.
+_PETICIONES_TEXTO = {
+    "recuerdo": "🔍 Dime qué busco: tomaré tu siguiente mensaje como la búsqueda.\n\n"
+                "Si prefieres dejarlo, escribe cualquier comando (/ayuda, por "
+                "ejemplo) y no toco nada.",
+    "guardar": "💾 Escríbeme el nombre para esta conversación: tomaré tu siguiente "
+               "mensaje como el nombre.\n\n"
+               "Si prefieres dejarlo, escribe cualquier comando (/ayuda, por "
+               "ejemplo) y no toco nada.",
+}
+
+
+def comandos_para_telegram() -> list:
+    """La lista para set_my_commands, derivada de _CATALOGO.
+
+    Esto es lo que hace aparecer el BOTON DE MENU azul con los comandos y su
+    descripcion, en vez de obligar a escribirlos de memoria. Se excluyen a
+    proposito las entradas "info" (hoy solo "documento"): Telegram no puede
+    anunciar un comando que el bot no atiende - se veria en el menu, se
+    pulsaria y no pasaria nada.
+    """
+    from telegram import BotCommand
+
+    lista = [BotCommand("start", "empezar y ver qué sé hacer")]
+    for nombre, descripcion, tipo in _CATALOGO:
+        if tipo == "info":
+            continue
+        lista.append(BotCommand(nombre, descripcion[:256]))
+    lista.append(BotCommand("ayuda", "ver todos los comandos, uno a uno"))
+    return lista
+
+
+_PREFIJO_MENU = "menu:"
+
+
+def _texto_comandos() -> str:
+    """La lista de comandos con su explicacion, EN EL CUERPO del mensaje.
+
+    01/08, Jordi probandolo: "se cortan las instrucciones (...) que se vea
+    todo a la izquierda, que no vaya centrado". Las dos quejas tienen la
+    misma causa y no tienen arreglo DENTRO de un boton: Telegram **siempre**
+    centra el texto de un InlineKeyboardButton y lo recorta si no cabe en el
+    ancho del movil (nosotros ademas cortabamos a 60 caracteres).
+
+    Asi que la descripcion se saca de los botones y se pone aqui: el cuerpo
+    de un mensaje SI se alinea a la izquierda, no se corta y admite varias
+    lineas. Los botones se quedan solo con el nombre del comando, que es lo
+    unico que necesitan para caber sin recortarse.
+    """
+    lineas = ["*Esto es lo que sé hacer* — toca un botón para lanzarlo:\n"]
+    lineas += [f"/{nombre} — {descripcion}" for nombre, descripcion, _t in _CATALOGO]
+    return "\n".join(lineas)
+
+
+def _teclado_comandos() -> InlineKeyboardMarkup:
+    """Un boton por comando, TODOS al mismo nivel - sin pantalla intermedia
+    de temas. Pulsar uno lo EJECUTA (o lo pide, o lo explica).
+
+    DOS POR FILA: con uno por fila salian 12 filas y el menu no cabia en
+    una pantalla de movil. Solo el nombre del comando (ver _texto_comandos).
+    """
+    botones = [
+        InlineKeyboardButton(f"/{nombre}", callback_data=f"{_PREFIJO_MENU}{nombre}")
+        for nombre, _descripcion, _tipo in _CATALOGO
+    ]
+    filas = [botones[i:i + 2] for i in range(0, len(botones), 2)]
+    filas.append([InlineKeyboardButton("⬅ Cerrar", callback_data=_CANCELAR)])
+    return InlineKeyboardMarkup(filas)
+
+
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/comandos (y /ayuda, /help): TODOS los comandos en un solo nivel.
+    Tocar uno lo ejecuta de verdad - no es un indice, es el menu mismo."""
     if update.effective_message:
         await update.effective_message.reply_text(
-            "/recuerdo <algo> — buscar en mi memoria y enseñarte lo que hay\n"
-            "/historial — ver tus conversaciones guardadas\n"
-            "/borrar — borrar una conversación guardada, del disco y de mi memoria\n"
-            "/guardar <nombre> — ponerle nombre a esta charla\n"
-            "/salir — cerrar la charla: guardarla o descartarla\n"
-            "/limpiar — empezar de cero (la guarda y olvida el contexto)\n"
-            "/resumen — resumir lo hablado hasta ahora\n"
-            "/modelo — cambiar el modelo (mismo proveedor)\n"
-            "/proveedor — cambiar de proveedor (y modelo)\n"
-            "/ayuda — esto\n\n"
-            "📄 Mándame un PDF o Word como adjunto y podré leerlo (activa la "
-            "categoría 'documentos' en /tools).\n\n"
-            "Voy guardando solo según hablamos, así que no se pierde nada aunque "
-            "me apaguen. Si una charla no merece la pena, ciérrala con /salir y "
-            "elige «descartar».\n"
-            "Para todo lo demás, escríbeme normal."
+            _texto_comandos(),
+            parse_mode="Markdown",
+            reply_markup=_teclado_comandos(),
         )
 
 
@@ -601,6 +1061,14 @@ async def cmd_historial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # Las mas recientes primero y solo las ultimas: en Telegram un mensaje
     # tiene tope de 4096 caracteres y una lista de 200 charlas no se lee.
+    #
+    # BOTONES y no texto (31/07): en la CLI /historial SIEMPRE dejo abrir la
+    # conversacion elegida (mostrar_conversacion), y aqui solo la listaba.
+    # Eso es justo lo que rompia el principio del 28/07 -un estado
+    # COMPARTIDO necesita OPERACIONES SIMETRICAS-: las charlas de la
+    # terminal si estaban ahi, pero desde el movil no habia forma de
+    # llegar a ellas, y eso hacia PARECER que la memoria no se compartia.
+    botones = []
     lineas = []
     for ruta in reversed(rutas[-_MAX_HISTORIAL:]):
         try:
@@ -611,43 +1079,52 @@ async def cmd_historial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         nombre = meta.get("nombre") or "(sin nombre)"
         candado = "🔒" if meta.get("cifrado") else ""
         lineas.append(f"{candado} {fecha} — {nombre}")
+        botones.append([InlineKeyboardButton(
+            f"{candado} {fecha} — {nombre}"[:60],
+            callback_data=f"{_PREFIJO_VER}{ruta.name}",
+        )])
 
-    total = len(rutas)
-    cabecera = f"Tus últimas {len(lineas)} conversaciones (de {total}):"
-    await mensaje.reply_text(cabecera + "\n\n" + "\n".join(lineas))
-
-
-async def cmd_guardar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Pone NOMBRE a la conversación en curso (y la guarda ya).
-
-    Ojo a la diferencia con la CLI: por Telegram el guardado es automatico
-    despues de cada turno, asi que aqui "guardar" no sirve para no perder
-    nada -eso ya esta cubierto- sino para ETIQUETAR la charla y poder
-    reconocerla luego en /historial.
-
-    El nombre llega como argumento del propio comando ("/guardar ideas de
-    tools"): pedirlo en un segundo mensaje obligaria a llevar una maquina de
-    estados por usuario, y el bot no tiene ninguna hoy.
-    """
-    usuario = update.effective_user
-    mensaje = update.effective_message
-    if usuario is None or mensaje is None:
+    if not botones:
+        await mensaje.reply_text("No hay ninguna conversación que pueda listar.")
         return
 
-    # context.args son las palabras que siguen al comando (PTB las parte).
-    nombre = " ".join(context.args).strip() if context.args else ""
+    total = len(rutas)
+    cabecera = f"Tus últimas {len(lineas)} conversaciones (de {total}). Toca una para leerla:"
+    await mensaje.reply_text(cabecera, reply_markup=InlineKeyboardMarkup(botones))
+
+
+def _formatear_conversacion(datos: dict) -> str:
+    """Pasa una conversacion cargada a texto legible en el chat.
+
+    Funcion PURA: no toca disco ni descifra (eso lo hace
+    cargar_conversacion). Igual que mostrar_conversacion en la CLI, se salta
+    historial[0] porque es el SYSTEM PROMPT: no es parte de lo que se dijo,
+    y ademas ensuciaria la lectura con las instrucciones internas.
+    """
+    lineas = []
+    for entrada in datos.get("historial", [])[1:]:
+        quien = "🙋 Tú" if entrada.get("role") == "user" else "🤖 Jimmy"
+        lineas.append(f"{quien}: {entrada.get('content', '')}")
+    return "\n\n".join(lineas) if lineas else "(esta conversación está vacía)"
+
+
+async def _ejecutar_guardar(user_id: int, mensaje, nombre: str) -> None:
+    """El nucleo de "ponerle nombre a la charla en curso", sin importar de
+    DONDE vino el nombre (argumento de /guardar, o mensaje siguiente al
+    pulsar el boton en /comandos). Ojo a la diferencia con la CLI: por
+    Telegram el guardado ya es automatico despues de cada turno, asi que
+    esto no sirve para no perder nada -eso ya esta cubierto- sino para
+    ETIQUETAR la charla y poder reconocerla luego en /historial."""
+    nombre = nombre.strip()
     if not nombre:
-        await mensaje.reply_text(
-            "Escribe el nombre después del comando, por ejemplo:\n"
-            "/guardar ideas de herramientas"
-        )
+        await mensaje.reply_text("Escribe el nombre; no puede quedar vacío.")
         return
     if len(nombre) > _MAX_NOMBRE:
         await mensaje.reply_text(f"El nombre es muy largo (máximo {_MAX_NOMBRE}).")
         return
 
-    async with _cerrojo_de(usuario.id):
-        ruta = await asyncio.to_thread(_persistir, usuario.id, nombre)
+    async with _cerrojo_de(user_id):
+        ruta = await asyncio.to_thread(_persistir, user_id, nombre)
 
     if ruta is None:
         await mensaje.reply_text("Todavía no hemos hablado de nada que guardar.")
@@ -655,28 +1132,39 @@ async def cmd_guardar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await mensaje.reply_text(f'Guardada como "{nombre}".')
 
 
-async def cmd_recuerdo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Busca A MANO en la memoria y enseña lo que hay, en crudo.
-
-    Peticion de Jordi (28/07). El agente ya decide solo cuando usar
-    buscar_en_recuerdos, pero esa decision la toma EL MODELO y a veces no la
-    toma: hoy mismo contesto "no lo tengo guardado" teniendo el dato
-    indexado. Este comando salta al modelo entero y enseña lo que hay de
-    verdad en la memoria.
-
-    Ademas es la herramienta de diagnostico que hoy faltaba: con esto, el
-    bug de "el bot no indexaba al arrancar" se habria visto en 10 segundos
-    en vez de deducirlo del log.
-    """
+async def cmd_guardar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/guardar <nombre>: el nombre llega como argumento del comando
+    ("/guardar ideas de tools"). context.args son las palabras que lo
+    siguen (PTB las parte). Ver _guardar_con_texto para la version por
+    boton, que pide el nombre en el mensaje SIGUIENTE."""
+    usuario = update.effective_user
     mensaje = update.effective_message
-    if mensaje is None:
+    if usuario is None or mensaje is None:
         return
 
-    consulta = " ".join(context.args).strip() if context.args else ""
-    if not consulta:
+    nombre = " ".join(context.args).strip() if context.args else ""
+    if not nombre:
         await mensaje.reply_text(
-            "Dime qué quieres que busque, por ejemplo:\n/recuerdo el chiste del plato"
+            "Escribe el nombre después del comando, por ejemplo:\n"
+            "/guardar ideas de herramientas"
         )
+        return
+    await _ejecutar_guardar(usuario.id, mensaje, nombre)
+
+
+async def _ejecutar_recuerdo(mensaje, consulta: str) -> None:
+    """El nucleo de "buscar a mano en la memoria y enseñar lo que hay, en
+    crudo", sin importar de DONDE vino la busqueda. Peticion de Jordi
+    (28/07): el agente ya decide solo cuando usar buscar_en_recuerdos, pero
+    esa decision la toma EL MODELO y a veces no la toma -contesto "no lo
+    tengo guardado" teniendo el dato indexado-. Esto salta al modelo entero.
+
+    Ademas es la herramienta de diagnostico que ya sirvio una vez: con esto,
+    el bug de "el bot no indexaba al arrancar" se habria visto en 10
+    segundos en vez de deducirlo del log."""
+    consulta = consulta.strip()
+    if not consulta:
+        await mensaje.reply_text("Dime qué busco; no puede quedar vacío.")
         return
 
     try:
@@ -706,6 +1194,23 @@ async def cmd_recuerdo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await mensaje.reply_text(trozo)
 
 
+async def cmd_recuerdo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/recuerdo <texto>: la busqueda llega como argumento del comando. Ver
+    _recuerdo_con_texto para la version por boton, que la pide en el
+    mensaje SIGUIENTE."""
+    mensaje = update.effective_message
+    if mensaje is None:
+        return
+
+    consulta = " ".join(context.args).strip() if context.args else ""
+    if not consulta:
+        await mensaje.reply_text(
+            "Dime qué quieres que busque, por ejemplo:\n/recuerdo el chiste del plato"
+        )
+        return
+    await _ejecutar_recuerdo(mensaje, consulta)
+
+
 # --- /salir: cerrar la charla decidiendo si se queda o se tira -------------
 # Peticion de Jordi (28/07): por Telegram se guarda TODO automaticamente -
 # hasta un "hola" suelto-, asi que sin una forma de descartar, la memoria se
@@ -719,6 +1224,25 @@ async def cmd_recuerdo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 _DESCARTAR = "salir:descartar"
 _CONSERVAR = "salir:conservar"
+# 31/07, probando en real: al cerrar con "guardar", Jordi esperaba poder
+# ponerle nombre ahi mismo y no podia - el nombre solo se pone ANTES con
+# "/guardar <nombre>", que es justo cuando nadie se acuerda de ponerlo.
+_NOMBRAR = "salir:nombrar"
+
+# Usuarios a los que se les ha PEDIDO algo por escrito: el valor dice QUE
+# accion esta pendiente ("salir_nombrar", "guardar" o "recuerdo"), y se
+# atiende con el mensaje SIGUIENTE (ver manejar_mensaje).
+#
+# Es una maquina de estados minima, y el 28/07 se decidio NO tener ninguna.
+# Lo que cambia hoy: entonces habria hecho falta una maquina GENERAL (cada
+# comando pidiendo datos en varios pasos con su propia logica); esto es UN
+# solo diccionario para las TRES peticiones de texto que hay hoy, cada
+# estado dura UN mensaje y se SUELTA SIEMPRE - manejar_mensaje lo saca
+# (.pop()) antes de procesar, asi que un fallo dentro no puede dejarlo
+# atascado. Los comandos no caen aqui (los CommandHandler van registrados
+# antes que el handler de texto), asi que siempre hay salida: /ayuda,
+# /limpiar o cualquier otro corta el paso.
+_esperando_texto: dict[int, str] = {}
 
 
 async def cmd_salir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -733,6 +1257,7 @@ async def cmd_salir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💾 Guardar con un nombre", callback_data=_NOMBRAR)],
         [InlineKeyboardButton("Guardar y cerrar", callback_data=_CONSERVAR)],
         [InlineKeyboardButton("Descartar y cerrar", callback_data=_DESCARTAR)],
     ])
@@ -769,6 +1294,12 @@ def _descartar(user_id: int) -> bool:
 
 _PREFIJO_BORRAR = "b:"
 _PREFIJO_BORRAR_OK = "bc:"
+# Abrir una conversacion guardada desde /historial (31/07). Usa la MISMA
+# allowlist que /borrar (_conversacion_valida): el nombre del fichero viaja
+# a Telegram y vuelve, asi que tampoco aqui se concatena para formar una
+# ruta - aunque leer sea menos grave que borrar, "h:../../.env" leeria la
+# configuracion entera y la escupiria por el chat.
+_PREFIJO_VER = "h:"
 # Centinela de "no hagas nada", equivalente al VOLVER/Cancelar que en la CLI
 # lleva TODO menu de flechas (convencion de F5.5, ver main.py).
 _CANCELAR = "cancelar"
@@ -867,6 +1398,10 @@ _PREFIJO_TOOLS = "t:"
 # OJO: NO puede empezar por "t:" - lo cazaria antes el conmutador de
 # categorias y buscaria una categoria llamada "ver-sitios".
 _VER_SITIOS = "ver-sitios"
+# F5.5 #8: los dos interruptores de /voz. Mismo patron de conmutar-y-
+# redibujar que /tools.
+_PREFIJO_VOZ = "v:"
+_MITADES_VOZ = ("escuchar", "hablar")
 
 # Caracteres especiales del Markdown "legacy" de Telegram (NO MarkdownV2,
 # que exige escapar muchos mas). "\\" va primero: si se escapara despues de
@@ -987,6 +1522,74 @@ async def cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def _teclado_voz(user_id: int) -> InlineKeyboardMarkup:
+    """Los dos interruptores de la voz, con su estado a la vista."""
+    activas = _voz_activa.get(user_id, set())
+    etiquetas = {
+        "escuchar": "🎙️ escuchar — transcribir tus notas de voz",
+        "hablar": "🔊 hablar — contestarte con una nota de voz",
+    }
+    filas = [
+        [InlineKeyboardButton(
+            f"{'✅' if mitad in activas else '⬜'} {etiquetas[mitad]}"[:60],
+            callback_data=f"{_PREFIJO_VOZ}{mitad}",
+        )]
+        for mitad in _MITADES_VOZ
+    ]
+    filas.append([InlineKeyboardButton("⬅ Cerrar", callback_data=_CANCELAR)])
+    return InlineKeyboardMarkup(filas)
+
+
+def _texto_voz(user_id: int) -> str:
+    """El texto que acompaña al menu de /voz.
+
+    Aqui es donde vive el aviso de privacidad, y esta puesto a proposito en
+    el sitio donde se toma la decision -no en el README, no en /ayuda, no
+    en un log-. Encender "escuchar" teniendo esto delante ES el
+    consentimiento informado: pedir ADEMAS un boton de confirmacion en la
+    primera nota seria la friccion sin seguridad que ya se quito a
+    `documentos` el 31/07.
+
+    Ademas dice si "hablar" puede funcionar de verdad ANTES de encenderlo:
+    un interruptor que se enciende y luego falla en cada respuesta es peor
+    que uno que avisa de lo que le falta.
+    """
+    from src.voz import motivo_no_disponible
+
+    lineas = [
+        "*Voz* — dos interruptores independientes:\n",
+        "🎙️ *escuchar*: transcribo tus notas de voz. Para eso el audio "
+        "*sale de esta máquina* y va a Groq (Whisper). Ojo con esto: tu voz "
+        "es un dato *biométrico* — identifica a la persona que habla, no "
+        "solo lo que dice. Apagado, tus notas de voz no salen de Telegram.\n",
+        "🔊 *hablar*: te contesto además con una nota de voz. Esto es "
+        "*local* (Piper): no sale nada de la máquina, no gasta cuota y no "
+        "necesita clave.\n",
+    ]
+    motivo = motivo_no_disponible()
+    if motivo:
+        lineas.append(f"⚠️ Ahora mismo no puedo hablar: {_escapar_markdown(motivo)}\n")
+    activas = _voz_activa.get(user_id, set())
+    lineas.append(
+        "Encendido: " + ", ".join(sorted(activas)) if activas else "Los dos apagados."
+    )
+    return "\n".join(lineas)
+
+
+async def cmd_voz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """F5.5 #8. Solo existe en Telegram: una terminal no reproduce audio
+    (ADR-006 - el canal cambia la viabilidad, no el riesgo)."""
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+    await mensaje.reply_text(
+        _texto_voz(usuario.id),
+        parse_mode="Markdown",
+        reply_markup=_teclado_voz(usuario.id),
+    )
+
+
 async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Procesa la pulsacion de un boton de /modelo o /proveedor."""
     consulta = update.callback_query
@@ -1002,6 +1605,21 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # /salir va primero: es el unico que no necesita un Agente vivo (de
     # hecho lo que hace es cerrarlo), asi que no se crea uno solo por
     # pulsar el boton.
+    # "Guardar con un nombre": no cierra todavia - pide el nombre y espera
+    # al siguiente mensaje de texto (ver _esperando_texto y manejar_mensaje).
+    if dato == _NOMBRAR:
+        if usuario.id not in _rutas:
+            await consulta.edit_message_text("Ya no hay ninguna conversación abierta.")
+            return
+        _esperando_texto[usuario.id] = "salir_nombrar"
+        await consulta.edit_message_text(
+            "Escríbeme el nombre para esta conversación (el siguiente mensaje "
+            "lo tomaré como el nombre).\n\n"
+            "Si prefieres dejarlo, usa cualquier comando —por ejemplo /ayuda— "
+            "y no toco nada."
+        )
+        return
+
     if dato in (_CONSERVAR, _DESCARTAR):
         async with _cerrojo_de(usuario.id):
             if dato == _DESCARTAR:
@@ -1020,6 +1638,50 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             _rutas.pop(usuario.id, None)
             _nombres.pop(usuario.id, None)
         await consulta.edit_message_text(texto)
+        return
+
+    # /historial: abrir y LEER una conversacion guardada.
+    #
+    # Va antes que "b:" por claridad, no por necesidad ("h:" y "b:" no
+    # chocan). Se valida por la MISMA allowlist que /borrar y NO se crea
+    # ningun Agente: leer el pasado no necesita LLM.
+    #
+    # Lo que SI hace es DESCIFRAR y mandar el contenido al chat. Eso es una
+    # decision consciente: es tu conversacion y va a tu movil, pero Telegram
+    # no es cifrado de extremo a extremo (limite ya declarado en E1), asi
+    # que pasa por sus servidores. Lo que NO hace es mandarlo al PROVEEDOR
+    # del LLM - "leer" y "retomar como contexto" son cosas distintas, y la
+    # segunda si tendria ese coste.
+    if dato.startswith(_PREFIJO_VER):
+        nombre = dato[len(_PREFIJO_VER):]
+        ruta = await asyncio.to_thread(_conversacion_valida, nombre)
+        if ruta is None:
+            await consulta.edit_message_text("Esa conversación ya no existe.")
+            return
+        try:
+            datos = await asyncio.to_thread(cargar_conversacion, ruta)
+        except ConversacionNoDescifrable as error:
+            # Mensaje util: si falta CONVERSATIONS_KEY, el fichero esta ahi
+            # pero es ilegible, y hay que saber por que.
+            await consulta.edit_message_text(f"⚠️ {error}")
+            return
+        except Exception as error:
+            logging.error("Telegram: fallo al abrir conversacion (%s)", type(error).__name__)
+            await consulta.edit_message_text("⚠️ No he podido abrir esa conversación.")
+            return
+
+        texto = _formatear_conversacion(datos)
+        # SIN parse_mode a proposito: el nombre y el contenido son texto que
+        # escribio un humano (o el modelo), y un "*" suelto romperia el
+        # mensaje entero - el mismo fallo que ya hubo el 30/07 con los
+        # titulos de la lista de dominios.
+        meta_nombre = datos.get("nombre") or "(sin nombre)"
+        await consulta.edit_message_text(f"📖 {meta_nombre}")
+        mensaje_origen = update.effective_message or consulta.message
+        if mensaje_origen is None:  # defensa: sin mensaje no hay donde escribir
+            return
+        for trozo in _trocear(texto):
+            await mensaje_origen.reply_text(trozo)
         return
 
     # /borrar, paso 1: se ha elegido una conversacion -> se PIDE CONFIRMACION.
@@ -1062,6 +1724,68 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             _nombres.pop(usuario.id, None)
         await consulta.edit_message_text(
             "Borrada del disco y de mi memoria." if borrado else "No he podido borrarla."
+        )
+        return
+
+    # /comandos, plano (rediseño del 31/07 - ver el comentario de
+    # _CATALOGO). Va arriba con /salir y la voz: navegar el menu no
+    # necesita ningun Agente vivo por si mismo (las acciones "directo" que
+    # SI lo necesitan lo crean ELLAS, dentro de su propia funcion).
+    if dato.startswith(_PREFIJO_MENU):
+        nombre = dato[len(_PREFIJO_MENU):]
+        # Dato NO confiable (viaja a Telegram y vuelve): se valida contra el
+        # catalogo real antes de usarlo. Sin esto, un callback fabricado a
+        # mano provocaria un KeyError.
+        entrada = _CATALOGO_POR_NOMBRE.get(nombre)
+        if entrada is None:
+            await consulta.edit_message_text("Ese comando ya no existe.")
+            return
+        _nombre, _descripcion, tipo = entrada
+
+        if tipo == "info":
+            await consulta.edit_message_text(_INFO_DOCUMENTO, parse_mode="Markdown")
+            return
+
+        if tipo == "texto":
+            _esperando_texto[usuario.id] = nombre
+            await consulta.edit_message_text(_PETICIONES_TEXTO[nombre])
+            return
+
+        # "directo": reutiliza EL PROPIO comando (cmd_historial, cmd_tools,
+        # cmd_voz...). Funciona sin duplicar nada porque, en un
+        # CallbackQuery de VERDAD, la propiedad Update.effective_message de
+        # PTB ya resuelve al mensaje del boton cuando no hay update.message
+        # -verificado en su codigo fuente-, exactamente igual que si el
+        # usuario hubiera escrito el comando a mano. No se llama
+        # consulta.edit_message_text aqui: la accion manda SU PROPIA
+        # respuesta (una lista, un menu con sus botones, etc.).
+        await _ACCIONES_DIRECTAS[nombre](update, context)
+        return
+
+    # F5.5 #8: conmutar una mitad de la voz y REDIBUJAR el menu. Va aqui
+    # arriba, ANTES de _agente_de(), por el mismo motivo que /salir: la
+    # preferencia de voz no necesita ningun Agente vivo, y crear uno solo
+    # por tocar un boton leeria la API key (y fallaria con
+    # ClaveApiNoConfigurada si faltara) sin ninguna necesidad.
+    if dato.startswith(_PREFIJO_VOZ):
+        mitad = dato[len(_PREFIJO_VOZ):]
+        # El callback_data vuelve de Telegram: dato NO confiable. Se valida
+        # contra la lista real antes de tocar nada, igual que el modelo, el
+        # proveedor y las categorias de /tools. Sin esto, un callback
+        # fabricado a mano meteria cualquier cadena en el conjunto.
+        if mitad not in _MITADES_VOZ:
+            await consulta.edit_message_text("Ese interruptor no existe.")
+            return
+        async with _cerrojo_de(usuario.id):
+            activas = _voz_activa.setdefault(usuario.id, set())
+            if mitad in activas:
+                activas.discard(mitad)
+            else:
+                activas.add(mitad)
+        await consulta.edit_message_text(
+            _texto_voz(usuario.id),
+            parse_mode="Markdown",
+            reply_markup=_teclado_voz(usuario.id),
         )
         return
 
@@ -1193,7 +1917,45 @@ async def manejar_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     raise ApplicationHandlerStop
 
 
+# A que funcion llama cada boton "directo" del menu de /comandos. Va AQUI
+# abajo (y no junto a _CATALOGO) porque necesita que cmd_historial,
+# cmd_tools... ya esten definidas - un dict a nivel de modulo se evalua al
+# cargar el fichero, no puede usar nombres que todavia no existen.
+_ACCIONES_DIRECTAS = {
+    "historial": cmd_historial,
+    "borrar": cmd_borrar,
+    "resumen": cmd_resumen,
+    "limpiar": cmd_limpiar,
+    "cerrar": cmd_salir,
+    "voz": cmd_voz,
+    "tools": cmd_tools,
+    "modelo": cmd_modelo,
+    "proveedor": cmd_proveedor,
+}
+
+# Invariante que un test comprueba: TODA entrada "directo" del catalogo debe
+# tener accion aqui, y viceversa. Si se añade un comando "directo" nuevo y
+# se olvida esta linea, _ACCIONES_DIRECTAS[nombre] petaria con KeyError la
+# primera vez que alguien pulsara el boton - mejor que lo diga un test.
+
+
 # --- Arranque --------------------------------------------------------------
+
+
+async def _publicar_comandos(aplicacion: Application) -> None:
+    """Registra los comandos en Telegram para que salga el BOTON DE MENU.
+
+    Un fallo aqui NO impide arrancar: el bot funciona igual escribiendo los
+    comandos a mano, asi que quedarse sin bot por no poder pintar un menu
+    seria cambiar algo importante por algo cosmetico. Se registra y se
+    sigue, igual que con el guardado de una conversacion.
+    """
+    try:
+        await aplicacion.bot.set_my_commands(comandos_para_telegram())
+    except Exception as error:
+        logging.warning(
+            "Telegram: no se pudo publicar el menu de comandos (%s)", type(error).__name__
+        )
 
 
 def construir_aplicacion() -> Application:
@@ -1236,7 +1998,11 @@ def construir_aplicacion() -> Application:
     # historial. Los cerrojos por usuario estan igualmente por si algun
     # dia se activa.
     try:
-        aplicacion = ApplicationBuilder().token(token).build()
+        # post_init: PTB lo llama UNA vez, ya con el bot conectado y antes
+        # de empezar a recibir updates. Es el sitio de set_my_commands - en
+        # construir_aplicacion() a secas no valdria, porque aqui todavia no
+        # hay red y los tests montan la Application sin token de verdad.
+        aplicacion = ApplicationBuilder().token(token).post_init(_publicar_comandos).build()
     except Exception as error:
         # El token NO puede acabar en un traceback. Verificado en PTB: con
         # un token invalido lanza InvalidToken("The token `<token>` was
@@ -1255,6 +2021,7 @@ def construir_aplicacion() -> Application:
     # estado del limitador.
     aplicacion.add_handler(TypeHandler(Update, puerta_allowlist), group=-1)
     aplicacion.add_handler(TypeHandler(Update, puerta_rate_limit), group=-1)
+    aplicacion.add_handler(TypeHandler(Update, puerta_soltar_espera), group=-1)
 
     # Grupo 0: el trabajo de verdad.
     # Los comandos van ANTES del handler de texto: "/limpiar" es texto y es
@@ -1273,9 +2040,14 @@ def construir_aplicacion() -> Application:
     aplicacion.add_handler(CommandHandler("modelo", cmd_modelo))
     aplicacion.add_handler(CommandHandler("proveedor", cmd_proveedor))
     aplicacion.add_handler(CommandHandler("recuerdo", cmd_recuerdo))
-    aplicacion.add_handler(CommandHandler("salir", cmd_salir))
+    # "salir" se mantiene como ALIAS y no se borra: llevas dias escribiendolo
+    # y el bot no debe contestarte "no conozco ese comando" por un cambio de
+    # nombre nuestro. No se anuncia en el menu (no esta en _CATALOGO), asi
+    # que quien empiece hoy solo aprende /cerrar.
+    aplicacion.add_handler(CommandHandler(["cerrar", "salir"], cmd_salir))
     aplicacion.add_handler(CommandHandler("borrar", cmd_borrar))
     aplicacion.add_handler(CommandHandler("tools", cmd_tools))
+    aplicacion.add_handler(CommandHandler("voz", cmd_voz))
     # Los botones de /modelo y /proveedor vuelven como CallbackQuery. Pasan
     # por la allowlist igual que todo lo demas (TypeHandler del grupo -1).
     aplicacion.add_handler(CallbackQueryHandler(manejar_boton))
@@ -1287,6 +2059,10 @@ def construir_aplicacion() -> Application:
     # PTB entrega el update al primer handler cuyo filtro encaje, asi que
     # el orden de alta decide cual de los dos coge un documento adjunto.
     aplicacion.add_handler(MessageHandler(filters.Document.ALL, manejar_documento))
+    # F5.5 #8: igual que el de documentos, filters.VOICE va ANTES del
+    # generico ~filters.TEXT o las notas de voz seguirian cayendo en
+    # manejar_no_texto ("de momento solo entiendo texto").
+    aplicacion.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     aplicacion.add_handler(MessageHandler(~filters.TEXT, manejar_no_texto))
 
     aplicacion.add_error_handler(manejar_error)
@@ -1302,6 +2078,30 @@ def main_bot() -> None:
     los datos no salgan de la maquina. El polling sale de dentro hacia
     fuera y no abre ningun puerto.
     """
+    # CERROJO ENTRE PROCESOS - lo PRIMERO de todo (01/08, ver src/cerrojo.py).
+    #
+    # Va antes de construir la Application, antes de indexar y antes de
+    # hablar con Telegram: si no somos los unicos, no queremos haber tocado
+    # NADA. Indexar ya escribe en el indice de ChromaDB, que es justo el
+    # fichero que estamos protegiendo.
+    #
+    # Deja de ser un aviso por pantalla y pasa a IMPEDIRLO porque el aviso
+    # no funciono: el 31/07 Jordi ejecuto la CLI con el bot arrancado, y el
+    # 01/08 llego a haber DOS bots a la vez. Un aviso que se lee despues de
+    # arrancar no evita nada.
+    try:
+        cerrojo = CerrojoMemoria(quien="bot de Telegram").tomar()
+    except MemoriaOcupada as error:
+        print(f"⛔ {error}")
+        return
+
+    try:
+        _arrancar(cerrojo)
+    finally:
+        cerrojo.soltar()
+
+
+def _arrancar(cerrojo) -> None:
     aplicacion = construir_aplicacion()
 
     # BUG encontrado probando en real el 28/07: sin esto, el bot solo tenia en
@@ -1330,7 +2130,8 @@ def main_bot() -> None:
     # protege hilos DENTRO de un proceso, no procesos distintos.
     print(
         "ℹ️ Comparto memoria con la CLI (conversations/ + chroma_db/). "
-        "NO ejecutes 'python -m src.main' a la vez que el bot."
+        "Mientras yo esté vivo, la CLI y otro bot NO podrán arrancar: "
+        "tengo cogido el cerrojo."
     )
     try:
         aplicacion.run_polling()
