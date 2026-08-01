@@ -143,6 +143,23 @@ def _incrustar(textos: list[str]) -> list[list[float]]:
     return [vector.tolist() for vector in _modelo().embed(textos)]
 
 
+def incrustar_textos(textos: list[str]) -> list[list[float]]:
+    """Version PUBLICA de _incrustar, para quien necesite vectores sin tocar
+    el indice persistente.
+
+    La usa documentos.py para buscar dentro de un PDF/Word (01/08). Se
+    reutiliza el MISMO modelo de embeddings ya cargado en memoria - cargar
+    otro serian 220 MB mas de RAM para hacer exactamente lo mismo.
+
+    Lo importante es lo que esta funcion NO hace: no toca la coleccion de
+    ChromaDB. Los trozos de un adjunto NO deben acabar en la memoria
+    permanente - un documento que se lee una vez no es una conversacion, y
+    meterlo alli ensuciaria las busquedas de recuerdos para siempre.
+    """
+    with _cerrojo:
+        return _incrustar(textos)
+
+
 def _id_mensaje(nombre_fichero: str, indice: int) -> str:
     """ID estable y unico de un mensaje: fichero + posicion. Al ser
     deterministico, reindexar NO duplica (mismo id = misma entrada)."""
