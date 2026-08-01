@@ -24,7 +24,16 @@ conversations.db
 chroma_db/
 .modelos_cache/
 
+# F5.5 #8: la voz de Piper (.onnx de 63 MB). Binario descargado, no codigo
+# del proyecto - misma razon que .modelos_cache/. Se baja con:
+#   venv\Scripts\python.exe -m piper.download_voices es_ES-davefx-medium --data-dir voces
+voces/
+
 # Copias de seguridad al "empezar de cero" (contienen conversaciones
 # personales igual que los originales - nunca a git).
 *.bak
 *.bak/
+
+# Cerrojo entre procesos (01/08): centinela que impide CLI + bot a la vez.
+# Es estado LOCAL de la maquina, no codigo.
+.memoria.lock

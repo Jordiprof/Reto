@@ -136,6 +136,21 @@ dato no puede salir de la máquina:
 **Límite conocido y aceptado:** el texto del turno actual **sí** viaja al proveedor LLM.
 Es inevitable sin modelo local. Está documentado como límite, no disimulado.
 
+**Matiz añadido el 31/07 — la voz (F5.5 #8).** La transcripción de notas de voz manda el
+**audio** a Groq (Whisper), y eso es distinto de mandar texto: la voz es un dato
+**biométrico** — identifica a la *persona* que habla, no solo lo que dijo. Por eso:
+
+- se declara **aparte** y no dentro de "usa la red";
+- la mitad de *escuchar* nace **apagada** y se enciende a mano en `/voz`, con el aviso
+  delante en la misma pantalla (ahí, y no aquí, es donde se toma la decisión);
+- con el interruptor apagado el audio **ni siquiera se descarga** de Telegram;
+- la mitad de *hablar* **no paga nada**: Piper es local, sin clave ni cuota, y el audio
+  generado no sale de la máquina.
+
+Se aceptó Groq y no un Whisper local por usabilidad (0,5 s medidos frente a decenas de
+segundos en CPU), y la decisión es reversible: `voz.transcribir(bytes) -> str` es una
+función con una firma, cambiar el motor no toca el bot.
+
 ### 3.2 Incidencia de privacidad registrada (24–27/07) — y la lección
 
 - **Qué pasó.** Las trazas de herramientas escribían argumentos y resultados en claro.
