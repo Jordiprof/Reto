@@ -91,6 +91,18 @@ solo cambia quién le hace las preguntas (ver [ADR-005](docs/ADR/ADR-005-segurid
 python -m src.telegram_bot
 ```
 
+> **Solo puede haber UNO corriendo.** La CLI y el bot comparten `conversations/` y el
+> índice de ChromaDB, que están pensados para un único proceso, así que el segundo en
+> arrancar se niega con `⛔ Ya hay otro proceso usando la memoria` (ver `src/cerrojo.py`).
+> Si te pasa y no ves ninguna ventana abierta, es que quedó un proceso huérfano:
+>
+> ```bash
+> Get-Process python | Stop-Process -Force
+> ```
+>
+> Arráncalo desde una **terminal normal**, no con el botón de depurar del editor: algunos
+> lo lanzan dentro de un proceso envoltorio y acabas con dos `python.exe`.
+
 Antes hay que rellenar dos variables en el `.env`:
 
 | Variable | Cómo se obtiene |

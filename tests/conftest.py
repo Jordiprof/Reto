@@ -38,6 +38,32 @@ def handlers_de_fichero_apartados():
         raiz.addHandler(handler)
 
 
+@pytest.fixture(autouse=True)
+def cerrojo_aislado(tmp_path_factory, monkeypatch):
+    """Ningun test toca el cerrojo REAL de la maquina (`.memoria.lock`).
+
+    Nace de un fallo inmediato (01/08): al hacer que main_bot() coja el
+    cerrojo, dos tests que lo llaman se pusieron ROJOS *solo porque habia
+    un bot corriendo en el portatil*. Un test que pasa o falla segun lo que
+    este abierto en la maquina no vale para nada, y en CI habria sido peor:
+    un fallo intermitente e imposible de reproducir en local.
+
+    Se redirige la ruta por defecto a un fichero temporal por sesion, asi
+    que los tests siguen ejerciendo el cerrojo DE VERDAD (no es un mock:
+    test_cerrojo.py comprueba que bloquea de verdad, incluso entre
+    procesos) pero sobre un fichero que no es el del programa.
+
+    autouse=True por la misma leccion que la fixture de arriba: un control
+    que hay que acordarse de pedir no es un control.
+    """
+    import src.cerrojo
+
+    monkeypatch.setattr(
+        src.cerrojo, "_RUTA_POR_DEFECTO",
+        tmp_path_factory.mktemp("cerrojo") / "test.lock",
+    )
+
+
 class ProveedorFalso(_ProveedorLLM):
     """Proveedor de mentira: se le programa de antemano la lista de
     respuestas que ira devolviendo, en orden, en cada vuelta del bucle
