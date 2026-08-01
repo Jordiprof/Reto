@@ -213,7 +213,7 @@ evaluarse juntas al final, no antes que las herramientas de uso diario):
 | 4 | 🛡️ **Guardián de URLs** | — | — | — | — | Infraestructura, no herramienta. Siguiente por construir |
 | 5 | NASA APOD | **3** | ✅ | ✅ | `red`, `contenido_externo` | Devuelve el campo `explanation` con **prosa**, no solo cifras. Fuente fiable baja el riesgo, no la capacidad. Primera en usar el saneado GENERALIZADO (ver alternativas) |
 | 6 | Resumir una URL | **5** | ✅ | ✅ | `red` (destino elegido), `contenido_externo` | Página **arbitraria y sin moderar**: quien la controle controla el texto que entra al modelo. Primera que **exige** el #4. Lista blanca en `.env` (`DOMINIOS_PERMITIDOS_WEB`) |
-| 7 | Leer PDF / Word | **4** | ✅ | ✅ | `contenido_externo` arbitrario | Texto oculto (blanco sobre blanco, tamaño 1) que tú no ves y el modelo sí. Un `.docx` es un ZIP: acotar tamaño (bomba de descompresión) |
+| 7 | Leer PDF / Word ✅ | **4** | ✅ | ✅ | `contenido_externo` arbitrario | Texto oculto (blanco sobre blanco, tamaño 1) que tú no ves y el modelo sí. Un `.docx` es un ZIP: acotar tamaño (bomba de descompresión). **01/08: al trocear y buscar por relevancia aparece una capacidad nueva que el nivel 4 no contemplaba — el modelo elige QUÉ PARTE del documento entra al contexto. Sigue sin poder elegir el FICHERO (ahí está el techo del riesgo), y por eso el nivel no sube; pero la búsqueda se hace con vectores calculados y tirados, sin tocar ChromaDB, para que un documento leído una vez no acabe en la memoria permanente** |
 | 8 | Voz (`/voz`) | **3** | ❌ | ✅ | `red` | **Tu audio va a Groq: la voz es un dato BIOMÉTRICO**, identifica a la persona, no solo lo dicho. La salida (Piper) es local y no sale |
 | 9 | Conversor de formatos | **3** | ⚠️ | ✅ | `escribe_disco`, `binario` | Los parsers de imagen tienen historial de CVEs; una imagen deformada tumba el proceso. Llenar disco |
 
@@ -257,6 +257,21 @@ router solo el subconjunto activo, en vez de la constante `TOOLS` completa como 
 - **La salida binaria obliga a tocar `_ejecutar_tool`**, que hoy devuelve `str`. Es un
   cambio de infraestructura, por eso la primera herramienta binaria (conversor de
   formatos) va al final de las de uso diario y no antes.
+  - **RESUELTO el 01/08 y sin tocar esa firma**, al pedir Jordi que la foto de la NASA se
+    viera en Telegram en vez de llegar como enlace. La tool sigue devolviendo `str` para
+    el modelo y **además deja la imagen en una bandeja aparte** que recoge el canal que
+    sepa enseñarla (Telegram con `send_photo`) y que ignora el que no (la CLI). O sea:
+    **la salida binaria es asunto del CANAL, no de la tool** — la misma distinción de
+    viabilidad-vs-riesgo que puso la voz solo en Telegram. Con esto, la herramienta #9
+    (conversor de formatos) ya no parte de cero.
+  - Detalle técnico que costó: `documentos.py` usa un `ContextVar` para la ENTRADA y
+    funciona porque se fija *antes* de lanzar el hilo; aquí es SALIDA y **eso no valdría**,
+    porque `asyncio.to_thread` ejecuta en una **copia** del contexto y un `.set()` hecho
+    dentro no se ve fuera. Lo que sí cruza esa frontera es **mutar** un objeto que ya
+    existía: el `ContextVar` lleva la referencia a una lista que creó `Agente.preguntar`.
+  - La URL se valida contra `nasa.gov` antes de dársela a Telegram: **no la abrimos
+    nosotros, la descarga Telegram**, así que el guardián anti-SSRF de `red_segura` no
+    cubre ese caso y hace falta una comprobación propia.
 - **El orden no es negociable en dos puntos:** el guardián de URLs antes que cualquier
   herramienta **cuyo destino elija el modelo** (no antes de cualquiera que use la red —
   ver la precisión en la decisión 3), y el saneado GENERALIZADO de `contenido_externo`
