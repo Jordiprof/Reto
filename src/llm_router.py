@@ -81,9 +81,15 @@ class LLMRouter:
         # Que proveedor respondio de verdad la ultima vez (util para logs y
         # para que el CLI/bot pueda avisar si respondio un fallback).
         self.ultimo_proveedor: str | None = None
+        # Aviso para ENSEÑAR al usuario si el turno lo contesto un fallback.
+        # None cuando respondio el primario. Lo leen main.py y telegram_bot.
+        self.aviso_fallback: str | None = None
 
     def responder(self, historial: list, tools: list | None) -> str:
         ultimo_error = None
+        # Se limpia en CADA turno: si no, un aviso de hace media hora
+        # seguiria enseñandose cuando el primario ya volvio a funcionar.
+        self.aviso_fallback = None
         # Un Turno NUEVO por cada llamada a responder() - es lo que hace que
         # el presupuesto (SEG-03) y la memoria de tools ya ejecutadas
         # (LOG-07) sean compartidos por todos los intentos y proveedores de
@@ -134,7 +140,26 @@ class LLMRouter:
                     # Exito. Si respondio un fallback (no el primario), se
                     # deja constancia clara en el log.
                     self.ultimo_proveedor = eslabon.proveedor
+                    # Peticion de Jordi (01/08): el fallback tiene que
+                    # VERSE. Pasaba en silencio - Groq llevaba horas
+                    # devolviendo 429 y todo lo contestaba ollama, asi que
+                    # estaba probando un modelo distinto del que creia sin
+                    # que nada se lo dijera. Un cambio de modelo cambia la
+                    # respuesta Y que herramientas se llaman, o sea que no
+                    # es un detalle de fontaneria: es informacion que
+                    # necesita quien esta al otro lado.
+                    #
+                    # Se guarda aqui en vez de meterlo en el texto de la
+                    # respuesta: el aviso es del CANAL (Telegram lo manda
+                    # como mensaje aparte, la CLI lo imprime), no algo que
+                    # dijera el modelo - si fuera parte del texto acabaria
+                    # guardado en el historial y en el RAG.
                     if not es_primario:
+                        self.aviso_fallback = (
+                            f"⚠️ {self.eslabones[0].proveedor} no ha podido responder "
+                            f"({type(ultimo_error).__name__ if ultimo_error else 'fallo'}); "
+                            f"te contesto con {eslabon.proveedor}."
+                        )
                         logging.info(
                             f"Router: respondio el fallback {eslabon.proveedor} "
                             f"(el primario {self.eslabones[0].proveedor} fallo)"

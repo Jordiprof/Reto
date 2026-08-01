@@ -47,6 +47,12 @@ from src.tools import HERRAMIENTAS
 # no imposible), el programa se colgaria en un bucle infinito.
 _MAX_PASOS_DE_HERRAMIENTAS = 5
 
+# A partir de cuantas llamadas a la MISMA tool en un turno se le avisa al
+# modelo de que esta dando vueltas. 3 y no 5 a proposito: con 5 el aviso
+# llegaria justo cuando ya se han agotado las rondas, o sea demasiado tarde
+# para que sirva de algo.
+_AVISAR_REPETICION_TOOL = 3
+
 # AUD-05: cuantas tools se EJECUTAN como mucho en UNA sola respuesta del
 # modelo. Es un eje distinto de _MAX_PASOS_DE_HERRAMIENTAS (que limita las
 # VUELTAS del bucle): en una sola vuelta, el modelo puede pedir 50 tools de
@@ -199,6 +205,30 @@ def _ejecutar_tool(nombre: str, argumentos: dict, turno: Turno | None = None) ->
             except Exception as error:
                 estado = "fallo"
                 resultado = f"Error ejecutando '{nombre}': {error}"
+
+    # AVISO DE BUCLE (01/08). Segunda mitad del arreglo del PDF: la llamada
+    # final sin tools evita que el turno se pierda, pero es un rescate. Esto
+    # ataca la causa, que es que el modelo no se da cuenta de que esta dando
+    # vueltas: llamo a leer_documento CINCO veces cambiando un poco la
+    # consulta cada vez ("al final", "el documento", "resumen a lo
+    # ultimo"...). Para la memoria de LOG-07 eran cinco llamadas distintas,
+    # asi que ninguna se reutilizo y nada le hacia notar la repeticion.
+    #
+    # El aviso va DENTRO del resultado, que es el sitio donde el modelo no
+    # puede no verlo - mismo patron que ya funciono con la fecha de NASA
+    # APOD y con el truncado de documentos. Y va DESPUES de ejecutar, no en
+    # lugar de: el dato que pidio se le da igual; lo que se añade es que
+    # deje de buscar.
+    if turno is not None and estado == "ok":
+        veces = turno.veces_llamada(nombre) + 1  # +1: esta aun no se apunto
+        if veces >= _AVISAR_REPETICION_TOOL:
+            resultado = (
+                f"⚠️ Ya has llamado a '{nombre}' {veces} veces en este mismo "
+                "turno. Deja de buscar y RESPONDE con lo que ya tienes de las "
+                "llamadas anteriores. Si algo no aparece, dilo, pero no vuelvas "
+                "a llamarme.\n\n" + resultado
+            )
+
     # F5.0/T8 + F5.2 (fuga encontrada el 27/07): esta linea logueaba
     # args=%s y ->%s en claro. Como buscar_en_recuerdos devuelve mensajes
     # DESCIFRADOS de conversaciones pasadas, agente.log acababa conteniendo
@@ -364,13 +394,58 @@ class _ProveedorLLM:
                     resultado = _ejecutar_tool(llamada.nombre, llamada.argumentos, turno)
                 self._registrar_resultado(estado, llamada, resultado)
 
-        raise ErrorLimitePasos(self._nombre)
+        # SE ACABARON LAS RONDAS. Antes esto era un `raise ErrorLimitePasos`
+        # y ahi estaba el fallo que encontro Jordi el 01/08 probando un PDF:
+        #
+        #   pregunta -> el modelo busca 5 veces en el documento sin llegar a
+        #   contestar -> se agotan las rondas -> ErrorLimitePasos -> el
+        #   router DEGRADA al siguiente proveedor -> que empieza el bucle
+        #   DESDE CERO y hace exactamente lo mismo -> y el tercero igual ->
+        #   "no quedan mas proveedores" y el turno se pierde ENTERO.
+        #
+        # Se veia en el log: ollama 5 busquedas, groq sin cuota, gemini otras
+        # 5 busquedas, y ninguna respuesta. Se habian ejecutado DIEZ
+        # busquedas correctas y aun asi el usuario no recibio nada.
+        #
+        # Lo absurdo era tirar trabajo bueno: el modelo YA tenia el material,
+        # lo que no hacia era parar de buscar. Asi que en vez de rendirse se
+        # le hace UNA llamada mas SIN TOOLS - sin herramientas que pedir, no
+        # le queda otra que redactar la respuesta con lo que ya reunio.
+        #
+        # Es una degradacion, no un arreglo perfecto: la respuesta se apoya
+        # en busquedas parciales. Pero una respuesta parcial y avisada es
+        # infinitamente mejor que tres proveedores quemados y un error.
+        logging.warning(
+            "%s agoto los %d pasos de tools; se le pide respuesta final sin tools",
+            self._nombre, _MAX_PASOS_DE_HERRAMIENTAS,
+        )
+        if turno is not None:
+            turno.gastar(self._nombre)
+        respuesta = self._llamar(self._estado_sin_tools(estado))
+        if respuesta.pide_tools or not respuesta.texto:
+            # Ni asi contesta: ahora si es un fallo de verdad y el router
+            # hace bien en probar otro proveedor.
+            raise ErrorLimitePasos(self._nombre)
+        return respuesta.texto
 
     # --- Piezas que cada proveedor implementa (lo unico que cambia) ---
 
     def _estado_inicial(self, historial: list, tools: list | None):
         """Prepara el cliente y el estado de trabajo (mensajes/contents)."""
         raise NotImplementedError
+
+    def _estado_sin_tools(self, estado):
+        """El MISMO estado (con toda la conversacion y los resultados de las
+        tools ya ejecutadas) pero sin herramientas que ofrecer.
+
+        Sirve para la llamada final de rescate: sin tools que pedir, el
+        modelo no puede seguir buscando y tiene que redactar la respuesta.
+
+        Groq y Ollama guardan las tools en estado["tools"], asi que les vale
+        esta version. Gemini las lleva dentro de un objeto `config` ya
+        construido y lo sobreescribe.
+        """
+        return {**estado, "tools": None}
 
     def _llamar(self, estado) -> RespuestaLLM:
         """Hace UNA llamada al modelo y traduce su respuesta a RespuestaLLM."""
@@ -526,6 +601,27 @@ class _ProveedorOllama(_ProveedorLLM):
             logging.error(f"Ollama: timeout tras {_TIMEOUT_SEGUNDOS}s")
             raise ErrorTimeout("Ollama", str(error)) from error
         except Exception as error:
+            # MODELO RETIRADO (410 Gone), afinado el 01/08 tras un caso real:
+            # Jordi eligio `minimax-m2.5` del menu y TODOS sus mensajes
+            # cayeron al fallback con "ErrorPeticionInvalida", que no dice
+            # nada. El motivo real estaba escondido en el detalle:
+            # "minimax-m2.5 was retired at 2026-07-31" - lo habian retirado
+            # el dia ANTES. El catalogo de modelos se verifico el 16/07 y ha
+            # envejecido, que es exactamente el riesgo que ya avisaba el
+            # diario ("verificar siempre en docs oficiales; las IAs citan
+            # modelos retirados") - solo que esta vez le toco a este repo.
+            #
+            # Se distingue A PROPOSITO: un catalogo envejece SIEMPRE, asi
+            # que lo util no es quitar este modelo (que tambien) sino que el
+            # proximo que retiren lo diga solo, en vez de disfrazarse de
+            # fallo generico.
+            if getattr(error, "status_code", None) == 410:
+                logging.error("Ollama: el modelo %s esta RETIRADO (410)", self.modelo)
+                raise ErrorPeticionInvalida(
+                    "Ollama",
+                    f"El modelo '{self.modelo}' ya no existe: el proveedor lo ha "
+                    f"retirado. Elige otro con /modelo. Detalle: {error}",
+                ) from error
             # Ollama no define excepciones tan especificas como Groq en su
             # SDK; capturamos generico. ErrorPeticionInvalida como cajon
             # generico (no reintentable) - se afina si algun dia se necesita
@@ -635,6 +731,21 @@ class _ProveedorGemini(_ProveedorLLM):
             config = types.GenerateContentConfig(system_instruction=system_instruction)
 
         return {"client": client, "contents": contents, "config": config}
+
+    def _estado_sin_tools(self, estado):
+        """Gemini no guarda las tools sueltas: van dentro del `config` que ya
+        se construyo. Se rehace uno igual pero SOLO con la instruccion de
+        sistema, conservando `contents` (que es donde estan la conversacion
+        y los resultados de las tools ya ejecutadas)."""
+        from google.genai import types
+
+        anterior = estado["config"]
+        return {
+            **estado,
+            "config": types.GenerateContentConfig(
+                system_instruction=getattr(anterior, "system_instruction", None)
+            ),
+        }
 
     def _llamar(self, estado):
         # httpx: el SDK de Gemini tambien lo usa por debajo para el

@@ -123,3 +123,17 @@ class Turno:
 
     def recordar(self, nombre: str, argumentos: object, resultado: str) -> None:
         self._resultados[self._clave(nombre, argumentos)] = resultado
+
+    def veces_llamada(self, nombre: str) -> int:
+        """Cuantas veces se ha ejecutado esta tool en el turno, con
+        CUALESQUIERA argumentos.
+
+        Distinto de resultado_previo(), que compara nombre + argumentos
+        exactos. Nace del bug del 01/08: el modelo llamo a leer_documento
+        cinco veces seguidas cambiando un poco la consulta cada vez ("al
+        final", "el documento", "resumen a lo ultimo"...), asi que para la
+        memoria de LOG-07 eran cinco llamadas DISTINTAS y ninguna se
+        reutilizo. Contar por nombre a secas es lo que permite detectar que
+        se esta dando vueltas sobre lo mismo.
+        """
+        return sum(1 for clave in self._resultados if clave[0] == nombre)

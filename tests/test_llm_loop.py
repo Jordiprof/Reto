@@ -286,13 +286,37 @@ def test_el_default_de_repetible_es_el_seguro():
     assert herramienta.repetible is False
 
 
-def test_las_tools_actuales_no_son_repetibles():
-    """calcular y buscar_en_recuerdos son puras: reutilizar su resultado
-    dentro de un turno es correcto y ademas ahorra trabajo."""
+# Las UNICAS tools que pueden repetirse dentro de un turno, con su motivo.
+# Escrito a mano A PROPOSITO, al reves que casi todo lo demas del proyecto:
+# aqui una lista que se deriva sola seria peor. El default de LOG-07 es
+# repetible=False para que, ante un olvido, el comportamiento sea el seguro
+# (reutilizar un resultado, nunca mandar dos veces un email). Si esta lista
+# se calculara del propio registro, el test diria siempre que si y no
+# protegeria de nada: lo que vigila es que NADIE se vuelva repetible sin que
+# un humano lo escriba aqui y explique por que.
+_REPETIBLES_JUSTIFICADAS = {
+    # 01/08: con el troceo, `consulta` la convierte en una BUSQUEDA dentro
+    # del documento. Dos busquedas distintas en el mismo turno son
+    # legitimas - es como el modelo llega al final de un PDF largo. No tiene
+    # efectos fuera del proceso: solo lee bytes que ya estan en RAM.
+    "leer_documento",
+}
+
+
+def test_solo_son_repetibles_las_tools_justificadas():
+    """El default de LOG-07 (repetible=False) existe para que un olvido al
+    declarar una tool nueva signifique "reutiliza el resultado" y nunca
+    "manda el email dos veces". Este test es el que impide que ese default
+    se pierda por descuido."""
     from src.tools import HERRAMIENTAS
 
-    for nombre, herramienta in HERRAMIENTAS.items():
-        assert herramienta.repetible is False, nombre
+    repetibles = {n for n, h in HERRAMIENTAS.items() if h.repetible}
+
+    assert repetibles == _REPETIBLES_JUSTIFICADAS, (
+        "Si una tool pasa a repetible=True, añádela a _REPETIBLES_JUSTIFICADAS "
+        "con el motivo. Si tiene efectos FUERA del proceso (enviar, escribir, "
+        "programar), no debe serlo nunca."
+    )
 
 
 # --- AUD-05: tope de tools EJECUTADAS por ronda ------------------------
@@ -380,3 +404,148 @@ def test_el_tope_no_gasta_efectos_de_las_que_sobran(tool_con_efectos):
 
     # Se pidieron 8 envios; solo salieron los del tope.
     assert len(tool_con_efectos) == _MAX_TOOLS_POR_RONDA
+
+
+# --- El turno ya no se pierde al agotar las rondas (01/08) -----------------
+# BUG REAL encontrado por Jordi con un PDF: pregunta -> el modelo busca 5
+# veces sin contestar -> se agotan las rondas -> ErrorLimitePasos -> el
+# router degrada al siguiente proveedor, que empieza DE CERO y hace lo
+# mismo -> y el tercero igual -> "no quedan mas proveedores" y el turno se
+# pierde entero. En el log: 10 busquedas correctas ejecutadas y CERO
+# respuesta para el usuario. Lo absurdo era tirar trabajo bueno: el modelo
+# ya tenia el material, lo que no hacia era parar de buscar.
+
+
+def _peticion_tool(nombre="calcular"):
+    from src.llm_types import RespuestaLLM, ToolCall
+
+    return RespuestaLLM(tool_calls=[ToolCall(nombre=nombre, argumentos={"expresion": "2+2"})])
+
+
+class _ProveedorPesado(_ProveedorFalso):
+    """Pide tools SIEMPRE, en todas las rondas: el caso del bug."""
+
+    def __init__(self):
+        from src.llm_types import RespuestaLLM
+
+        super().__init__([])
+        self.sin_tools_recibido = []
+        self._final = RespuestaLLM(texto="Con lo que encontré: el resultado es 4.")
+
+    def _estado_inicial(self, historial, tools):
+        return {"historial": list(historial), "tools": tools}
+
+    def _llamar(self, estado):
+        # Si le quitan las tools, contesta. Mientras las tenga, sigue
+        # pidiendo - exactamente lo que hacia gpt-oss con el PDF.
+        if estado.get("tools") is None:
+            self.sin_tools_recibido.append(True)
+            return self._final
+        return _peticion_tool()
+
+    # ProveedorFalso no hace crecer estado["historial"], pero los proveedores
+    # REALES si (Groq/Ollama van añadiendo a estado["mensajes"] la peticion
+    # de tools y su resultado). Aqui se imita eso, porque justo lo que hay
+    # que demostrar es que la llamada de rescate ve ese material acumulado.
+    def _registrar_peticion(self, estado, respuesta):
+        estado["historial"].append({"role": "assistant", "content": "[pide tools]"})
+
+    def _registrar_resultado(self, estado, llamada, resultado):
+        super()._registrar_resultado(estado, llamada, resultado)
+        estado["historial"].append({"role": "tool", "content": resultado})
+
+
+def test_al_agotar_las_rondas_se_pide_respuesta_SIN_tools():
+    """El arreglo: en vez de rendirse, una llamada mas sin herramientas.
+    Sin tools que pedir, al modelo no le queda otra que redactar."""
+    from src.tools import TOOLS
+
+    proveedor = _ProveedorPesado()
+
+    respuesta = proveedor.responder([{"role": "user", "content": "x"}], TOOLS)
+
+    assert respuesta == "Con lo que encontré: el resultado es 4."
+    assert proveedor.sin_tools_recibido == [True], "solo UNA llamada de rescate"
+
+
+def test_si_ni_sin_tools_contesta_entonces_SI_falla():
+    """El rescate no puede tapar un fallo de verdad: si el modelo tampoco
+    responde sin herramientas, el router debe poder probar otro proveedor."""
+    from src.llm_errors import ErrorLimitePasos
+    from src.llm_types import RespuestaLLM
+    from src.tools import TOOLS
+
+    class _NuncaContesta(_ProveedorPesado):
+        def _llamar(self, estado):
+            if estado.get("tools") is None:
+                return RespuestaLLM(texto="")
+            return _peticion_tool()
+
+    with pytest.raises(ErrorLimitePasos):
+        _NuncaContesta().responder([{"role": "user", "content": "x"}], TOOLS)
+
+
+def test_el_rescate_conserva_los_resultados_ya_obtenidos():
+    """Lo que hace util el rescate: la llamada final ve TODA la
+    conversacion, incluidos los resultados de las tools ya ejecutadas. Si
+    se perdieran, el modelo redactaria a ciegas."""
+    from src.tools import TOOLS
+
+    proveedor = _ProveedorPesado()
+    vistos = []
+
+    original = proveedor._llamar
+
+    def espia(estado):
+        vistos.append(len(estado["historial"]))
+        return original(estado)
+
+    proveedor._llamar = espia
+    proveedor.responder([{"role": "user", "content": "x"}], TOOLS)
+
+    # El historial crece con cada ronda y la llamada final ve el mas largo.
+    assert vistos[-1] == max(vistos)
+    assert vistos[-1] > vistos[0]
+
+
+def test_el_rescate_gasta_presupuesto():
+    """Es una llamada real de red: tiene que contar para SEG-03, o el
+    presupuesto por turno dejaria de ser exacto."""
+    from src.llm_types import Turno
+    from src.tools import TOOLS
+
+    turno = Turno(maximo=20)
+    proveedor = _ProveedorPesado()
+
+    proveedor.responder([{"role": "user", "content": "x"}], TOOLS, turno)
+
+    # 5 rondas + 1 de rescate.
+    assert turno.gastadas == 6
+
+
+# --- Aviso de bucle: que el modelo NOTE que se repite ----------------------
+
+
+def test_a_la_tercera_llamada_igual_se_le_avisa():
+    """El modelo llamo 5 veces cambiando un poco la consulta cada vez, asi
+    que para LOG-07 eran llamadas DISTINTAS y nada le hacia notar la
+    repeticion. veces_llamada() cuenta por NOMBRE, no por argumentos."""
+    from src.llm_client import _ejecutar_tool
+    from src.llm_types import Turno
+
+    turno = Turno(maximo=20)
+
+    primera = _ejecutar_tool("calcular", {"expresion": "1+1"}, turno)
+    segunda = _ejecutar_tool("calcular", {"expresion": "2+2"}, turno)
+    tercera = _ejecutar_tool("calcular", {"expresion": "3+3"}, turno)
+
+    assert "⚠️" not in primera and "⚠️" not in segunda
+    assert "Ya has llamado" in tercera
+    assert "6" in tercera, "el resultado real se sigue entregando"
+
+
+def test_el_aviso_no_aparece_sin_turno():
+    """Sin Turno no hay forma de contar, y no debe reventar por ello."""
+    from src.llm_client import _ejecutar_tool
+
+    assert "⚠️" not in _ejecutar_tool("calcular", {"expresion": "1+1"}, None)
