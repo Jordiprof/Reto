@@ -188,6 +188,7 @@ COMANDOS = {
     "/recuerdo": "Buscar en la memoria de conversaciones pasadas",
     "/borrar": "Borrar una conversación guardada (del disco y de la memoria)",
     "/resumen": "Pedir un resumen de la conversación",
+    "/condensar": "Resumir el documento adjunto ENTERO en un .md (tarda)",
     "/limpiar": "Borrar esta conversación y empezar de cero",
     "/guardar": "Guardar la conversación ahora, sin salir",
     "/salir": "Terminar (te preguntaré si guardar)",
@@ -749,6 +750,45 @@ def _sesion():
             # F3.6 (extra): pide al propio modelo que resuma la conversacion.
             if comando == "/resumen":
                 print(f"Resumen: {agente.resumir()}")
+                continue
+
+            # 02/08: condensar el documento adjunto ENTERO en un .md.
+            # Es un COMANDO y no una tool a proposito: son N llamadas al
+            # LLM, y metidas dentro de una tool tendriamos al modelo
+            # llamando a algo que vuelve a llamar al modelo (ver el
+            # cabecero de src/resumen_largo.py).
+            if comando == "/condensar":
+                adjunto = agente.documento_pendiente
+                if adjunto is None:
+                    print("No hay ningún documento puesto. Usa /documento primero.")
+                    continue
+                from src.documentos import extraer_texto
+                from src.resumen_largo import (
+                    ResumenImposible,
+                    condensar,
+                    guardar,
+                    preparar_resumidor,
+                )
+
+                try:
+                    texto_doc = extraer_texto(adjunto)
+                    llamar, tamaño, quien = preparar_resumidor(
+                        agente.proveedor, agente.api_key, agente.modelo
+                    )
+                    print(f"Resumiendo con {quien}…")
+                    markdown, datos = condensar(
+                        texto_doc, adjunto.nombre, llamar,
+                        tamaño_bloque=tamaño, avisar=lambda t: print(f"  {t}"),
+                    )
+                except ResumenImposible as error:
+                    print(f"⚠️ {error}")
+                    continue
+                except Exception as error:
+                    logging.error("CLI: fallo condensando (%s)", type(error).__name__)
+                    print("⚠️ No he podido resumir el documento.")
+                    continue
+                ruta = guardar(markdown, adjunto.nombre)
+                print(f"✅ Listo: {ruta}  ({datos['llamadas']} llamadas al modelo)")
                 continue
 
             # Un turno completo (historial, tools, guardado del turno) lo

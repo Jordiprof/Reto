@@ -229,3 +229,32 @@ def test_un_400_normal_SIGUE_quemando_el_proveedor():
     assert router.responder([], None) == "responde el fallback"
     assert router.ultimo_proveedor == "ollama"
     assert intentos["n"] == 2  # groq UNA vez (sin reintentos) + ollama
+
+
+@pytest.mark.parametrize("nombre_error,reintentable_esperado", [
+    ("ServerError", True),           # 5xx: el servidor esta saturado
+    ("ResourceExhausted", True),     # 429: vas muy rapido
+    ("ServiceUnavailable", True),    # 503
+    ("InvalidArgument", False),      # peticion mal formada: fallaria siempre
+    ("PermissionDenied", False),
+])
+def test_gemini_separa_lo_transitorio_de_lo_definitivo(nombre_error, reintentable_esperado):
+    """La tabla completa. Reintentar un InvalidArgument solo gastaria cuota;
+    NO reintentar un 5xx pierde el proveedor por nada."""
+    from src.llm_client import _ProveedorGemini
+
+    error = type(nombre_error, (Exception,), {})("fallo")
+    proveedor = _ProveedorGemini("clave", "modelo")
+
+    class ClienteFalso:
+        class models:
+            @staticmethod
+            def generate_content(**kw):
+                raise error
+
+    with pytest.raises(Exception) as capturado:
+        _ProveedorGemini._llamar(
+            proveedor, {"client": ClienteFalso, "contents": [], "config": None}
+        )
+
+    assert capturado.value.reintentable is reintentable_esperado

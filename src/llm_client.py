@@ -10,6 +10,7 @@ import re
 # time: perf_counter() es un cronometro de alta precision, para medir
 # cuanto tarda cada llamada.
 import time
+from contextvars import ContextVar
 
 # ValidationError: la excepcion que lanza Pydantic cuando los datos no
 # encajan con el modelo declarado (F5.4).
@@ -74,6 +75,41 @@ _MAX_TOOLS_POR_RONDA = 3
 # 30s en SEGUNDOS (Groq/Ollama lo piden asi); Gemini lo pide en MILISEGUNDOS,
 # ver _ProveedorGemini._estado_inicial.
 _TIMEOUT_SEGUNDOS = 30.0
+
+# Timeout AMPLIADO para trabajos largos (02/08). BUG REAL encontrado a la
+# primera prueba de /condensar: Jordi le dio un PDF de 284 fragmentos y los
+# tres proveedores fallaron, pero Ollama fallo por "timeout tras 30.0s"
+# TRES VECES seguidas. No es que no pudiera - es que no le dejamos acabar.
+#
+# Los 30s son correctos para un turno de chat, donde una espera mas larga
+# significa que algo se ha colgado. Resumir 142.000 caracteres es otra cosa:
+# el modelo tiene que LEERSELOS y luego escribir, y eso son minutos. El
+# mismo numero no puede valer para las dos cosas, igual que _TIMEOUT_TOOLS
+# es mas CORTO (8s) porque una API de tiempo que tarda 8s ya esta caida.
+_TIMEOUT_TRABAJO_LARGO = 180.0
+
+# Que timeout usar, decidido por quien llama. Es ENTRADA -se fija antes de
+# la llamada- que es justo el caso donde un ContextVar SI vale; para salida
+# no serviria (leccion del 01/08 con la bandeja de imagenes). Mismo patron
+# que el documento adjunto y las categorias activas.
+_TIMEOUT_ACTUAL: ContextVar[float | None] = ContextVar("timeout_llm", default=None)
+
+
+def timeout_actual() -> float:
+    """Los segundos que se le dan a esta llamada. Sin nadie que lo cambie,
+    los 30s de siempre: quien no sepa que esto existe no nota nada."""
+    return _TIMEOUT_ACTUAL.get() or _TIMEOUT_SEGUNDOS
+
+
+def fijar_timeout(segundos: float | None):
+    """Devuelve el token para restaurarlo (mismo contrato que fijar_bandeja).
+    SIEMPRE en un try/finally: un timeout largo que se quedara puesto haria
+    que un chat normal esperase tres minutos a un proveedor caido."""
+    return _TIMEOUT_ACTUAL.set(segundos)
+
+
+def restaurar_timeout(token) -> None:
+    _TIMEOUT_ACTUAL.reset(token)
 
 
 def _resumir_validacion(error: ValidationError) -> str:
@@ -516,7 +552,7 @@ class _ProveedorGroq(_ProveedorLLM):
         # espera 1 minuto entero antes de rendirse - demasiado para un bot
         # que debe seguir vivo (verificado en groq-python/README.md).
         return {
-            "client": Groq(api_key=self.api_key, timeout=_TIMEOUT_SEGUNDOS),
+            "client": Groq(api_key=self.api_key, timeout=timeout_actual()),
             "mensajes": list(historial),
             "tools": tools,
         }
@@ -549,7 +585,7 @@ class _ProveedorGroq(_ProveedorLLM):
             logging.error("Groq: clave de API invalida")
             raise ErrorAutenticacion("Groq", str(error)) from error
         except APITimeoutError as error:
-            logging.error(f"Groq: timeout tras {_TIMEOUT_SEGUNDOS}s")
+            logging.error(f"Groq: timeout tras {timeout_actual()}s")
             raise ErrorTimeout("Groq", str(error)) from error
         except APIConnectionError as error:
             logging.error("Groq: fallo de conexion")
@@ -628,7 +664,7 @@ class _ProveedorOllama(_ProveedorLLM):
         client = Client(
             host="https://ollama.com",
             headers={"Authorization": "Bearer " + self.api_key},
-            timeout=_TIMEOUT_SEGUNDOS,
+            timeout=timeout_actual(),
         )
         return {"client": client, "mensajes": list(historial), "tools": tools}
 
@@ -648,7 +684,7 @@ class _ProveedorOllama(_ProveedorLLM):
         try:
             respuesta = client.chat(**kwargs)
         except httpx.TimeoutException as error:
-            logging.error(f"Ollama: timeout tras {_TIMEOUT_SEGUNDOS}s")
+            logging.error(f"Ollama: timeout tras {timeout_actual()}s")
             raise ErrorTimeout("Ollama", str(error)) from error
         except Exception as error:
             # MODELO RETIRADO (410 Gone), afinado el 01/08 tras un caso real:
@@ -761,7 +797,7 @@ class _ProveedorGemini(_ProveedorLLM):
         # igualmente porque es lo documentado, y el limite del bucle
         # (_MAX_PASOS_DE_HERRAMIENTAS) sigue de red de seguridad.
         client = genai.Client(
-            http_options=types.HttpOptions(timeout=int(_TIMEOUT_SEGUNDOS * 1000))
+            http_options=types.HttpOptions(timeout=int(timeout_actual() * 1000))
         )
         # Traducimos el historial canonico al dialecto de Gemini.
         contents, system_instruction = traducir_historial_gemini(historial)
@@ -812,14 +848,30 @@ class _ProveedorGemini(_ProveedorLLM):
                 config=estado["config"],
             )
         except httpx.TimeoutException as error:
-            logging.error(f"Gemini: timeout tras {_TIMEOUT_SEGUNDOS}s")
+            logging.error(f"Gemini: timeout tras {timeout_actual()}s")
             raise ErrorTimeout("Gemini", str(error)) from error
         except Exception as error:
+            # 02/08: se separa lo TRANSITORIO de lo definitivo, que estaba
+            # pendiente en el backlog desde el 24/07 y salio mordiendo a la
+            # primera prueba de /condensar - un ServerError degrado Gemini
+            # SIN reintentar, justo el proveedor que mejor podia con ello.
+            #
+            # Un 5xx ("el servidor esta saturado") o un 429 ("vas muy
+            # rapido") son invitaciones EXPLICITAS a volver a intentarlo;
+            # tratarlos igual que un INVALID_ARGUMENT -que fallaria siempre-
+            # quema el proveedor a la primera. Se mira el NOMBRE del tipo y
+            # no la clase importada porque el SDK de Google los reorganiza
+            # entre versiones, y un ImportError aqui tumbaria a Gemini
+            # entero por un detalle de empaquetado ajeno.
+            nombre_error = type(error).__name__
+            if nombre_error in ("ServerError", "ResourceExhausted", "ServiceUnavailable"):
+                logging.error("Gemini: fallo transitorio (%s); reintentable", nombre_error)
+                raise ErrorConexion("Gemini", str(error)) from error
             # F5.2 (27/07): tipo, no texto. Gemini con INVALID_ARGUMENT puede
             # devolver "contents[N].parts[0].text = '...'" - el texto que
             # escribio JIM, dentro del propio mensaje de error. Detalle
             # completo sigue en ErrorPeticionInvalida.detalle.
-            logging.error("Gemini: error (%s)", type(error).__name__)
+            logging.error("Gemini: error (%s)", nombre_error)
             raise ErrorPeticionInvalida("Gemini", str(error)) from error
         logging.info(f"Latencia (gemini/{self.modelo}): {time.perf_counter() - inicio:.2f}s")
 

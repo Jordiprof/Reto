@@ -152,10 +152,26 @@ MODELOS = {
     ],
     # Gemini: "gemini-3.0-flash" no existe (404 real) y "gemini-2.5-pro"
     # tiene cuota 0 en el free tier (429 real) - los dos descartados aposta.
+    # REORDENADO el 02/08: "2.5-flash" pasa DELANTE de "3.5-flash", y no por
+    # ser mejor modelo (no lo es) sino por ser el unico de los cuatro cuyos
+    # limites del plan gratuito PUBLICA Google - y resultan ser los mejores
+    # de todo el catalogo del proyecto:
+    #
+    #   gemini-2.5-flash : 250.000 tokens/minuto · 250 peticiones/dia
+    #   llama-3.3-70b    :  12.000 tokens/minuto
+    #   gpt-oss-120b     :   8.000 tokens/minuto
+    #
+    # Veinte veces mas cuota por minuto que Groq. Eso es lo que hace posible
+    # resumir un documento de 300 hojas (~81.000 tokens): en Groq ni siquiera
+    # cabe la peticion, y aqui sobra sitio. De "3.5-flash" y
+    # "3.1-flash-lite" Google ya NO publica los limites del free tier
+    # (remite a AI Studio, que depende de la cuenta), asi que no se puede
+    # decidir con ellos - misma lección que Ollama el 01/08: si no publican
+    # el numero, no se puede planificar con el.
     "gemini": [
-        "models/gemini-3.5-flash",       # El mejor, más moderno y recomendado (Rápido y lógico)
+        "models/gemini-2.5-flash",       # PRIMERO: 250k tokens/min, el unico con limites publicados
+        "models/gemini-3.5-flash",       # Mejor modelo, pero cuota del free tier sin publicar
         "models/gemini-3.1-flash-lite",  # El más ligero, ideal si haces muchas llamadas seguidas
-        "models/gemini-2.5-flash",       # Versión Flash anterior, totalmente operativa y gratuita
         "models/gemma-4-31b-it",    # Modelo abierto de Google, sin cuotas estrictas
     ],
 }

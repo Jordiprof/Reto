@@ -94,6 +94,13 @@ _MAX_NOMBRE = 60
 # dentro: aqui los lee una persona, que sabe descartar los que no valen.
 _RECUERDOS_MOSTRADOS = 5
 
+# Tope de bloques al condensar un documento (02/08). Es el mismo que el de
+# resumen_largo, pero se nombra AQUI para poder bajarlo en Telegram sin
+# tocar la CLI: por el chat es donde se pide sin pensar, y cada bloque es
+# una llamada al modelo. Con 10 son ~200 hojas y la mitad de la cuota
+# diaria de Groq en un solo documento.
+TOPE_BLOQUES_TELEGRAM = 10
+
 
 # --- Estado en memoria -----------------------------------------------------
 # Los tres diccionarios estan ACOTADOS por la allowlist: solo pueden crecer
@@ -898,6 +905,7 @@ _CATALOGO: list[tuple[str, str, str]] = [
     ("tools", "encender o apagar grupos de herramientas", "directo"),
     ("modelo", "cambiar el modelo (mismo proveedor)", "directo"),
     ("proveedor", "cambiar de proveedor (y modelo)", "directo"),
+    ("condensar", "resumir el documento adjunto ENTERO y mandártelo en un .md", "directo"),
     ("documento", "mándame un PDF o un Word como adjunto — no hace falta escribirlo", "info"),
 ]
 
@@ -1034,6 +1042,80 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             respuesta = "⚠️ No he podido resumir ahora mismo."
     for trozo in _trocear(respuesta):
         await mensaje.reply_text(trozo)
+
+
+async def cmd_condensar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Resume el documento adjunto ENTERO y lo manda como fichero .md.
+
+    Es un COMANDO y no una tool a proposito: son N llamadas al LLM, y
+    dentro de una tool tendriamos al modelo llamando a algo que vuelve a
+    llamar al modelo (detalle en el cabecero de src/resumen_largo.py).
+
+    Va en un .md y no en el chat porque un condensado son decenas de miles
+    de caracteres: en Telegram serian trece mensajes seguidos.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+
+    from src.documentos import extraer_texto
+    from src.resumen_largo import (
+        ResumenImposible,
+        condensar,
+        guardar,
+        preparar_resumidor,
+    )
+
+    async with _cerrojo_de(usuario.id):
+        agente = _agente_de(usuario.id)
+        adjunto = agente.documento_pendiente
+        if adjunto is None:
+            await mensaje.reply_text(
+                "No tengo ningún documento a mano. Mándame un PDF o un Word "
+                "como adjunto y luego vuelve a pedírmelo."
+            )
+            return
+
+        try:
+            texto_doc = await asyncio.to_thread(extraer_texto, adjunto)
+            llamar, tamaño, quien = preparar_resumidor(
+                agente.proveedor, agente.api_key, agente.modelo
+            )
+            await mensaje.reply_text(
+                f"📚 Voy a leérmelo entero con {quien}. Esto tarda "
+                "varios minutos; te voy contando."
+            )
+
+            # Los avisos van a una lista y se mandan DESPUES: `condensar`
+            # es sincrona y corre en otro hilo, asi que no puede hacer
+            # await. Es la misma frontera que la bandeja de imagenes del
+            # 01/08 - lo que cruza al hilo es MUTAR una lista que ya
+            # existia, no devolver algo por un ContextVar.
+            avisos: list[str] = []
+            markdown, datos = await asyncio.to_thread(
+                condensar, texto_doc, adjunto.nombre, llamar,
+                tamaño, TOPE_BLOQUES_TELEGRAM, avisos.append,
+            )
+        except ResumenImposible as error:
+            await mensaje.reply_text(f"⚠️ {error}")
+            return
+        except Exception as error:
+            logging.error("Telegram: fallo condensando (%s)", type(error).__name__)
+            await mensaje.reply_text("⚠️ No he podido resumir ese documento.")
+            return
+
+        ruta = await asyncio.to_thread(guardar, markdown, adjunto.nombre)
+
+    with ruta.open("rb") as fichero:
+        await mensaje.reply_document(
+            fichero,
+            filename=ruta.name,
+            caption=(
+                f"✅ Listo: {datos['bloques_procesados']} bloque(s), "
+                f"{datos['llamadas']} llamadas al modelo."
+            ),
+        )
 
 
 async def cmd_historial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1935,6 +2017,7 @@ _ACCIONES_DIRECTAS = {
     "resumen": cmd_resumen,
     "limpiar": cmd_limpiar,
     "cerrar": cmd_salir,
+    "condensar": cmd_condensar,
     "voz": cmd_voz,
     "tools": cmd_tools,
     "modelo": cmd_modelo,
@@ -2056,6 +2139,7 @@ def construir_aplicacion() -> Application:
     aplicacion.add_handler(CommandHandler("borrar", cmd_borrar))
     aplicacion.add_handler(CommandHandler("tools", cmd_tools))
     aplicacion.add_handler(CommandHandler("voz", cmd_voz))
+    aplicacion.add_handler(CommandHandler("condensar", cmd_condensar))
     # Los botones de /modelo y /proveedor vuelven como CallbackQuery. Pasan
     # por la allowlist igual que todo lo demas (TypeHandler del grupo -1).
     aplicacion.add_handler(CallbackQueryHandler(manejar_boton))

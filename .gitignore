@@ -15,6 +15,12 @@ logs/
 conversations/
 conversations.db
 
+# Los .md que genera /condensar: llevan el contenido de los documentos de
+# JIM (apuntes, PDFs suyos), asi que son datos personales igual que
+# conversations/ - con el agravante de que aqui van EN CLARO, porque el
+# fichero esta para abrirlo y leerlo.
+resumenes/
+
 # Cache de pytest (se regenera solo en cada ejecucion)
 .pytest_cache/
 
