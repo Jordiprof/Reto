@@ -2258,6 +2258,24 @@ def main_bot() -> None:
 
 
 def _arrancar(cerrojo) -> None:
+    # AUD-04: la clave de cifrado se comprueba ANTES de levantar nada. El
+    # bot no miraba el cifrado al arrancar -solo lo hacia la CLI-, asi que
+    # con una clave rota levantaba tan tranquilo y reventaba al guardar el
+    # primer turno. Es la misma asimetria que el bug del 28/07 (la CLI
+    # indexaba al arrancar y el bot no): dos puertas, un solo control.
+    from src.config import ClaveCifradoInvalida
+    from src.storage import cifrado_activo
+
+    try:
+        if not cifrado_activo():
+            print(
+                "⚠️ Las conversaciones se guardarán SIN CIFRAR "
+                "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
+            )
+    except ClaveCifradoInvalida as error:
+        print(f"❌ {error}")
+        return
+
     aplicacion = construir_aplicacion()
 
     # BUG encontrado probando en real el 28/07: sin esto, el bot solo tenia en

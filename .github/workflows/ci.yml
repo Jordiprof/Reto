@@ -5,13 +5,34 @@ on:
   pull_request:
     branches: [main]
 
+# DEP-06: sin esto, el GITHUB_TOKEN del workflow nace con permisos de
+# ESCRITURA sobre el repositorio. Este CI solo necesita leer el codigo:
+# clonar, instalar, pasar tests. Si alguna de las acciones de terceros de
+# abajo -o una dependencia del lockfile- fuera comprometida, con permisos
+# de escritura podria empujar commits o publicar releases; con solo lectura,
+# no. Principio de minimo privilegio, y son dos lineas.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # DEP-05: fijadas por SHA y no por tag. Un tag de Git es MOVIL - quien
+      # controle el repositorio de la accion puede reapuntar "v4" a otro
+      # commit y ese codigo se ejecutaria aqui, con acceso al repo y a los
+      # secretos del workflow. Es el mismo ataque que sufrio tj-actions en
+      # 2025. Un SHA no se puede reapuntar: nombra un commit exacto.
+      #
+      # El comentario "# v4" al lado NO es decoracion: es lo unico que
+      # permite saber que version es sin ir a buscar el hash. Al actualizar
+      # hay que cambiar los dos.
+      #
+      # SHAs resueltos el 02/08 contra la API de GitHub (no copiados de
+      # ningun sitio: leccion del 30/07 con la lista de dominios).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.13"
 
@@ -24,7 +45,14 @@ jobs:
         # (drift real medido: huggingface-hub, onnxruntime, certifi...) - el
         # lockfile no protegia de nada. Ahora el CI instala EXACTAMENTE lo
         # que esta fijado.
-        run: pip install -r requirements-lock.txt
+        #
+        # DEP-04 (02/08): --require-hashes. Una version fija dice QUE
+        # paquete quieres, pero no garantiza que lo que baja de PyPI sea
+        # ese: quien controle la cuenta de un paquete puede reemplazar el
+        # archivo de una version ya publicada. El hash fija el CONTENIDO.
+        # Y de propina obliga a que NINGUNA dependencia se cuele sin hash:
+        # si alguien añade una a mano, el build se para.
+        run: pip install --require-hashes -r requirements-lock.txt
 
       - name: Lint with ruff
         run: ruff check src tests

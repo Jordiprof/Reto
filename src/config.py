@@ -177,6 +177,16 @@ MODELOS = {
 }
 
 
+class ClaveCifradoInvalida(Exception):
+    """CONVERSATIONS_KEY existe pero no es una clave Fernet valida (AUD-04).
+
+    Distinta de "no hay clave", que es un caso LEGITIMO: el cifrado es
+    opcional y sin clave se guarda en claro avisando. Esto es otra cosa -
+    hay una clave y esta rota-, y ahi no se puede seguir como si nada: se
+    guardaria sin cifrar creyendo que se cifra.
+    """
+
+
 class ClaveApiNoConfigurada(Exception):
     """La variable de entorno de la API key de este proveedor no esta en
     el .env (F5.0/T2, hallazgo AUD-06 de la auditoria del 23/07: antes esto
@@ -215,7 +225,40 @@ def obtener_clave_conversaciones() -> bytes | None:
     """
     clave = os.environ.get(CLAVE_CONVERSACIONES_ENV)
     # El "not" tambien cubre la cadena vacia (variable puesta pero sin valor).
-    return clave.encode() if clave else None
+    if not clave:
+        return None
+
+    # AUD-04 (auditoria del 23/07, cerrado el 02/08). Hasta hoy esto hacia
+    # `.encode()` y ya: una clave mal escrita -un caracter de menos al
+    # copiarla, un espacio, una clave de otro sitio- se reportaba como
+    # "cifrado activo" y solo reventaba al INTENTAR GUARDAR, o sea al final
+    # de una conversacion entera. Se comprueba al leerla, que es cuando aun
+    # se puede hacer algo.
+    #
+    # NO se degrada a "guardar sin cifrar", que era la otra opcion: creerias
+    # que tus conversaciones estan cifradas y estarian en claro en disco.
+    # Ante una clave rota, el fallo tiene que ser RUIDOSO - es un error de
+    # configuracion que se arregla en treinta segundos, no algo que
+    # convenga tragarse.
+    #
+    # Se valida CONSTRUYENDO un Fernet en vez de comprobando el formato a
+    # mano (44 caracteres, base64 url-safe...): la unica definicion de
+    # "clave valida" que importa es la de la libreria que la va a usar, y
+    # replicarla aqui seria mantener dos versiones de la misma regla.
+    from cryptography.fernet import Fernet
+
+    try:
+        Fernet(clave.encode())
+    except Exception as error:
+        raise ClaveCifradoInvalida(
+            f"{CLAVE_CONVERSACIONES_ENV} no es una clave Fernet válida. "
+            "Genera una nueva con:\n"
+            '  python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"\n'
+            "y pégala en el .env. OJO: si ya tenías conversaciones cifradas "
+            "con otra clave, con la nueva NO se podrán abrir."
+        ) from error
+    return clave.encode()
 
 
 def obtener_modelo_por_defecto(proveedor: str) -> str:

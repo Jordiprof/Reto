@@ -38,6 +38,7 @@ from src.config import (  # noqa: E402
     MODELOS,
     PROVEEDORES,
     ClaveApiNoConfigurada,
+    ClaveCifradoInvalida,
     depuracion_contenido_activa,
     obtener_api_key,
     obtener_modelo_por_defecto,
@@ -473,7 +474,15 @@ def _sesion():
     # apagado hay que DECIRLO. Un aviso solo en logs/agente.log no sirve:
     # nadie lee el log mientras usa el programa, y una degradacion de
     # seguridad que nadie ve es como si no existiera.
-    if not cifrado_activo():
+    # AUD-04: una clave ROTA no es lo mismo que no tener clave. Se para
+    # aqui, al arrancar, con instrucciones - y no en mitad del guardado de
+    # una conversacion de media hora, que es donde reventaba antes.
+    try:
+        hay_cifrado = cifrado_activo()
+    except ClaveCifradoInvalida as error:
+        print(f"❌ {error}")
+        return
+    if not hay_cifrado:
         print(
             "⚠️ Las conversaciones se guardaran SIN CIFRAR "
             "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
