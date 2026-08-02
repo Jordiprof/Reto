@@ -392,3 +392,57 @@ def test_fuera_del_resumen_el_timeout_sigue_siendo_el_de_siempre():
     from src.llm_client import _TIMEOUT_SEGUNDOS, timeout_actual
 
     assert timeout_actual() == _TIMEOUT_SEGUNDOS
+
+
+# --- Formato rapido (02/08) ----------------------------------------------
+
+
+def test_el_rapido_usa_OTRO_prompt_final(monkeypatch):
+    """Lo unico que cambia entre los dos formatos es la SEGUNDA pasada: la
+    primera -sacar los puntos de cada bloque- es identica, y por eso esto
+    costo casi nada."""
+    registro = []
+    texto = "\n\n".join(f"parrafo {i}" for i in range(100))
+
+    condensar(texto, "Apuntes", _llamar_falso(registro), tamaño_bloque=200,
+              formato="rapido")
+
+    final = registro[-1]
+    assert "líneas" in final              # le pide una longitud concreta
+    assert "Resumen ejecutivo" not in final  # y NO las secciones del completo
+
+
+def test_los_dos_formatos_cuestan_LO_MISMO():
+    """Importa que quede fijado: el rapido NO ahorra cuota. Para resumir en
+    diez lineas hay que haberse leido el documento entero igual. Lo que se
+    ahorra es lo que lee el usuario."""
+    texto = "\n\n".join(f"parrafo {i}" for i in range(100))
+
+    _, completo = condensar(texto, "A", _llamar_falso([]), tamaño_bloque=200,
+                            formato="completo")
+    _, rapido = condensar(texto, "A", _llamar_falso([]), tamaño_bloque=200,
+                          formato="rapido")
+
+    assert completo["llamadas"] == rapido["llamadas"]
+
+
+def test_un_documento_mas_gordo_pide_mas_lineas():
+    """Peticion de Jordi: "10 o 20 dependiendo de lo largo que sea". Un
+    documento de un bloque en 20 lineas no es un resumen; uno de diez
+    bloques en 10 lineas se queda en nada."""
+    assert resumen_largo._lineas_del_rapido(1) < resumen_largo._lineas_del_rapido(5)
+
+
+def test_las_lineas_del_rapido_estan_acotadas_por_arriba():
+    """Pasado cierto punto ya no cabe en un mensaje de Telegram, y deja de
+    ser un resumen rapido."""
+    assert resumen_largo._lineas_del_rapido(1000) <= 20
+
+
+def test_un_formato_inventado_se_rechaza_ANTES_de_gastar():
+    registro = []
+
+    with pytest.raises(ValueError):
+        condensar("hola", "A", _llamar_falso(registro), formato="poema")
+
+    assert registro == []

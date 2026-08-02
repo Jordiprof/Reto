@@ -1136,16 +1136,23 @@ def test_NO_se_descarga_nada_si_el_guardian_dice_que_no(monkeypatch):
     assert "autorizados" in resultado or "interna" in resultado
 
 
-def test_no_se_siguen_redirecciones(web_permitida, monkeypatch):
-    """SEGURIDAD, no comodidad: el guardián valida la dirección que se le
-    da. Si se siguieran las redirecciones, un dominio autorizado podría
-    mandar la petición a 127.0.0.1 y el control quedaría esquivado."""
+def test_una_redireccion_a_una_IP_interna_no_se_sigue(web_permitida, monkeypatch):
+    """SEGURIDAD, no comodidad. Desde el 02/08 las redirecciones SÍ se
+    siguen (el 39% de la lista blanca era decorativa sin eso), pero el
+    destino pasa por el guardián entero, así que este caso -un dominio
+    autorizado que manda la petición a 127.0.0.1- se para exactamente
+    igual que antes. Es el ataque por el que existía el bloqueo.
+
+    Y el destino NO se repite en la respuesta: al actualizar este test se
+    vio que el mensaje del guardián incluye el host, y en una redirección
+    ese host lo elige la PÁGINA -no JIM-, así que devolverlo dejaría que un
+    sitio autorizado colara texto suyo en el contexto del modelo."""
     _pagina(monkeypatch, "", redirige="http://127.0.0.1/interno")
 
     resultado = resumir_url("https://ejemplo.com/redirige")
 
     assert "redirige" in resultado.lower()
-    assert "127.0.0.1" not in resultado or "no sigo" in resultado
+    assert "127.0.0.1" not in resultado
 
 
 def test_un_pdf_no_se_intenta_leer_como_html(web_permitida, monkeypatch):

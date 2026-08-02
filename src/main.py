@@ -770,6 +770,24 @@ def _sesion():
                     preparar_resumidor,
                 )
 
+                # Los dos formatos son dos NECESIDADES, no dos gustos: uno
+                # es "me voy a estudiar esto" y el otro "¿de que va?". Se
+                # pregunta antes de gastar, porque las dos cuestan lo mismo
+                # (hay que leerse el documento entero igual) y elegir mal
+                # significa pagarlo dos veces.
+                formato = questionary.select(
+                    "¿Cómo lo quieres?",
+                    choices=[
+                        questionary.Choice("📄 Completo — un .md con secciones, para estudiar",
+                                           value="completo"),
+                        questionary.Choice("⚡ Rápido — unas líneas aquí mismo",
+                                           value="rapido"),
+                        questionary.Choice("⬅ Volver", value=VOLVER),
+                    ],
+                ).ask()
+                if formato is None or formato is VOLVER:
+                    continue
+
                 try:
                     texto_doc = extraer_texto(adjunto)
                     llamar, tamaño, quien = preparar_resumidor(
@@ -779,6 +797,7 @@ def _sesion():
                     markdown, datos = condensar(
                         texto_doc, adjunto.nombre, llamar,
                         tamaño_bloque=tamaño, avisar=lambda t: print(f"  {t}"),
+                        formato=formato,
                     )
                 except ResumenImposible as error:
                     print(f"⚠️ {error}")
@@ -787,8 +806,13 @@ def _sesion():
                     logging.error("CLI: fallo condensando (%s)", type(error).__name__)
                     print("⚠️ No he podido resumir el documento.")
                     continue
-                ruta = guardar(markdown, adjunto.nombre)
-                print(f"✅ Listo: {ruta}  ({datos['llamadas']} llamadas al modelo)")
+
+                if formato == "rapido":
+                    print(f"\n{markdown}\n")
+                    print(f"({datos['llamadas']} llamadas al modelo)")
+                else:
+                    ruta = guardar(markdown, adjunto.nombre)
+                    print(f"✅ Listo: {ruta}  ({datos['llamadas']} llamadas al modelo)")
                 continue
 
             # Un turno completo (historial, tools, guardado del turno) lo

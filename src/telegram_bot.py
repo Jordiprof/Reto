@@ -1045,14 +1045,46 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_condensar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Resume el documento adjunto ENTERO y lo manda como fichero .md.
+    """Pregunta que formato de resumen se quiere. El trabajo lo hace
+    _condensar_con_formato cuando se pulsa un boton.
+
+    Se PREGUNTA antes de gastar porque los dos formatos cuestan lo mismo
+    -para resumir en diez lineas hay que haberse leido el documento
+    entero igual- y elegir mal significa pagarlo dos veces.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+
+    if _agente_de(usuario.id).documento_pendiente is None:
+        await mensaje.reply_text(
+            "No tengo ningún documento a mano. Mándame un PDF o un Word "
+            "como adjunto y luego vuelve a pedírmelo."
+        )
+        return
+
+    await mensaje.reply_text(
+        "¿Cómo te lo resumo?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Completo (.md para estudiar)",
+                                  callback_data="condensar:completo")],
+            [InlineKeyboardButton("⚡ Rápido (unas líneas aquí)",
+                                  callback_data="condensar:rapido")],
+            [InlineKeyboardButton("⬅ Cerrar", callback_data="condensar:cancelar")],
+        ]),
+    )
+
+
+async def _condensar_con_formato(update: Update, formato: str) -> None:
+    """El trabajo de verdad, una vez elegido el formato.
 
     Es un COMANDO y no una tool a proposito: son N llamadas al LLM, y
     dentro de una tool tendriamos al modelo llamando a algo que vuelve a
     llamar al modelo (detalle en el cabecero de src/resumen_largo.py).
 
-    Va en un .md y no en el chat porque un condensado son decenas de miles
-    de caracteres: en Telegram serian trece mensajes seguidos.
+    El completo va en .md y no en el chat porque son decenas de miles de
+    caracteres: en Telegram serian trece mensajes seguidos.
     """
     usuario = update.effective_user
     mensaje = update.effective_message
@@ -1095,7 +1127,7 @@ async def cmd_condensar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             avisos: list[str] = []
             markdown, datos = await asyncio.to_thread(
                 condensar, texto_doc, adjunto.nombre, llamar,
-                tamaño, TOPE_BLOQUES_TELEGRAM, avisos.append,
+                tamaño, TOPE_BLOQUES_TELEGRAM, avisos.append, formato,
             )
         except ResumenImposible as error:
             await mensaje.reply_text(f"⚠️ {error}")
@@ -1103,6 +1135,14 @@ async def cmd_condensar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception as error:
             logging.error("Telegram: fallo condensando (%s)", type(error).__name__)
             await mensaje.reply_text("⚠️ No he podido resumir ese documento.")
+            return
+
+        # El rapido va al chat y NO se guarda en disco: son unas lineas que
+        # se leen y se olvidan. Guardarlo llenaria resumenes/ de ficheros
+        # que nadie va a abrir - mismo criterio que el descarte de /cerrar.
+        if formato == "rapido":
+            for trozo in _trocear(markdown):
+                await mensaje.reply_text(trozo)
             return
 
         ruta = await asyncio.to_thread(guardar, markdown, adjunto.nombre)
@@ -1697,6 +1737,30 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # pulsar el boton.
     # "Guardar con un nombre": no cierra todavia - pide el nombre y espera
     # al siguiente mensaje de texto (ver _esperando_texto y manejar_mensaje).
+    # /condensar: el formato vuelve dentro del callback_data, o sea que es
+    # un dato que ha viajado a Telegram y ha vuelto - NO ES DE FIAR. Se
+    # valida contra FORMATOS antes de usarlo, igual que el modelo y el
+    # proveedor se validan contra el catalogo (F5.2+). Aqui el daño de no
+    # hacerlo seria menor que en /borrar, pero la regla es la misma: lo que
+    # vuelve de fuera se comprueba contra una lista nuestra, siempre.
+    if dato.startswith("condensar:"):
+        from src.resumen_largo import FORMATOS
+
+        elegido = dato.split(":", 1)[1]
+        if elegido == "cancelar":
+            await consulta.edit_message_text("Vale, no toco nada.")
+            return
+        if elegido not in FORMATOS:
+            logging.warning("Telegram: formato de condensado no valido")
+            await consulta.edit_message_text("No reconozco esa opción.")
+            return
+        await consulta.edit_message_text(
+            "📄 Resumen completo, marchando." if elegido == "completo"
+            else "⚡ Resumen rápido, marchando."
+        )
+        await _condensar_con_formato(update, elegido)
+        return
+
     if dato == _NOMBRAR:
         if usuario.id not in _rutas:
             await consulta.edit_message_text("Ya no hay ninguna conversación abierta.")

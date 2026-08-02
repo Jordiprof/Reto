@@ -195,6 +195,47 @@ PUNTOS DESTACADOS POR BLOQUE:
 {puntos}"""
 
 
+_PROMPT_FINAL_RAPIDO = """\
+Tienes los puntos destacados de las {total} partes de un documento titulado
+«{titulo}», en orden. Escribe un resumen BREVE, de unas {lineas} líneas.
+
+Reglas:
+- Prosa corrida y párrafos cortos. NADA de listas, títulos ni secciones.
+- Cuenta de qué va el documento y lo esencial que hay que saber; deja fuera
+  el detalle fino, los ejemplos y las enumeraciones largas.
+- Si hay dos o tres datos que serían un error no mencionar, mencionálos.
+- NO te inventes nada que no esté en los puntos. Si algo no aparece, no está.
+- No expliques lo que estás haciendo: escribe directamente el resumen.
+
+PUNTOS DESTACADOS POR BLOQUE:
+{puntos}"""
+
+# Formatos de salida (02/08, peticion de Jordi tras ver el completo
+# funcionando). Son dos NECESIDADES distintas, no dos gustos:
+#
+#   "completo" -> "me voy a estudiar esto": el .md con sus cuatro
+#                 secciones, para tenerlo abierto al lado.
+#   "rapido"   -> "¿de que va este PDF?": 10-20 lineas ahi mismo, sin
+#                 fichero que abrir.
+#
+# LO QUE CAMBIA ES SOLO EL PROMPT DE LA SEGUNDA PASADA. La primera -sacar
+# los puntos de cada bloque- es identica, y por eso esto costo casi nada.
+#
+# OJO A LO QUE **NO** CAMBIA: el rapido NO es mas barato. Para resumir en
+# diez lineas hay que haberse leido el documento entero igual, asi que son
+# las mismas N+1 llamadas. Lo que se ahorra es lo que lees TU.
+FORMATOS = ("completo", "rapido")
+
+
+def _lineas_del_rapido(bloques: int) -> int:
+    """Cuantas lineas pedirle al resumen corto, segun lo gordo que sea el
+    documento (peticion de Jordi: "10 o 20 dependiendo de lo largo que
+    sea"). Un documento de un bloque en 20 lineas no es un resumen; uno de
+    diez bloques en 10 lineas se queda en nada. Acotado por arriba porque
+    pasado ese punto ya no cabe en un mensaje de Telegram."""
+    return min(20, max(10, bloques * 4))
+
+
 def condensar(
     texto: str,
     titulo: str,
@@ -202,6 +243,7 @@ def condensar(
     tamaño_bloque: int = CARACTERES_BLOQUE_ESTRECHO,
     tope_bloques: int = TOPE_BLOQUES,
     avisar=None,
+    formato: str = "completo",
 ) -> tuple[str, dict]:
     """Condensa el texto entero y devuelve (markdown, datos).
 
@@ -217,6 +259,9 @@ def condensar(
     perdido es un resumen incompleto, pero perder los otros nueve por uno
     seria mucho peor (mismo espiritu que RNF-02).
     """
+    if formato not in FORMATOS:
+        raise ValueError(f"formato debe ser uno de {FORMATOS}, no {formato!r}")
+
     bloques = partir_en_bloques(texto, tamaño_bloque)
     if not bloques:
         raise ResumenImposible("El documento está vacío; no hay nada que resumir.")
@@ -253,9 +298,17 @@ def condensar(
     # PASADA 2 (reduccion): de los puntos sueltos al documento estructurado.
     if avisar:
         avisar("Ordenando todo y escribiendo el resumen…")
-    markdown = llamar(
-        _PROMPT_FINAL.format(total=total, titulo=titulo, puntos="\n\n".join(puntos))
-    ).strip()
+    todos_los_puntos = "\n\n".join(puntos)
+    if formato == "rapido":
+        prompt_final = _PROMPT_FINAL_RAPIDO.format(
+            total=total, titulo=titulo, puntos=todos_los_puntos,
+            lineas=_lineas_del_rapido(total),
+        )
+    else:
+        prompt_final = _PROMPT_FINAL.format(
+            total=total, titulo=titulo, puntos=todos_los_puntos,
+        )
+    markdown = llamar(prompt_final).strip()
 
     # Los avisos van DENTRO del documento, que es donde no se pueden pasar
     # por alto - mismo patron que el "⚠️ ATENCIÓN" de NASA APOD y el
@@ -280,6 +333,7 @@ def condensar(
         "bloques_fallidos": fallidos,
         "recortado": recortado,
         "llamadas": total + 1,
+        "formato": formato,
     }
 
 

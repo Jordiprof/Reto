@@ -797,7 +797,76 @@ class ArgsResumirUrl(BaseModel):
     )
 
 
-def _pedir_texto(url: str) -> str:
+# Cuantos saltos de redireccion se siguen como mucho (02/08). Dos bastan
+# para el caso real -"aepd.es" -> "www.aepd.es"- y cortan en seco un bucle
+# de redirecciones, que es una forma barata de tener a la tool dando vueltas.
+_MAX_REDIRECCIONES = 2
+
+
+def _seguir_redireccion(respuesta, url_origen: str, saltos: int) -> str:
+    """Sigue un salto de redireccion, pero SOLO si el destino tambien pasa
+    el guardian.
+
+    POR QUE EXISTE ESTO (medido el 02/08). Jordi pidio leer
+    `https://anthropic.com/` -que ESTA en la lista blanca- y el bot
+    contesto que redirige y que no sigue redirecciones. Al medirlo:
+    **11 de los 28 dominios autorizados redirigen**, o sea que el 39% de la
+    lista blanca era decorativa. Ocho van al `www.` de su propio dominio
+    (aepd.es, incibe.es, who.int, noaa.gov, esa.int, un.org, dgt.es,
+    anthropic.com) y tres a una ruta interna (docs.python.org -> /3/,
+    azure y learn.microsoft.com -> /en-us). NINGUNA salta a otro dominio.
+
+    POR QUE ES SEGURO. El destino pasa por `validar_url()` ENTERO, o sea
+    por los mismos dos controles que la direccion original: lista blanca de
+    dominios Y bloqueo de IPs internas. Un dominio autorizado que redirija a
+    127.0.0.1 se para aqui exactamente igual que si lo hubiera pedido el
+    modelo directamente - que era el ataque por el que se puso
+    follow_redirects=False. Lo que NO se hace es dejarle el salto a httpx,
+    que lo seguiria sin preguntar a nadie.
+
+    Y la lista blanca ya acepta subdominios (`host.endswith("." + dominio)`),
+    asi que `www.anthropic.com` pasa sin tocar el `.env`.
+    """
+    destino = respuesta.headers.get("location", "")
+    if not destino:
+        return "Esa dirección redirige a un sitio que no ha querido decirme."
+    if saltos >= _MAX_REDIRECCIONES:
+        return (
+            "Esa dirección encadena demasiadas redirecciones; lo dejo aquí. "
+            "Pásame la dirección final."
+        )
+
+    # urljoin resuelve los destinos RELATIVOS ("/en-us/", que es lo que
+    # devuelve learn.microsoft.com) contra la direccion de origen. Sin esto
+    # tres de los once casos reales seguirian sin funcionar.
+    from urllib.parse import urljoin
+
+    from src.red_segura import UrlNoPermitida, validar_url
+
+    absoluto = urljoin(url_origen, destino)
+    try:
+        validar_url(absoluto)
+    except UrlNoPermitida:
+        # NO SE HACE ECO DEL DESTINO, y esto lo destapo un test viejo al
+        # actualizarlo. El mensaje de UrlNoPermitida incluye el host que se
+        # pidio ("'127.0.0.1' no esta en mi lista..."), que es correcto
+        # cuando la URL la escribio JIM - ya sabe lo que pidio.
+        #
+        # Aqui NO la escribio el: el destino lo elige la PAGINA, en su
+        # cabecera Location. Devolverlo seria dejar que un sitio autorizado
+        # meta texto de su eleccion en el contexto del modelo, que es la
+        # misma familia de la inyeccion que cierra SEG-07 - solo que por un
+        # canal nuevo. El valor informativo de decir el destino es bajo y la
+        # superficie es real, asi que no se dice.
+        return (
+            "Esa dirección redirige a un sitio que no está entre los autorizados, "
+            "así que no lo he abierto. Si sabes la dirección final y está permitida, "
+            "pásamela directamente."
+        )
+    return _pedir_texto(absoluto, saltos + 1)
+
+
+def _pedir_texto(url: str, saltos: int = 0) -> str:
     """Descarga una pagina y devuelve su texto visible.
 
     La URL ya viene validada por el guardian; aqui se controla lo demas:
@@ -806,19 +875,16 @@ def _pedir_texto(url: str) -> str:
     import httpx
 
     try:
-        # follow_redirects=False es SEGURIDAD, no una opcion de comodidad:
-        # el guardian valida la direccion que se le da, y si se siguieran
-        # las redirecciones un dominio autorizado podria mandar la peticion
-        # a 127.0.0.1 y el control quedaria esquivado.
+        # follow_redirects=False SIGUE SIENDO SEGURIDAD y no cambia: httpx
+        # seguiria el salto sin preguntarle a nadie, y un dominio autorizado
+        # podria mandar la peticion a 127.0.0.1 dejando el guardian fuera.
+        # Lo que cambia es que el salto se sigue A MANO y VALIDANDO EL
+        # DESTINO, que es lo unico que hacia falta.
         with httpx.stream(
             "GET", url, timeout=_TIMEOUT_TOOLS, follow_redirects=False
         ) as respuesta:
             if respuesta.is_redirect:
-                destino = respuesta.headers.get("location", "otro sitio")
-                return (
-                    f"Esa dirección redirige a {_texto_seguro(destino, 120)} y no "
-                    "sigo redirecciones por seguridad. Pide la dirección final."
-                )
+                return _seguir_redireccion(respuesta, url, saltos)
             respuesta.raise_for_status()
 
             tipo = respuesta.headers.get("content-type", "").split(";")[0].strip()
