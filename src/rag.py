@@ -294,13 +294,160 @@ def olvidar_conversacion(ruta: Path) -> int:
         return len(ids)
 
 
-def buscar(consulta: str, n: int = 3) -> list[dict]:
-    """Busca los n mensajes mas parecidos por SIGNIFICADO a la consulta.
+# --- Ventana de turno (02/08) ---------------------------------------------
+#
+# EL FALLO nº1 DE LA MEMORIA, y por que este es el arreglo. Cada mensaje se
+# indexa SUELTO, asi que buscar "cual es mi color favorito" encuentra las
+# tres veces que se hizo esa PREGUNTA y ninguna respuesta: el dato solo
+# aparecia si buscabas "azul gris", o sea SOLO SI YA SABIAS LA RESPUESTA.
+# Reproducido con datos el 01/08 y otra vez el 02/08 (`/recuerdo` devolvio
+# 5 de 5 preguntas). Mitigado a medias subiendo de 3 a 5 los recuerdos.
+#
+# LO QUE SE DESCARTO. El backlog decia "indexar PARES pregunta-respuesta",
+# o sea meter las dos en un solo vector. Se descarto porque las respuestas
+# de este bot son largas (500-1500 caracteres) y una pregunta de 8 palabras
+# quedaria diluida en el promedio: se arreglaria buscar la pregunta a costa
+# de EMPEORAR busquedas que hoy si aciertan. Ademas obligaria a borrar
+# chroma_db/ y reindexarlo todo.
+#
+# LO QUE SE HACE. Se sigue indexando mensaje a mensaje -vectores afilados,
+# indice intacto, CERO reindexado- y es la BUSQUEDA la que devuelve el
+# turno completo: si el acierto es una pregunta se adjunta su respuesta, y
+# al reves. Encontrar la pregunta pasa a ser suficiente.
 
-    Devuelve una lista de dicts {texto, rol, fecha, distancia}. El texto se
-    descifra AQUI, bajo demanda, del JSON al que apunta cada resultado - no
-    estaba guardado en el indice. Si un fichero ya no existe o no se puede
-    descifrar, ese resultado se omite en vez de romper la busqueda.
+# Cuantos aciertos se le piden a Chroma por cada turno que se quiere. Hace
+# falta margen porque varios aciertos colapsan en el mismo turno al
+# deduplicar (la pregunta Y su respuesta pueden acertar las dos). En HNSW
+# pedir 15 vecinos en vez de 5 es coste despreciable: el grafo se recorre
+# igual. Y NO cuesta ningun descifrado extra, porque el corte a n ocurre
+# ANTES de tocar el disco.
+_SOBREMUESTREO = 3
+
+# Tope por mensaje al devolverlo. Antes 5 aciertos podian ser 5 preguntas
+# cortas; ahora se garantiza incluir RESPUESTAS, que en este bot son largas,
+# y esto se reenvia en cada turno posterior (AUD-03). Se recorta con marca
+# VISIBLE, que es la misma politica que el truncado de documentos: recortado
+# y a la vista es mejor que ausente y en silencio.
+_MAX_CARACTERES_MENSAJE = 800
+
+
+def _recortar(texto: str) -> str:
+    if len(texto) <= _MAX_CARACTERES_MENSAJE:
+        return texto
+    return texto[:_MAX_CARACTERES_MENSAJE] + "… (recortado)"
+
+
+# --- Ruido: el bot recordandose a si mismo fallando (02/08) ----------------
+#
+# EL PROBLEMA, visto por Jordi en cuanto la ventana de turno empezo a
+# enseñar las respuestas. Buscando "color favorito" salian 5 recuerdos y
+# DOS eran el propio bot diciendo que no lo sabia:
+#
+#   yo: Lo siento, pero no tengo informacion sobre tus preferencias...
+#   yo: Buena pregunta, pero no tengo ni idea. Nunca me lo has dicho...
+#
+# Esas respuestas se guardaron, se indexaron, y ahora compiten por una de
+# las 5 plazas con los recuerdos que SI tienen el dato. Un turno que acaba
+# en "no lo se" no aporta nada como recuerdo: ni la pregunta (solo dice que
+# se pregunto) ni la respuesta (dice que no se sabia).
+#
+# Ya pasaba antes de la ventana de turno -las respuestas siempre se
+# indexaron- pero era invisible porque la busqueda solo devolvia preguntas.
+#
+# SE FILTRA AL BUSCAR Y NO AL INDEXAR, a proposito: el indice no se toca,
+# asi que si mañana el criterio resulta ser malo se cambia una constante y
+# ya esta, sin reindexar nada ni haber perdido conversaciones. Filtrar al
+# indexar seria una decision IRREVERSIBLE tomada con un criterio heuristico.
+_PATRONES_NEGATIVA = (
+    "no lo sé", "no lo se", "no tengo información", "no tengo informacion",
+    "no tengo ni idea", "no puedo decirte", "no tengo registro", "no encuentro",
+    "no me lo has dicho", "nunca me lo has dicho", "no tengo ese dato",
+    "está apagado", "esta apagado", "está apagada", "esta apagada",
+)
+
+# Solo se mira el PRINCIPIO de la respuesta, y este numero no es a ojo: sale
+# de un caso real de la memoria de Jordi que NO debe filtrarse -
+#
+#   "JIM, tu comida favorita es la lasaña. Tambien mencionaste que tus
+#    colores favoritos son el azul y el gris, pero sobre el deporte
+#    favorito no tengo informacion"
+#
+# Ese recuerdo TIENE el dato y ademas contiene una negativa, en la posicion
+# ~155. Una negativa de verdad se anuncia al empezar ("Lo siento, no...",
+# "Buena pregunta, pero no tengo ni idea", posiciones 11 y 21); una que
+# aparece tarde es un matiz dentro de una respuesta util. Con 80 los tres
+# casos reales caen del lado correcto.
+_VENTANA_NEGATIVA = 80
+
+
+def _es_negativa(respuesta: str | None) -> bool:
+    """¿Esta respuesta es el bot admitiendo que no sabe algo?
+
+    Es una HEURISTICA y se comporta como tal: ante la duda NO filtra. Un
+    falso negativo cuesta una plaza de ruido; un falso positivo esconderia
+    un recuerdo bueno, que es mucho peor.
+    """
+    if not respuesta:
+        # Un turno sin respuesta no es una negativa: es un turno que se
+        # quedo a medias, y su pregunta puede seguir valiendo.
+        return False
+    principio = respuesta[:_VENTANA_NEGATIVA].lower()
+    return any(patron in principio for patron in _PATRONES_NEGATIVA)
+
+
+def _inicio_del_turno(meta: dict) -> int:
+    """Indice donde EMPIEZA el turno al que pertenece un acierto.
+
+    Se decide por el ROL y no por la paridad del indice: el historial
+    guardado es system, user, assistant, user... pero fiarse de esa
+    aritmetica romperia con cualquier fichero que no la cumpla.
+    """
+    indice = meta["indice"]
+    if meta.get("rol") == "assistant" and indice > 0:
+        return indice - 1
+    return indice
+
+
+def _turnos_ordenados(metadatos: list, distancias: list) -> list[tuple]:
+    """FASE A: de los aciertos sueltos a turnos unicos, SIN descifrar nada.
+
+    Deduplica por (fichero, inicio) conservando el orden, que ya viene por
+    distancia ascendente.
+
+    NO corta a n: el corte tiene que ocurrir DESPUES de descartar las
+    respuestas negativas, porque si no el sobremuestreo no serviria de nada
+    -se cortaria a 5 y luego el filtro dejaria 3-. Lo que se sigue evitando
+    es descifrar de mas: la fase B para en cuanto reune los n que necesita.
+    """
+    vistos: dict[tuple[str, int], tuple] = {}
+    for meta, distancia in zip(metadatos, distancias):
+        clave = (meta["fichero"], _inicio_del_turno(meta))
+        # El primero que llega es el mas cercano; los siguientes del mismo
+        # turno son redundantes y se tiran (son justo las 3 veces que se
+        # pregunto lo mismo, que antes ocupaban 3 de las 5 plazas).
+        if clave not in vistos:
+            vistos[clave] = (meta, distancia)
+    return list(vistos.values())
+
+
+def buscar(consulta: str, n: int = 3) -> list[dict]:
+    """Busca los n TURNOS mas parecidos por SIGNIFICADO a la consulta.
+
+    Devuelve dicts {pregunta, respuesta, fecha, nombre, distancia}. Ya no
+    devuelve mensajes sueltos con su `rol`: la unidad es el intercambio,
+    porque encontrar una pregunta sin su respuesta no servia de nada.
+    `respuesta` puede ser None (turno guardado sin contestar) y `pregunta`
+    tambien (un assistant sin user delante).
+
+    El texto se descifra AQUI, bajo demanda, del JSON al que apunta cada
+    resultado - no estaba guardado en el indice. Si un fichero ya no existe
+    o no se puede descifrar, ese resultado se omite en vez de romper la
+    busqueda entera.
+
+    Se descartan los turnos cuya respuesta es el bot admitiendo que no sabe
+    (ver _es_negativa): ocupaban plaza sin aportar nada. Si TODO lo
+    encontrado fuera de ese tipo, se devuelve igualmente - mas vale ruido
+    que dejar al usuario sin nada por una heuristica.
     """
     # SEG-06: la consulta tambien va bajo cerrojo. Una lectura mientras otro
     # hilo esta a mitad de un coleccion.add() puede ver el indice HNSW en un
@@ -313,19 +460,25 @@ def buscar(consulta: str, n: int = 3) -> list[dict]:
 
         resultado = coleccion.query(
             query_embeddings=_incrustar([consulta]),
-            n_results=n,
+            n_results=n * _SOBREMUESTREO,
             include=["metadatas", "distances"],
         )
     # query() devuelve listas anidadas (una por cada consulta); solo mandamos
     # una, asi que se coge el [0].
-    metadatos = resultado["metadatas"][0]
-    distancias = resultado["distances"][0]
+    turnos = _turnos_ordenados(resultado["metadatas"][0], resultado["distances"][0])
 
-    # Cache por fichero: si dos resultados salen del mismo JSON, se descifra
-    # una sola vez.
+    # FASE B: descifrar los candidatos EN ORDEN hasta reunir n buenos.
+    # Cache por fichero: si dos turnos salen del mismo JSON, se descifra una
+    # sola vez.
     cache_ficheros: dict[str, list] = {}
     salida = []
-    for meta, distancia in zip(metadatos, distancias):
+    # Los turnos que solo dicen "no lo se" se apartan aqui en vez de tirarse:
+    # son la RED DE SEGURIDAD. Si el filtro se lo llevara todo, es mejor
+    # devolver ruido que dejar al usuario sin nada por una heuristica.
+    apartados = []
+    for meta, distancia in turnos:
+        if len(salida) >= n:
+            break
         nombre = meta["fichero"]
         if nombre not in cache_ficheros:
             try:
@@ -338,11 +491,44 @@ def buscar(consulta: str, n: int = 3) -> list[dict]:
         historial = cache_ficheros[nombre]
         if historial is None:
             continue
-        salida.append({
-            "texto": historial[meta["indice"]]["content"],
-            "rol": meta["rol"],
+
+        # El indice puede apuntar FUERA del historial: guardar_conversacion
+        # reescribe el mismo fichero, asi que uno que encoja deja ids viejos
+        # apuntando al vacio. Antes esto lanzaba IndexError y tumbaba la
+        # busqueda ENTERA; ahora se salta ese resultado, igual que ya se
+        # hacia con un fichero ilegible.
+        inicio = _inicio_del_turno(meta)
+        if not 0 <= inicio < len(historial):
+            logging.warning("RAG: indice fuera de rango en '%s', se salta", nombre)
+            continue
+
+        # No se asume que en `inicio` haya un user ni que en el siguiente
+        # haya un assistant: se comprueba el rol y se monta con lo que haya.
+        pregunta = respuesta = None
+        if historial[inicio].get("role") == "user":
+            pregunta = historial[inicio].get("content")
+            siguiente = inicio + 1
+            if siguiente < len(historial) and historial[siguiente].get("role") == "assistant":
+                respuesta = historial[siguiente].get("content")
+        else:
+            respuesta = historial[inicio].get("content")
+
+        turno = {
+            "pregunta": _recortar(pregunta) if pregunta else None,
+            "respuesta": _recortar(respuesta) if respuesta else None,
             "fecha": meta["fecha"],
             "nombre": meta.get("nombre", ""),
             "distancia": distancia,
-        })
-    return salida
+        }
+        # Un turno que acaba en "no lo se" no aporta nada como recuerdo, y
+        # antes se comia una de las 5 plazas (Jordi lo vio: de 5 resultados
+        # de "color favorito", DOS eran el bot diciendo que no sabia).
+        if _es_negativa(respuesta):
+            apartados.append(turno)
+        else:
+            salida.append(turno)
+
+    # RED DE SEGURIDAD: si lo unico que habia eran negativas, se devuelven.
+    # El filtro puede equivocarse; dejar al usuario sin ningun resultado
+    # teniendo algo que enseñar seria peor que enseñarle ruido.
+    return salida or apartados[:n]

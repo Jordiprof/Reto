@@ -1182,11 +1182,19 @@ async def _ejecutar_recuerdo(mensaje, consulta: str) -> None:
         await mensaje.reply_text("No encuentro nada sobre eso en mi memoria.")
         return
 
+    # Un TURNO por resultado (02/08). El 02/08 este comando devolvio 5 de 5
+    # PREGUNTAS de Jordi y ninguna respuesta: encontrar la pregunta sin lo
+    # que se contesto no servia de nada, y ademas parecia que la memoria
+    # estaba rota cuando el dato estaba guardado.
     lineas = []
     for recuerdo in resultados:
         fecha = (recuerdo.get("fecha") or "")[:10]
-        quien = "tú" if recuerdo["rol"] == "user" else "yo"
-        lineas.append(f"[{fecha}] {quien}: {recuerdo['texto']}")
+        partes = []
+        if recuerdo.get("pregunta"):
+            partes.append(f"[{fecha}] tú: {recuerdo['pregunta']}")
+        if recuerdo.get("respuesta"):
+            partes.append(f"yo: {recuerdo['respuesta']}")
+        lineas.append("\n".join(partes))
 
     # Se trocea igual que una respuesta normal: un recuerdo largo puede
     # pasarse del limite de Telegram.

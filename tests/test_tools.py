@@ -252,7 +252,23 @@ def test_ficha_de_tool_no_lleva_ruido_de_pydantic():
 
 
 def _recuerdo(texto, rol="user", fecha="2026-07-20T11:00:00", nombre=None):
-    return {"texto": texto, "rol": rol, "fecha": fecha, "nombre": nombre, "distancia": 0.1}
+    """Un resultado falso de rag.buscar.
+
+    VENTANA DE TURNO (02/08): buscar() ya no devuelve mensajes sueltos con
+    su `rol`, sino el intercambio entero. El parametro `rol` se conserva
+    para no reescribir las llamadas de todos los tests: dice en QUE lado del
+    turno va el texto, que es lo que estos tests necesitan controlar - el
+    saneado tiene que funcionar igual venga de JIM o del propio modelo.
+    """
+    lado = "pregunta" if rol == "user" else "respuesta"
+    return {
+        "pregunta": None,
+        "respuesta": None,
+        **{lado: texto},
+        "fecha": fecha,
+        "nombre": nombre,
+        "distancia": 0.1,
+    }
 
 
 def _buscar_falso(monkeypatch, resultados):
@@ -1169,22 +1185,47 @@ def test_cada_tool_declara_su_categoria():
         assert herramienta.categoria, nombre
 
 
-def test_tools_de_filtra_por_categoria():
+def test_tools_de_distingue_activas_de_apagadas():
+    """CAMBIO DE CONTRATO (02/08): antes este test exigía que las apagadas
+    NO aparecieran, y esa omisión resultó ser el bug — al no verlas, el
+    modelo no percibía ninguna ausencia y contestaba "no tengo registro de
+    eso" como si hubiera mirado. Ahora aparecen todas y lo que cambia es
+    CÓMO: las activas con sus parámetros, las apagadas marcadas y vacías.
+    Lo que se sigue protegiendo es lo mismo de siempre: que la distinción
+    exista y sea visible."""
     from src.tools import tools_de
 
-    solo_calculo = tools_de({"calculadora"})
-    nombres = {t["function"]["name"] for t in solo_calculo}
+    por_nombre = {t["function"]["name"]: t["function"] for t in tools_de({"calculadora"})}
 
-    assert nombres == {"calcular"}
+    assert por_nombre["calcular"]["parameters"]["properties"] != {}
+    assert "APAGADA" not in por_nombre["calcular"]["description"]
+
+    assert por_nombre["buscar_en_recuerdos"]["parameters"]["properties"] == {}
+    assert "APAGADA" in por_nombre["buscar_en_recuerdos"]["description"]
 
 
-def test_sin_categorias_activas_devuelve_None_no_lista_vacia():
-    """None significa 'modo sin herramientas' para el bucle. Una lista
-    vacía se mandaría igualmente a la API como campo `tools` vacío, que
-    algunos proveedores rechazan."""
+def test_nunca_se_manda_una_lista_de_tools_VACIA():
+    """El riesgo original de este test sigue vivo y por eso no se borra: una
+    lista vacía viajaría a la API como campo `tools` vacío, que algunos
+    proveedores rechazan. Lo que ha cambiado es CÓMO se evita — antes
+    devolviendo None con todo apagado, ahora porque las apagadas también se
+    declaran, así que la lista no puede quedarse vacía por construcción."""
     from src.tools import tools_de
 
-    assert tools_de(set()) is None
+    todo_apagado = tools_de(set())
+    assert todo_apagado != []
+    assert todo_apagado is None or len(todo_apagado) > 0
+
+
+def test_con_todo_apagado_se_declaran_todas_como_apagadas():
+    """El caso extremo es justo donde más falta hace el aviso: quien apaga
+    todo y luego pregunta algo. Sería incoherente declarar las apagadas con
+    6 de 7 grupos apagados y dejar de hacerlo con 7 de 7."""
+    from src.tools import HERRAMIENTAS, tools_de
+
+    fichas = tools_de(set())
+    assert len(fichas) == len(HERRAMIENTAS)
+    assert all("APAGADA" in f["function"]["description"] for f in fichas)
 
 
 def test_memoria_y_web_arrancan_APAGADAS():

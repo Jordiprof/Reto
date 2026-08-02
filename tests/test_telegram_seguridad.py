@@ -912,8 +912,10 @@ def test_recuerdo_ensena_lo_que_hay_en_memoria(monkeypatch):
     Este comando salta al modelo y enseña la memoria en crudo."""
     monkeypatch.setattr(
         "src.rag.buscar",
+        # Ventana de turno (02/08): un intercambio entero, no un mensaje suelto.
         lambda consulta, n=3: [
-            {"texto": "el plato hondo cabe mas comida", "rol": "user",
+            {"pregunta": "sabes el del plato hondo",
+             "respuesta": "el plato hondo cabe mas comida",
              "fecha": "2026-07-28T12:45", "nombre": "chiste_malo", "distancia": 0.1}
         ],
     )
@@ -923,7 +925,12 @@ def test_recuerdo_ensena_lo_que_hay_en_memoria(monkeypatch):
 
     asyncio.run(telegram_bot.cmd_recuerdo(_update(enviados=enviados), contexto))
 
-    assert "plato hondo" in " ".join(enviados)
+    salida = " ".join(enviados)
+    # LO QUE ARREGLA LA VENTANA DE TURNO: antes esto enseñaba la PREGUNTA y
+    # se quedaba ahi. Buscar "plato" tiene que traer tambien lo que se
+    # contesto, que es lo unico que el usuario queria saber.
+    assert "sabes el del plato hondo" in salida
+    assert "cabe mas comida" in salida
 
 
 def test_recuerdo_sin_texto_explica_como_se_usa():

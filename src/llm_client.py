@@ -40,7 +40,7 @@ from src.llm_types import RespuestaLLM, ToolCall, Turno
 # modelo Pydantic para validar lo que manda el LLM antes de ejecutar nada.
 # (TOOLS, la ficha tecnica JSON Schema, ya no se usa aqui - desde F5.0/T4
 # quien decide que tools pasar es Agente, ver src/agent.py).
-from src.tools import HERRAMIENTAS
+from src.tools import HERRAMIENTAS, aviso_si_apagada
 
 # Limite de vueltas del bucle LLM -> tool -> resultado -> LLM. Sin esto, si
 # el modelo se quedara pidiendo la misma tool una y otra vez (un bug suyo,
@@ -152,7 +152,24 @@ def _ejecutar_tool(nombre: str, argumentos: dict, turno: Turno | None = None) ->
 
     inicio = time.perf_counter()
     herramienta = HERRAMIENTAS.get(nombre)
-    if herramienta is None:
+    # Honestidad sobre lo apagado (02/08). LA PUERTA ESTA AQUI, y aqui es
+    # donde tiene que estar: este es el unico punto por el que pasan TODAS
+    # las tools de TODOS los proveedores, asi que una categoria apagada no
+    # se puede ejecutar por ningun camino. Ponerlo en cada tool obligaria a
+    # acordarse una vez por tool, que es como se olvidan las cosas.
+    #
+    # VA ANTES DE VALIDAR LOS ARGUMENTOS a proposito: la ficha de una tool
+    # apagada no declara parametros, asi que el modelo la llama vacia y la
+    # validacion Pydantic contestaria "argumentos no validos" - devolviendo
+    # la misma confusion que esto viene a quitar.
+    aviso = aviso_si_apagada(nombre)
+    if aviso is not None:
+        # No se sale con un return: cayendo por el flujo normal se hereda
+        # el log de solo-metadatos y la memoria del turno (LOG-07), y asi
+        # una segunda llamada en el mismo turno reutiliza el aviso.
+        estado = "apagada"
+        resultado = aviso
+    elif herramienta is None:
         estado = "inexistente"
         resultado = f"Error: la herramienta '{nombre}' no existe."
     else:

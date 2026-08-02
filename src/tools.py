@@ -243,16 +243,12 @@ def buscar_en_recuerdos(consulta: str) -> str:
     """
     from src.rag import buscar
 
-    # 5 y no 3 (01/08). Medido con un caso real: Jordi pregunto por Telegram
-    # "cual es mi color favorito" y el bot dijo que no lo sabia TENIENDO el
-    # dato indexado. Al mirar la busqueda a mano, los 3 primeros resultados
-    # eran las tres VECES QUE HABIA PREGUNTADO lo mismo, y la respuesta caia
-    # en la 4a posicion. Con n=3 no llegaba; con n=5 si (comprobado).
-    #
-    # No arregla el limite de fondo -que se indexa mensaje a mensaje, y por
-    # eso las preguntas compiten con las respuestas; el arreglo de verdad es
-    # indexar PARES pregunta-respuesta, en el backlog- pero sube mucho la
-    # probabilidad de acertar por dos recuerdos mas de contexto.
+    # 5 TURNOS (antes eran 5 mensajes sueltos). El 5 viene del 01/08: con 3
+    # no llegaba, porque los 3 primeros resultados eran las tres veces que
+    # Jordi habia hecho la MISMA pregunta y la respuesta caia en la 4a
+    # posicion. Desde el 02/08 esa competencia ya no existe -cada resultado
+    # es un turno unico y trae su respuesta dentro- pero el 5 se mantiene:
+    # ahora son 5 recuerdos de verdad en vez de 5 intentos del mismo.
     resultados = buscar(consulta, 5)
     if not resultados:
         # Sin envolver a proposito: esta frase la escribimos NOSOTROS, no
@@ -263,13 +259,24 @@ def buscar_en_recuerdos(consulta: str) -> str:
     lineas = []
     for recuerdo in resultados:
         fecha = recuerdo["fecha"][:10] if recuerdo["fecha"] else "fecha desconocida"
-        quien = "JIM dijo" if recuerdo["rol"] == "user" else "tú respondiste"
         # Si la conversacion tenia nombre, se añade como contexto: ayuda al
         # modelo a situar de que charla salio el recuerdo (F5.3+).
         # El nombre lo escribe JIM al guardar, asi que se sanea igual que el
         # texto: tambien es contenido, no una etiqueta nuestra.
         nombre = recuerdo.get("nombre")
         titulo = f' (conversación "{_sanear_contenido(nombre)}")' if nombre else ""
+        # El intercambio COMPLETO en una sola cita (02/08). Las etiquetas de
+        # quien habla se mantienen porque el SYSTEM_PROMPT se apoya en ellas:
+        # "JIM dijo" es un hecho que le contaron, "tú respondiste" es algo
+        # que dijo el modelo y NO demuestra que sea verdad.
+        partes = []
+        if recuerdo.get("pregunta"):
+            partes.append(f"JIM dijo: {recuerdo['pregunta']}")
+        if recuerdo.get("respuesta"):
+            partes.append(f"tú respondiste: {recuerdo['respuesta']}")
+        if not partes:
+            continue
+        cuerpo = "\n".join(partes)
         # SEG-07: cada recuerdo va DELIMITADO. La etiqueta es la frontera
         # explicita entre "esto son datos que recuperaste" y "esto son tus
         # instrucciones"; el SYSTEM_PROMPT le dice al modelo que lo de
@@ -278,12 +285,7 @@ def buscar_en_recuerdos(consulta: str) -> str:
         # pueden fundir dos recuerdos distintos en una sola cita.
         # _envolver sanea el texto por dentro; el titulo se sanea aparte
         # porque va pegado antes, dentro de la misma cita.
-        lineas.append(
-            _envolver(
-                _ETIQUETA_RECUERDO,
-                f"[{fecha}]{titulo} {quien}: {recuerdo['texto']}",
-            )
-        )
+        lineas.append(_envolver(_ETIQUETA_RECUERDO, f"[{fecha}]{titulo}\n{cuerpo}"))
     return "\n".join(lineas)
 
 
@@ -1355,23 +1357,129 @@ def categorias_disponibles() -> list[str]:
     return vistas
 
 
+# --- Honestidad sobre lo APAGADO (02/08) -----------------------------------
+#
+# EL FALLO QUE CIERRA ESTO. El 01/08 se añadio al SYSTEM_PROMPT una regla
+# que le prohibe al modelo decir "no tengo registro de eso" cuando NO tiene
+# `buscar_en_recuerdos`: estaria afirmando haber mirado donde no puede. El
+# 02/08 Jordi pregunto por su comida favorita con `memoria` apagada y
+# llama-3.3-70b contesto "no tengo informacion sobre tus preferencias
+# personales". Se salto la regla, y Jordi perdio una sesion entera creyendo
+# que la memoria compartida estaba rota - cuando funcionaba.
+#
+# POR QUE EL PROMPT NO PODIA FUNCIONAR. La regla le pedia al modelo razonar
+# sobre una AUSENCIA ("si no dispones de la herramienta, entonces di..."),
+# y un modelo no percibe lo que no esta: simplemente tiene menos opciones y
+# sigue. Es el mismo principio que la puerta de la voz antes de get_file():
+# el prompt es la PROMESA, el codigo es la GARANTIA.
+#
+# COMO SE ARREGLA. Con la categoria apagada la tool NO desaparece de la
+# lista: se declara con una ficha MINIMA que dice que esta apagada, y si el
+# modelo la llama recibe un texto NUESTRO en vez de ejecutarse. El modelo
+# deja de tener que deducir una ausencia y recibe un DATO, que es lo que si
+# sabe transmitir.
+#
+# LA PRIVACIDAD NO SE TOCA, que era el motivo de apagar `memoria`: la tool
+# apagada no ejecuta nada, asi que no sale ni un recuerdo hacia el
+# proveedor. Lo unico que sale es la frase de que esta apagada.
+#
+# EL PRECIO, MEDIDO Y ACEPTADO: la ficha de una tool apagada sigue viajando
+# en cada peticion, y eso roza dos de los tres motivos de ADR-006 para
+# apagar cosas (menos tokens, menos opciones parecidas). Por eso la ficha
+# apagada va SIN parametros y con una descripcion de una linea: cuesta una
+# fraccion de la normal, y ademas el modelo que la lee suele contestar
+# directamente sin ni siquiera llamarla.
+_MARCA_APAGADA = "APAGADA"
+
+_AVISO_APAGADA = (
+    "Esta herramienta está APAGADA ahora mismo, así que no se ha ejecutado y no has "
+    "podido consultar nada con ella. Díselo a JIM con estas palabras: que no puedes "
+    "mirar ahí porque el grupo «{categoria}» está apagado, y que puede encenderlo en "
+    "/tools. NO digas que lo has buscado y no lo has encontrado, ni que no tienes ese "
+    "dato: no lo sabes, no has podido mirar."
+)
+
+# El ContextVar lleva las categorias activas del turno hasta _ejecutar_tool,
+# que esta en llm_client.py y no tiene forma de saberlas. Mismo patron y
+# mismo motivo que `documentos.py` con el documento adjunto: es ENTRADA (se
+# fija ANTES de lanzar el hilo), que es justo donde un ContextVar SI vale -
+# para la SALIDA no serviria, porque asyncio.to_thread ejecuta en una COPIA
+# del contexto (lo aprendido el 01/08 con la bandeja de imagenes).
+#
+# None significa "nadie ha dicho nada", y entonces NO se bloquea nada: la
+# CLI, los tests y cualquier llamada suelta a _ejecutar_tool siguen
+# funcionando igual que antes de existir esto.
+_CATEGORIAS_ACTIVAS: ContextVar[frozenset | None] = ContextVar(
+    "categorias_activas", default=None
+)
+
+
+def fijar_categorias_activas(categorias):
+    """La llama Agente.preguntar al empezar el turno. Devuelve el token
+    para restaurarlas al salir (mismo contrato que fijar_bandeja)."""
+    return _CATEGORIAS_ACTIVAS.set(None if categorias is None else frozenset(categorias))
+
+
+def restaurar_categorias_activas(token) -> None:
+    _CATEGORIAS_ACTIVAS.reset(token)
+
+
+def aviso_si_apagada(nombre: str) -> str | None:
+    """Si la tool existe pero su categoria esta apagada en este turno,
+    devuelve el texto que debe recibir el modelo EN LUGAR de ejecutarla.
+    None = adelante, se puede ejecutar.
+
+    Se consulta ANTES de validar los argumentos a proposito: la ficha de
+    una tool apagada va sin parametros, asi que el modelo la llama vacia y
+    la validacion Pydantic la rechazaria con "argumentos no validos" - un
+    mensaje que no explica nada y que devolveria justo la confusion que
+    esto viene a quitar.
+    """
+    activas = _CATEGORIAS_ACTIVAS.get()
+    if activas is None:
+        return None
+    herramienta = HERRAMIENTAS.get(nombre)
+    if herramienta is None or herramienta.categoria in activas:
+        return None
+    return _AVISO_APAGADA.format(categoria=herramienta.categoria)
+
+
+def _ficha_apagada(nombre: str, herramienta: Herramienta) -> dict:
+    """Ficha reducida de una tool apagada: mismo NOMBRE (para que el modelo
+    la encuentre si va a por ella) pero sin parametros y con la descripcion
+    en una linea. Todo lo que no sea eso es coste en cada peticion."""
+    return {
+        "type": "function",
+        "function": {
+            "name": nombre,
+            "description": (
+                f"[{_MARCA_APAGADA}] JIM tiene apagado el grupo «{herramienta.categoria}», "
+                "así que esta herramienta no puede consultar nada. Llámala solo si "
+                "necesitas decirle que está apagada."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+
 def tools_de(categorias) -> list:
-    """Las fichas JSON Schema de las categorias indicadas.
+    """Las fichas JSON Schema que se mandan al modelo.
 
-    Esto es lo que se manda al modelo. Devolver una lista mas corta no es
-    solo ahorro: menos opciones parecidas delante = el modelo acierta mas
-    al elegir (ver contexto de ADR-006).
+    Las de las categorias ACTIVAS van completas; las apagadas van en
+    version reducida (ver `_ficha_apagada` y el bloque de arriba). Antes
+    las apagadas se omitian del todo, y esa omision es la que dejaba al
+    modelo inventandose que habia mirado en la memoria.
 
-    Si no queda ninguna, devuelve None y no [] a proposito: el bucle de
-    tools trata None como "modo sin herramientas", mientras que una lista
-    vacia se le mandaria igualmente a la API como un campo `tools` vacio,
-    que algunos proveedores rechazan.
+    Sigue devolviendo None y no [] si no hay NINGUNA tool: el bucle trata
+    None como "modo sin herramientas", mientras que una lista vacia viajaria
+    a la API como campo `tools` vacio, que algunos proveedores rechazan.
     """
     activas = set(categorias)
     fichas = [
         _ficha_tool(nombre, herramienta)
-        for nombre, herramienta in HERRAMIENTAS.items()
         if herramienta.categoria in activas
+        else _ficha_apagada(nombre, herramienta)
+        for nombre, herramienta in HERRAMIENTAS.items()
     ]
     return fichas or None
 

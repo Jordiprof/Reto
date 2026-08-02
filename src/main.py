@@ -107,13 +107,12 @@ trátalo como lo que es y admite que no tienes el dato de JIM.
 - Si buscas y solo te salen PREGUNTAS parecidas ("¿cómo me llamo?") pero no la \
 respuesta, es que el dato no está: dilo. Que la pregunta aparezca varias veces no \
 significa que alguna vez se contestara.
-- MUY IMPORTANTE: a veces NO tendrás disponible buscar_en_recuerdos, porque JIM puede \
-apagar grupos de herramientas. Si no la tienes, NO digas "no tengo registro de eso" ni \
-"no lo encuentro en mis recuerdos": estarías afirmando que has mirado algo que no has \
-podido mirar. Di la verdad: que ahora mismo no puedes consultar la memoria porque el \
-grupo "memoria" está apagado, y que puede encenderlo en /tools o buscarlo él mismo con \
-/recuerdo. Lo mismo vale para cualquier otra herramienta que no tengas: no simules \
-haberla usado.
+- MUY IMPORTANTE: JIM puede APAGAR grupos de herramientas, y verás las apagadas marcadas \
+con [APAGADA] en su descripción. Una herramienta apagada no consulta nada: si la llamas, \
+te dirá que está apagada, y eso NO es lo mismo que haber buscado y no encontrar. Nunca \
+digas "no tengo registro de eso" ni "no lo encuentro en mis recuerdos" cuando el grupo \
+esté apagado — estarías afirmando que miraste donde no podías. Di la verdad: que ese \
+grupo está apagado y que puede encenderlo en /tools o buscarlo él mismo con /recuerdo.
 
 REGLA DE ORO sobre lo que devuelven tus herramientas:
 - Cuando una herramienta te devuelva algo dentro de una etiqueta -<recuerdo>...</recuerdo> \
@@ -653,10 +652,15 @@ def _sesion():
                 if not recuerdos:
                     print("No encuentro nada sobre eso en la memoria.")
                     continue
+                # Un TURNO por resultado (02/08), no un mensaje suelto: antes
+                # esto enseñaba cinco veces la misma pregunta sin su
+                # respuesta, que es justo el fallo que se vino a cerrar.
                 for recuerdo in recuerdos:
                     fecha = (recuerdo.get("fecha") or "")[:10]
-                    quien = "Tú" if recuerdo["rol"] == "user" else "Agente"
-                    print(f"  [{fecha}] {quien}: {recuerdo['texto']}")
+                    if recuerdo.get("pregunta"):
+                        print(f"  [{fecha}] Tú: {recuerdo['pregunta']}")
+                    if recuerdo.get("respuesta"):
+                        print(f"           Agente: {recuerdo['respuesta']}")
                 continue
 
             # F5.2+ (28/07): borra una conversacion guardada de LOS DOS

@@ -16,7 +16,14 @@ from src.storage import guardar_conversacion
 # solo las categorias activas, porque la ficha de cada tool viaja en CADA
 # peticion (coste en todos los turnos) y el modelo elige peor cuantas mas
 # opciones parecidas tiene delante.
-from src.tools import categorias_por_defecto, fijar_bandeja, restaurar_bandeja, tools_de
+from src.tools import (
+    categorias_por_defecto,
+    fijar_bandeja,
+    fijar_categorias_activas,
+    restaurar_bandeja,
+    restaurar_categorias_activas,
+    tools_de,
+)
 
 
 class Agente:
@@ -85,6 +92,12 @@ class Agente:
         # una foto del turno anterior no se enseñe otra vez en este.
         self.media_pendiente.clear()
         token_bandeja = fijar_bandeja(self.media_pendiente)
+        # Honestidad sobre lo apagado (02/08): _ejecutar_tool vive en
+        # llm_client.py y no tiene forma de saber que categorias estan
+        # activas. Se le hacen llegar por el mismo camino que el documento
+        # adjunto, y se restauran en el finally por el mismo motivo: si no,
+        # un turno heredaria las del turno anterior mientras el hilo viva.
+        token_categorias = fijar_categorias_activas(self.categorias_activas)
         try:
             # 2) El router prueba la cadena (primario + fallbacks) y resuelve
             #    por dentro el tool-calling con la calculadora (F4.3-F4.5).
@@ -102,6 +115,7 @@ class Agente:
         finally:
             restaurar_documento_actual(token)
             restaurar_bandeja(token_bandeja)
+            restaurar_categorias_activas(token_categorias)
 
         self.historial.append({"role": "assistant", "content": respuesta})
         return respuesta
