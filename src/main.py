@@ -826,7 +826,18 @@ def _sesion():
 
             # Un turno completo (historial, tools, guardado del turno) lo
             # resuelve el Agente por dentro - main.py solo imprime.
-            respuesta = agente.preguntar(pregunta)
+            # AUD-03: se le pasa COMO guardar. La CLI solo guarda al salir,
+            # asi que sin esto lo que se compactara a mitad de sesion se
+            # perderia de verdad; con esto queda en conversations/ y entra
+            # al RAG en el siguiente arranque. En Telegram no hace falta
+            # porque ya persiste despues de cada turno.
+            respuesta = agente.preguntar(pregunta, persistir=agente.guardar)
+            if agente.compactados:
+                print(
+                    f"ℹ️ La conversación se estaba haciendo larga: he sacado del "
+                    f"contexto los {agente.compactados} mensajes más antiguos "
+                    "(siguen guardados y los puedo buscar con /recuerdo)."
+                )
             # Si contesto un fallback, se dice ANTES de la respuesta (misma
             # razon que en Telegram): si no, se lee creyendo que la dio el
             # modelo que elegiste en el menu.

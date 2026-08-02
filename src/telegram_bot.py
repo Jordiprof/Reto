@@ -598,6 +598,18 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             # serializa a JSON.
             await asyncio.to_thread(_persistir, usuario.id)
 
+    # AUD-03: si se saco algo del contexto, se dice. Aqui NO hace falta
+    # pasarle `persistir` a preguntar(): el bot ya guarda e indexa despues
+    # de CADA turno (_persistir), asi que lo que se compacta ya esta a
+    # salvo en conversations/ y en el RAG antes de salir del historial.
+    compactados = getattr(_agentes.get(usuario.id), "compactados", 0)
+    if compactados and not fallo:
+        await mensaje.reply_text(
+            f"ℹ️ La charla se estaba haciendo larga: he sacado del contexto los "
+            f"{compactados} mensajes más antiguos. Siguen guardados — puedes "
+            "buscarlos con /recuerdo."
+        )
+
     # Si contesto un fallback, se dice ANTES de la respuesta: si fuera
     # despues, se leeria la respuesta creyendo que la dio el modelo elegido.
     aviso = getattr(getattr(_agentes.get(usuario.id), "router", None), "aviso_fallback", None)
