@@ -27,6 +27,7 @@ from src.llm_errors import (
     ErrorLimitePeticiones,
     ErrorPeticionInvalida,
     ErrorTimeout,
+    ErrorToolCallMalGenerada,
 )
 
 # Formas neutras compartidas por los 3 proveedores (F5.0/T1).
@@ -124,6 +125,31 @@ def _campos_seguros(argumentos: object) -> str:
     if not argumentos:
         return "(ninguno)"
     return ",".join(sorted(_nombre_seguro(campo) for campo in argumentos))[:200]
+
+
+def _codigo_de_error(error: object) -> str | None:
+    """El `code` que manda el proveedor dentro del cuerpo del error, o None.
+
+    VERIFICADO CONTRA LA API REAL el 02/08, y no como lo habria escrito de
+    memoria: el objeto de excepcion de Groq **no tiene atributo `.code`**
+    -devuelve '(no existe)'- y el codigo vive en `body["error"]["code"]`.
+    Es el mismo tropiezo que el test de NASA del 30/07, que simulaba
+    `{code: 400}` en el cuerpo cuando la API devolvia HTTP 400 de verdad:
+    un mock que dice una cosa y una API que hace otra deja tests en verde
+    sobre codigo que revienta en real.
+
+    Defensiva a proposito: `body` puede no venir, no ser un dict, o no
+    traer "error". Cualquier sorpresa devuelve None, y entonces el error
+    se trata como lo que era antes de existir esta funcion.
+    """
+    cuerpo = getattr(error, "body", None)
+    if not isinstance(cuerpo, dict):
+        return None
+    detalle = cuerpo.get("error")
+    if not isinstance(detalle, dict):
+        return None
+    codigo = detalle.get("code")
+    return codigo if isinstance(codigo, str) else None
 
 
 def _ejecutar_tool(nombre: str, argumentos: dict, turno: Turno | None = None) -> str:
@@ -532,6 +558,13 @@ class _ProveedorGroq(_ProveedorLLM):
             logging.error("Groq: limite de peticiones superado")
             raise ErrorLimitePeticiones("Groq", str(error)) from error
         except APIError as error:
+            # 02/08: se separa el caso en que el MODELO escribio mal la
+            # llamada a la tool (code=tool_use_failed), porque ese SI hay
+            # que reintentarlo - medido: la misma peticion falla ~25% de
+            # las veces. Ver ErrorToolCallMalGenerada para el detalle.
+            if _codigo_de_error(error) == "tool_use_failed":
+                logging.warning("Groq: el modelo genero mal una tool call; reintentable")
+                raise ErrorToolCallMalGenerada("Groq", str(error)) from error
             # F5.2 (27/07): antes iba {error} entero al log. El str() de un
             # error de SDK puede traer el cuerpo de la peticion - de hecho
             # groq.BadRequestError con tool_use_failed HACE ECO del tool call

@@ -177,3 +177,55 @@ def test_presupuesto_agotado_detiene_reintentos_y_fallback():
     # gastar mas - y nunca llega a probar "ollama", aunque quedaban
     # reintentos y un fallback disponibles.
     assert intentos == ["groq", "groq", "groq"]
+
+
+# --- tool_use_failed: el modelo escribe la tool call a mano (02/08) -----
+# Medido con 24 llamadas reales a groq/llama-3.3-70b: la MISMA peticion
+# fallo 6 veces y funciono 18 (~25%). Antes esto era un ErrorPeticionInvalida
+# no reintentable, asi que UNA tirada mala quemaba el proveedor primario
+# entero - 16 casos de groq en el log entre el 31/07 y el 02/08.
+
+
+def test_una_tool_call_mal_generada_se_REINTENTA_sin_perder_el_primario():
+    """EL ARREGLO. El modelo escribe mal la llamada, se reintenta el MISMO
+    proveedor y a la segunda sale bien: no se degrada a nadie."""
+    from src.llm_errors import ErrorToolCallMalGenerada
+
+    intentos = {"n": 0}
+
+    def llamar(eslabon, historial, tools, presupuesto):
+        intentos["n"] += 1
+        if intentos["n"] < 2:
+            raise ErrorToolCallMalGenerada("groq", "tool_use_failed")
+        return "ok al segundo intento"
+
+    router = LLMRouter(
+        _eslabones("groq", "ollama"), max_reintentos=3, backoff_base=1.0,
+        _llamar=llamar, _dormir=lambda s: None,
+    )
+
+    assert router.responder([], None) == "ok al segundo intento"
+    # Lo que se venia perdiendo: el primario sigue siendo el que contesta.
+    assert router.ultimo_proveedor == "groq"
+
+
+def test_un_400_normal_SIGUE_quemando_el_proveedor():
+    """Contrapeso imprescindible: no se ha abierto la mano con los 400 en
+    general. Una clave mala o un schema roto fallan siempre, y reintentarlos
+    solo gastaria cuota - ese sigue degradando a la primera."""
+    intentos = {"n": 0}
+
+    def llamar(eslabon, historial, tools, presupuesto):
+        intentos["n"] += 1
+        if eslabon.proveedor == "groq":
+            raise ErrorPeticionInvalida("groq", "schema roto")
+        return "responde el fallback"
+
+    router = LLMRouter(
+        _eslabones("groq", "ollama"), max_reintentos=3, backoff_base=1.0,
+        _llamar=llamar, _dormir=lambda s: None,
+    )
+
+    assert router.responder([], None) == "responde el fallback"
+    assert router.ultimo_proveedor == "ollama"
+    assert intentos["n"] == 2  # groq UNA vez (sin reintentos) + ollama

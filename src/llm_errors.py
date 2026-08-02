@@ -66,10 +66,42 @@ class ErrorTimeout(ErrorLLM):
 
 
 class ErrorPeticionInvalida(ErrorLLM):
-    """El proveedor rechazo la peticion por algo que no es auth ni
-    limite (p.ej. groq.BadRequestError con tool_use_failed, F4.5).
-    NO reintentable: reenviar la misma peticion fallaria igual."""
+    """El proveedor rechazo la peticion por algo que no es auth ni limite.
+    NO reintentable: reenviar la misma peticion fallaria igual.
+
+    OJO al subcaso de abajo: esa premisa resulto ser FALSA para
+    tool_use_failed, y hasta el 02/08 este error se los tragaba todos."""
     plantilla_usuario = "{proveedor} rechazó la petición."
+
+
+class ErrorToolCallMalGenerada(ErrorPeticionInvalida):
+    """El modelo escribio la llamada a la herramienta como TEXTO en vez de
+    usar el mecanismo estructurado, y el proveedor rechazo la peticion.
+
+    QUE ES EXACTAMENTE (medido el 02/08 con llamadas reales). El modelo
+    tiene dos formas de pedir una tool: rellenar el formulario que la API
+    entiende, o escribirla a mano. llama-3.3-70b a veces la escribe a mano
+    y ademas la escribe MAL - tres variantes reales del mismo turno:
+
+        <function=buscar_en_recuerdos{"consulta": "..."}</function>   falta >
+        <function=buscar_en_recuerdos {"consulta": "..."} </function> espacios
+        <function=buscar_en_recuerdos({"consulta": "..."}</function>  parentesis
+
+    Groq lo detecta y devuelve HTTP 400 con code=tool_use_failed. Es el
+    MISMO fallo que el anotado el 24/07 para Gemini, donde nadie lo caza y
+    el churro acaba en pantalla: cambia quien lo pilla, no el fallo.
+
+    POR QUE ES REINTENTABLE Y SU PADRE NO. La premisa de
+    ErrorPeticionInvalida -"reenviar la misma peticion fallaria igual"- es
+    cierta para una clave mala o un schema roto, y FALSA aqui: mandando 24
+    veces la MISMA peticion fallaron 6 y funcionaron 18 (~25%). Es un dado,
+    no un determinismo. Como estaba marcada no reintentable, cada tirada
+    mala quemaba el proveedor primario entero y degradaba al siguiente -de
+    ahi los 16 casos de groq en el log entre el 31/07 y el 02/08, con Jordi
+    viendo responder al fallback sin saber por que-. Con 2 reintentos, la
+    probabilidad de perder el proveedor baja del 25% a ~1,5%."""
+    plantilla_usuario = "{proveedor} generó mal una llamada a herramienta."
+    reintentable = True
 
 
 class ErrorLimitePasos(ErrorLLM):
