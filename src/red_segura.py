@@ -64,6 +64,22 @@ def _resolver(host: str) -> list:
     return [info[4][0] for info in infos]
 
 
+def _es_ip_interna_literal(host: str) -> bool:
+    """True solo si el host YA ES una IP interna escrita a pelo.
+
+    Distinto de _es_interna: aquel decide sobre una IP ya resuelta y trata
+    lo no interpretable como peligroso (fallar cerrado). Este responde a
+    otra pregunta - "¿lo que ha escrito es literalmente una IP interna?" -
+    y por eso un nombre de dominio devuelve False: todavia no sabemos a
+    donde apunta, y eso lo decide la resolucion DNS mas abajo.
+    """
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False  # es un nombre, no una IP: aqui no se decide nada
+    return _es_interna(host)
+
+
 def _es_interna(ip_texto: str) -> bool:
     """True si la IP pertenece a la maquina o a la red local.
 
@@ -128,6 +144,34 @@ def validar_url(url: str) -> str:
             "No tengo ningún dominio autorizado todavía. Añádelos a "
             "DOMINIOS_PERMITIDOS_WEB en el .env."
         )
+    # BUG REAL encontrado por Jordi probando el 02/08. Pidio resumir
+    # `https://192.168.1.1/` -su propio router- y el bot contesto: "JIM
+    # tiene que añadir el dominio 192.168.1.1 a DOMINIOS_PERMITIDOS_WEB".
+    # Bloqueaba bien, pero el mensaje ENSEÑABA A SALTARSE LA PROTECCION: si
+    # alguien sigue esa instruccion, abre un SSRF contra su propia red.
+    #
+    # Pasaba porque una IP privada NO esta en la lista blanca, asi que se
+    # paraba en la primera comprobacion y usaba su texto generico - sin
+    # llegar nunca a la segunda, que es la que sabe que eso es interno.
+    #
+    # Se mira ANTES de hablar de la lista: si la direccion ES una IP
+    # interna, no hay nada que autorizar y decir lo contrario es peligroso.
+    # Un dominio publico que RESUELVA a una IP interna lo sigue cazando la
+    # comprobacion de abajo (esa necesita DNS, y por eso va despues).
+    if _es_ip_interna_literal(host):
+        # NO SE NOMBRA la variable de configuración aquí, ni siquiera para
+        # prohibirla: el modelo se quedaría con el nombre y podría acabar
+        # sugiriéndosela igual ("no pienses en un elefante"). Con un dominio
+        # público normal sí se nombra, porque allí añadirlo es la solución
+        # correcta; aquí es justo lo contrario.
+        raise UrlNoPermitida(
+            f"'{host}' es una dirección de la red interna y NO la visito nunca. "
+            "IMPORTANTE: esto NO se arregla con ninguna configuración ni lista de "
+            "permisos — hacerlo abriría un agujero de seguridad en la red de JIM. "
+            "NO le sugieras ningún modo de autorizarla. Dile simplemente que las "
+            "direcciones internas están fuera de tu alcance por diseño."
+        )
+
     if not _dominio_autorizado(host, permitidos):
         # Este texto lo lee EL MODELO como resultado de la tool, no solo un
         # humano, y por eso le habla a el directamente.

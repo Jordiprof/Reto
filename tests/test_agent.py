@@ -221,3 +221,40 @@ def test_el_aviso_no_rompe_a_gemini(monkeypatch):
     _contents, instruccion = traducir_historial_gemini(visto[0])
 
     assert instruccion == "SOY EL PROMPT"
+
+
+def test_un_documento_adjunto_NO_secuestra_toda_la_conversacion():
+    """BUG del 02/08 (Jordi probando). Con el PDF cargado pregunto quien
+    gano el Mundial y el bot contesto "no encuentro en ese documento algo
+    que indique que España gano". El aviso decia "si la pregunta va sobre
+    el", pero el modelo lo leia como que TODO va sobre el documento: un
+    adjunto secuestraba la conversacion entera.
+
+    Se arregla diciendo TAMBIEN el caso contrario, explicito - misma
+    leccion que la alucinacion de "pedire permiso" (01/08) y que el aviso
+    de herramienta apagada (02/08).
+    """
+    from types import SimpleNamespace
+
+    from src.agent import Agente
+
+    agente = Agente("system", "groq", "clave", "llama-3.3-70b-versatile")
+    agente.documento_pendiente = SimpleNamespace(nombre="apuntes.pdf")
+    agente.historial.append({"role": "user", "content": "quien gano el mundial?"})
+
+    aviso = agente._mensajes_del_turno()[-1]["content"]
+
+    assert "NO va sobre el documento" in aviso
+    assert "IGNÓRALO" in aviso
+    # Y la pregunta original sigue intacta detras del aviso.
+    assert aviso.endswith("quien gano el mundial?")
+
+
+def test_sin_documento_no_se_añade_ningun_aviso():
+    """Contrapeso: el andamiaje solo aparece cuando hace falta."""
+    from src.agent import Agente
+
+    agente = Agente("system", "groq", "clave", "llama-3.3-70b-versatile")
+    agente.historial.append({"role": "user", "content": "hola"})
+
+    assert agente._mensajes_del_turno() == agente.historial

@@ -2,6 +2,7 @@
 # inyectados (_llamar) y sin dormir de verdad (_dormir) - asi se prueba la
 # logica de reintentos/degradacion sin red y sin esperas reales.
 import pytest
+from google.genai import errors as errores_gemini
 
 from src.llm_errors import (
     ErrorAutenticacion,
@@ -231,20 +232,26 @@ def test_un_400_normal_SIGUE_quemando_el_proveedor():
     assert intentos["n"] == 2  # groq UNA vez (sin reintentos) + ollama
 
 
-@pytest.mark.parametrize("nombre_error,reintentable_esperado", [
-    ("ServerError", True),           # 5xx: el servidor esta saturado
-    ("ResourceExhausted", True),     # 429: vas muy rapido
-    ("ServiceUnavailable", True),    # 503
-    ("InvalidArgument", False),      # peticion mal formada: fallaria siempre
-    ("PermissionDenied", False),
-])
-def test_gemini_separa_lo_transitorio_de_lo_definitivo(nombre_error, reintentable_esperado):
-    """La tabla completa. Reintentar un InvalidArgument solo gastaria cuota;
-    NO reintentar un 5xx pierde el proveedor por nada."""
-    from src.llm_client import _ProveedorGemini
+# --- Gemini: que se reintenta y que no (02/08) ---------------------------
+#
+# ESTE TEST NACE DE UN FALLO MIO. La primera version clasificaba por el
+# NOMBRE de la clase y buscaba "ResourceExhausted" y "ServiceUnavailable",
+# que NO EXISTEN en este SDK - los confundi con los de google.api_core.
+# Inspeccionado despues: google.genai.errors solo define APIError,
+# ClientError (4xx) y ServerError (5xx).
+#
+# Y el test de entonces no lo cazo porque **fabricaba clases falsas con
+# esos nombres inventados**: verificaba mi suposicion, no la API. Es el
+# mismo fallo del test de NASA del 30/07 que este proyecto ya tiene
+# documentado - un mock que dice una cosa y una API que hace otra.
+#
+# Por eso ahora se usan LAS CLASES REALES del SDK, construidas como las
+# construye el propio SDK. Si Google cambia la jerarquia, esto se entera.
 
-    error = type(nombre_error, (Exception,), {})("fallo")
-    proveedor = _ProveedorGemini("clave", "modelo")
+def _lanzar_en_gemini(error):
+    """Ejecuta _ProveedorGemini._llamar con un cliente que lanza `error` y
+    devuelve la excepcion tipada que sale."""
+    from src.llm_client import _ProveedorGemini
 
     class ClienteFalso:
         class models:
@@ -252,9 +259,125 @@ def test_gemini_separa_lo_transitorio_de_lo_definitivo(nombre_error, reintentabl
             def generate_content(**kw):
                 raise error
 
+    proveedor = _ProveedorGemini("clave", "models/gemini-2.5-flash")
     with pytest.raises(Exception) as capturado:
         _ProveedorGemini._llamar(
             proveedor, {"client": ClienteFalso, "contents": [], "config": None}
         )
+    return capturado.value
 
-    assert capturado.value.reintentable is reintentable_esperado
+
+@pytest.mark.parametrize("codigo,estado,reintentable", [
+    (429, "RESOURCE_EXHAUSTED", True),   # cuota: el caso REAL que fallaba
+    (503, "UNAVAILABLE", True),          # servidor saturado
+    (500, "INTERNAL", True),
+    (400, "INVALID_ARGUMENT", False),    # peticion mal formada: fallaria siempre
+    (403, "PERMISSION_DENIED", False),
+    (404, "NOT_FOUND", False),
+])
+def test_gemini_se_clasifica_por_CODIGO_HTTP(codigo, estado, reintentable):
+    """El codigo es un DATO de la API, no un nombre que yo suponga."""
+    Clase = errores_gemini.ClientError if codigo < 500 else errores_gemini.ServerError
+    error = Clase(codigo, {"error": {"code": codigo, "message": estado, "status": estado}})
+
+    assert _lanzar_en_gemini(error).reintentable is reintentable
+
+
+def test_el_SDK_de_google_NO_tiene_las_clases_que_me_invente():
+    """Deja constancia del fallo para que nadie las vuelva a usar. Si algun
+    dia Google las añade, este test avisa y se puede simplificar el
+    clasificador."""
+    assert not hasattr(errores_gemini, "ResourceExhausted")
+    assert not hasattr(errores_gemini, "ServiceUnavailable")
+    # Lo que SI existe, y sobre lo que se construye la clasificacion:
+    assert issubclass(errores_gemini.ClientError, errores_gemini.APIError)
+    assert issubclass(errores_gemini.ServerError, errores_gemini.APIError)
+
+
+def test_un_error_sin_codigo_no_revienta_la_clasificacion():
+    """Cualquier excepcion rara que no venga del SDK cae en el camino de
+    siempre, no en un AttributeError."""
+    assert _lanzar_en_gemini(RuntimeError("algo raro")).reintentable is False
+
+
+# --- Avisos de proveedor caido, en castellano (02/08) --------------------
+#
+# Peticion de Jordi tras probar: el aviso decia "(ErrorLimitePeticiones)",
+# que es el NOMBRE DE LA CLASE y no le dice nada a quien lo lee. Cada
+# ErrorLLM ya trae su `plantilla_usuario` redactada para humanos.
+
+
+def test_el_aviso_de_fallback_explica_el_motivo_EN_CASTELLANO():
+    def llamar(eslabon, historial, tools, presupuesto):
+        if eslabon.proveedor == "groq":
+            raise ErrorLimitePeticiones("groq")
+        return "responde el fallback"
+
+    router = LLMRouter(_eslabones("groq", "ollama"), max_reintentos=0,
+                       _llamar=llamar, _dormir=lambda s: None)
+    router.responder([], None)
+
+    assert "límite" in router.aviso_fallback
+    assert "ErrorLimitePeticiones" not in router.aviso_fallback, "eso es el nombre de la clase"
+    assert "ollama" in router.aviso_fallback
+
+
+def test_el_aviso_distingue_TOKENS_de_PETICIONES():
+    """Las dos causas se arreglan distinto, y el aviso tiene que decir
+    cuál es: por tokens hay que /limpiar, por peticiones basta esperar."""
+    def llamar(eslabon, historial, tools, presupuesto):
+        if eslabon.proveedor == "groq":
+            raise ErrorLimitePeticiones("groq", "Rate limit reached on tokens per minute")
+        return "ok"
+
+    router = LLMRouter(_eslabones("groq", "ollama"), max_reintentos=0,
+                       _llamar=llamar, _dormir=lambda s: None)
+    router.responder([], None)
+
+    assert "TOKENS" in router.aviso_fallback
+    assert "/limpiar" in router.aviso_fallback
+
+
+def test_el_aviso_dice_QUE_MODELO_contesta():
+    """Saber que respondio otro modelo importa: cambia la respuesta Y que
+    herramientas se llegan a llamar (leccion del 01/08)."""
+    def llamar(eslabon, historial, tools, presupuesto):
+        if eslabon.proveedor == "groq":
+            raise ErrorTimeout("groq")
+        return "ok"
+
+    router = LLMRouter(_eslabones("groq", "ollama"), max_reintentos=0,
+                       _llamar=llamar, _dormir=lambda s: None)
+    router.responder([], None)
+
+    assert router.eslabones[1].modelo in router.aviso_fallback
+
+
+def test_si_caen_TODOS_se_dice_que_han_caido_todos():
+    """Hasta hoy solo se veia el mensaje del ULTIMO error, asi que con los
+    tres caidos leias "gemini no responde" y parecia problema de gemini -
+    cuando el problema era quedarte sin los tres."""
+    def llamar(eslabon, historial, tools, presupuesto):
+        raise ErrorLimitePeticiones(eslabon.proveedor)
+
+    router = LLMRouter(_eslabones("groq", "ollama", "gemini"), max_reintentos=0,
+                       _llamar=llamar, _dormir=lambda s: None)
+
+    with pytest.raises(ErrorLimitePeticiones):
+        router.responder([], None)
+
+    aviso = router.aviso_fallback
+    assert "3 proveedores" in aviso
+    for proveedor in ("groq", "ollama", "gemini"):
+        assert proveedor in aviso
+    # Y dice QUE HACER, que es lo que Jordi no sabia: cuando volver.
+    assert "minuto" in aviso
+
+
+def test_si_responde_el_primario_NO_hay_aviso():
+    """Contrapeso: un aviso que sale siempre deja de leerse."""
+    router = LLMRouter(_eslabones("groq", "ollama"),
+                       _llamar=lambda *a: "ok", _dormir=lambda s: None)
+    router.responder([], None)
+
+    assert router.aviso_fallback is None

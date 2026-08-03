@@ -48,9 +48,57 @@ class ErrorAutenticacion(ErrorLLM):
 
 
 class ErrorLimitePeticiones(ErrorLLM):
-    """Se supero el limite de peticiones (rate limit). Reintentable."""
-    plantilla_usuario = "límite de peticiones de {proveedor} superado."
+    """Se supero el limite del proveedor (rate limit). Reintentable.
+
+    DISTINGUE TOKENS DE PETICIONES (02/08, peticion de Jordi tras probar).
+    "Limite superado" a secas no dice que hacer, y las dos causas se
+    arreglan de forma distinta:
+
+      - por PETICIONES: has mandado muchos mensajes seguidos. Se pasa en un
+        minuto y basta con esperar.
+      - por TOKENS: la conversacion o el documento ocupan demasiado. Esperar
+        NO lo arregla si sigues con el mismo contexto - hay que /limpiar,
+        cerrar la charla o soltar el documento.
+
+    Se saca del texto del error del proveedor, que lo dice ("...on tokens
+    per minute (TPM)" / "...on requests per day (RPD)"). Si no se reconoce,
+    se cae al mensaje generico de siempre: es una mejora del aviso, nunca
+    un motivo para fallar.
+    """
+    plantilla_usuario = "límite de {proveedor} superado."
     reintentable = True
+
+    @property
+    def mensaje_usuario(self) -> str:
+        detalle = (self.detalle or "").lower()
+        # Los limites POR DIA se dicen aparte: son los unicos que NO se
+        # arreglan esperando un rato ni limpiando nada.
+        por_dia = "per day" in detalle or "rpd" in detalle or "tpd" in detalle
+        if por_dia:
+            return (
+                f"⚠️ has agotado la cuota DIARIA de {self.proveedor}. Esto no se "
+                "arregla esperando un rato ni limpiando la conversación: hay que "
+                "esperar a mañana o cambiar de proveedor con /proveedor."
+            )
+        if "token" in detalle or "tpm" in detalle:
+            # CORRECCION del 03/08. La primera version decia "prueba con
+            # /limpiar" y Jordi lo vio en el PRIMER mensaje de una
+            # conversacion nueva, donde no habia nada que limpiar. El
+            # limite de tokens es casi siempre POR MINUTO -o sea de
+            # velocidad, no de tamaño- y se recupera solo. Limpiar ayuda,
+            # pero es lo segundo, no lo primero.
+            return (
+                f"⚠️ {self.proveedor} se ha quedado sin cuota de TOKENS. El límite "
+                "por minuto se recupera solo en menos de un minuto: espera un poco "
+                "y repite. Si la conversación es muy larga, /limpiar hace que cada "
+                "mensaje gaste menos."
+            )
+        if "request" in detalle or "rpm" in detalle:
+            return (
+                f"⚠️ has hecho demasiadas PETICIONES seguidas a {self.proveedor}. "
+                "Espera un minuto y vuelve a probar."
+            )
+        return super().mensaje_usuario
 
 
 class ErrorConexion(ErrorLLM):

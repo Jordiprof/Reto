@@ -218,3 +218,43 @@ def test_el_mensaje_de_error_no_revela_a_que_ip_resolvio():
         validar_url("https://interno.ejemplo.com/")
 
     assert "127.0.0.1" not in str(error.value)
+
+
+# --- IP interna: bloquear NO basta, el mensaje importa (02/08) ------------
+
+
+@pytest.mark.parametrize("url,host", [
+    ("https://192.168.1.1/", "192.168.1.1"),      # el router de Jordi
+    ("http://127.0.0.1:8080/admin", "127.0.0.1"),
+    ("http://169.254.169.254/latest/meta-data/", "169.254.169.254"),
+    ("http://10.0.0.1/", "10.0.0.1"),
+])
+def test_una_IP_interna_NO_invita_a_añadirla_a_la_lista(url, host):
+    """BUG REAL encontrado por Jordi probando el 02/08. Pidió resumir
+    `https://192.168.1.1/` -su propio router- y el bot contestó: "JIM tiene
+    que añadir el dominio 192.168.1.1 a DOMINIOS_PERMITIDOS_WEB".
+
+    Bloqueaba bien, pero el mensaje ENSEÑABA A SALTARSE LA PROTECCIÓN: si
+    alguien sigue esa instrucción, abre un SSRF contra su propia red.
+
+    Pasaba porque una IP privada no está en la lista blanca, así que se
+    paraba en la primera comprobación y usaba su texto genérico, sin llegar
+    nunca a la segunda -la que sabe que eso es interno-.
+    """
+    with pytest.raises(UrlNoPermitida) as error:
+        validar_url(url)
+
+    mensaje = str(error.value)
+    assert "interna" in mensaje.lower()
+    assert "DOMINIOS_PERMITIDOS_WEB" not in mensaje, "le está diciendo cómo saltárselo"
+    assert "NO le sugieras" in mensaje
+    assert "listas" not in mensaje.lower() or "ninguna" in mensaje.lower()
+
+
+def test_un_dominio_normal_SIGUE_diciendo_como_autorizarlo():
+    """Contrapeso: para un sitio público normal, explicar cómo añadirlo es
+    lo correcto y no se puede haber perdido."""
+    with pytest.raises(UrlNoPermitida) as error:
+        validar_url("https://sitio-cualquiera.com/")
+
+    assert "DOMINIOS_PERMITIDOS_WEB" in str(error.value)

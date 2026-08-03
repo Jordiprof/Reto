@@ -94,11 +94,36 @@ _TIMEOUT_TRABAJO_LARGO = 180.0
 # que el documento adjunto y las categorias activas.
 _TIMEOUT_ACTUAL: ContextVar[float | None] = ContextVar("timeout_llm", default=None)
 
+# Timeout PROPIO de algunos proveedores (decision de Jordi, 02/08, con las
+# latencias reales de logs/agente.log delante):
+#
+#   proveedor  llamadas  mediana   p90    max terminado  timeouts
+#   groq          146     0,58s   1,82s      38,22s          0
+#   ollama        218     2,04s   5,33s      22,55s          9
+#   gemini         55     2,14s  13,14s      57,72s          0
+#
+# Ollama es el UNICO que acumula timeouts, y ademas es el que mas cuota
+# libre le queda a Jordi (6,7% de sesion y 13,5% semanal usados), asi que
+# es al que interesa dar mas oportunidades. Los otros dos no han dado ni un
+# timeout: subirselos solo alargaria la espera cuando algo esta caido.
+#
+# EL PRECIO, y por eso no se sube a todos: el timeout se paga por CADA
+# intento de CADA proveedor. Con 3 proveedores x 3 intentos, pasar todos a
+# 90s llevaria el peor caso de 4,5 a 13,5 minutos. Subiendo solo Ollama se
+# queda en 7,5, que ya es bastante.
+_TIMEOUT_POR_PROVEEDOR = {"ollama": 90.0}
 
-def timeout_actual() -> float:
-    """Los segundos que se le dan a esta llamada. Sin nadie que lo cambie,
-    los 30s de siempre: quien no sepa que esto existe no nota nada."""
-    return _TIMEOUT_ACTUAL.get() or _TIMEOUT_SEGUNDOS
+
+def timeout_actual(proveedor: str | None = None) -> float:
+    """Los segundos que se le dan a esta llamada.
+
+    Orden: lo que haya fijado quien llama (el resumen largo) manda sobre
+    todo; si no, el propio del proveedor; si no, los 30s de siempre.
+    """
+    fijado = _TIMEOUT_ACTUAL.get()
+    if fijado:
+        return fijado
+    return _TIMEOUT_POR_PROVEEDOR.get(proveedor or "", _TIMEOUT_SEGUNDOS)
 
 
 def fijar_timeout(segundos: float | None):
@@ -161,6 +186,60 @@ def _campos_seguros(argumentos: object) -> str:
     if not argumentos:
         return "(ninguno)"
     return ",".join(sorted(_nombre_seguro(campo) for campo in argumentos))[:200]
+
+
+# Reconoce la FORMA de una tool-call escrita a mano, para saber que el
+# modelo lo intento aunque no se pueda leer. Deliberadamente laxo: aqui solo
+# se decide "esto no es una respuesta para JIM".
+_PARECE_TOOL_CALL = re.compile(r"<\s*function\s*=", re.IGNORECASE)
+
+# Y esta la LEE. Las tres variantes reales vistas el 02/08 en Groq salen del
+# mismo modelo escribiendo mal el mismo formato:
+#
+#     <function=nombre{"a": 1}</function>      le falta el >
+#     <function=nombre {"a": 1} </function>    espacios de mas
+#     <function=nombre({"a": 1}</function>     un parentesis de mas
+#
+# De ahi las partes opcionales: `>?` para el cierre que a veces falta,
+# `\(?` para el parentesis, y \s* generoso. El JSON se coge NO GREEDY hasta
+# la ultima llave para no tragarse lo que venga detras.
+_LEER_TOOL_CALL = re.compile(
+    r"<\s*function\s*=\s*([A-Za-z0-9_]+)\s*>?\s*\(?\s*(\{.*\})",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _rescatar_tool_call(texto: str | None) -> ToolCall | None:
+    """Saca una ToolCall de un texto donde el modelo la escribio a mano, o
+    None si no se puede leer con seguridad.
+
+    ES CONSERVADOR A PROPOSITO, y esa es la decision de diseño: ante la duda
+    devuelve None y la llamada se descarta. Adivinar el nombre o los
+    argumentos de una herramienta seria peor que no ejecutarla - con
+    `calcular` daria una cuenta mal, pero la primera tool que mande un email
+    lo mandaria a quien el parseo se invente. Mismo criterio que el default
+    `repetible=False` de LOG-07: ante el fallo, el comportamiento inofensivo.
+
+    Por eso ademas se comprueba que la tool EXISTA: un nombre que el modelo
+    se haya inventado no llega a _ejecutar_tool.
+    """
+    if not texto:
+        return None
+    encontrado = _LEER_TOOL_CALL.search(texto)
+    if encontrado is None:
+        return None
+
+    nombre, argumentos_crudos = encontrado.group(1), encontrado.group(2)
+    if nombre not in HERRAMIENTAS:
+        logging.warning("Gemini: tool-call de texto con nombre desconocido; descartada")
+        return None
+    try:
+        argumentos = json.loads(argumentos_crudos)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(argumentos, dict):
+        return None
+    return ToolCall(nombre=nombre, argumentos=argumentos)
 
 
 def _codigo_de_error(error: object) -> str | None:
@@ -552,7 +631,7 @@ class _ProveedorGroq(_ProveedorLLM):
         # espera 1 minuto entero antes de rendirse - demasiado para un bot
         # que debe seguir vivo (verificado en groq-python/README.md).
         return {
-            "client": Groq(api_key=self.api_key, timeout=timeout_actual()),
+            "client": Groq(api_key=self.api_key, timeout=timeout_actual(self._nombre)),
             "mensajes": list(historial),
             "tools": tools,
         }
@@ -585,7 +664,7 @@ class _ProveedorGroq(_ProveedorLLM):
             logging.error("Groq: clave de API invalida")
             raise ErrorAutenticacion("Groq", str(error)) from error
         except APITimeoutError as error:
-            logging.error(f"Groq: timeout tras {timeout_actual()}s")
+            logging.error(f"Groq: timeout tras {timeout_actual(self._nombre)}s")
             raise ErrorTimeout("Groq", str(error)) from error
         except APIConnectionError as error:
             logging.error("Groq: fallo de conexion")
@@ -664,7 +743,7 @@ class _ProveedorOllama(_ProveedorLLM):
         client = Client(
             host="https://ollama.com",
             headers={"Authorization": "Bearer " + self.api_key},
-            timeout=timeout_actual(),
+            timeout=timeout_actual(self._nombre),
         )
         return {"client": client, "mensajes": list(historial), "tools": tools}
 
@@ -684,7 +763,7 @@ class _ProveedorOllama(_ProveedorLLM):
         try:
             respuesta = client.chat(**kwargs)
         except httpx.TimeoutException as error:
-            logging.error(f"Ollama: timeout tras {timeout_actual()}s")
+            logging.error(f"Ollama: timeout tras {timeout_actual(self._nombre)}s")
             raise ErrorTimeout("Ollama", str(error)) from error
         except Exception as error:
             # MODELO RETIRADO (410 Gone), afinado el 01/08 tras un caso real:
@@ -708,10 +787,23 @@ class _ProveedorOllama(_ProveedorLLM):
                     f"El modelo '{self.modelo}' ya no existe: el proveedor lo ha "
                     f"retirado. Elige otro con /modelo. Detalle: {error}",
                 ) from error
-            # Ollama no define excepciones tan especificas como Groq en su
-            # SDK; capturamos generico. ErrorPeticionInvalida como cajon
-            # generico (no reintentable) - se afina si algun dia se necesita
-            # distinguir auth/conexion/limite tambien aqui.
+            # 03/08: se separa lo TRANSITORIO, igual que en Gemini y por el
+            # mismo motivo. Salio del log de Jordi: "Ollama: error
+            # (ResponseError)" degradaba a la primera SIN reintentar, y la
+            # llamada habia tardado 65 segundos - o sea que el servidor
+            # estaba haciendo algo, no rechazando de plano.
+            #
+            # `ollama.ResponseError` trae `.status_code` (verificado
+            # inspeccionando el SDK, no supuesto), asi que se clasifica por
+            # el CODIGO HTTP - un dato de la API - y no por el nombre de la
+            # clase. Misma leccion que el fallo de los nombres inventados de
+            # Gemini el 02/08.
+            codigo = getattr(error, "status_code", None)
+            if codigo == 429 or (isinstance(codigo, int) and 500 <= codigo < 600):
+                logging.error("Ollama: fallo transitorio (HTTP %s); reintentable", codigo)
+                raise ErrorConexion("Ollama", str(error)) from error
+            # El resto sigue en el cajon generico (no reintentable): Ollama
+            # no define excepciones tan especificas como Groq en su SDK.
             # F5.2 (27/07): tipo, no texto - mismo motivo que en Groq: un
             # except Exception generico puede arrastrar cualquier cosa del
             # SDK, incluido el cuerpo de la peticion. Detalle completo sigue
@@ -797,7 +889,7 @@ class _ProveedorGemini(_ProveedorLLM):
         # igualmente porque es lo documentado, y el limite del bucle
         # (_MAX_PASOS_DE_HERRAMIENTAS) sigue de red de seguridad.
         client = genai.Client(
-            http_options=types.HttpOptions(timeout=int(timeout_actual() * 1000))
+            http_options=types.HttpOptions(timeout=int(timeout_actual(self._nombre) * 1000))
         )
         # Traducimos el historial canonico al dialecto de Gemini.
         contents, system_instruction = traducir_historial_gemini(historial)
@@ -848,7 +940,7 @@ class _ProveedorGemini(_ProveedorLLM):
                 config=estado["config"],
             )
         except httpx.TimeoutException as error:
-            logging.error(f"Gemini: timeout tras {timeout_actual()}s")
+            logging.error(f"Gemini: timeout tras {timeout_actual(self._nombre)}s")
             raise ErrorTimeout("Gemini", str(error)) from error
         except Exception as error:
             # 02/08: se separa lo TRANSITORIO de lo definitivo, que estaba
@@ -859,14 +951,27 @@ class _ProveedorGemini(_ProveedorLLM):
             # Un 5xx ("el servidor esta saturado") o un 429 ("vas muy
             # rapido") son invitaciones EXPLICITAS a volver a intentarlo;
             # tratarlos igual que un INVALID_ARGUMENT -que fallaria siempre-
-            # quema el proveedor a la primera. Se mira el NOMBRE del tipo y
-            # no la clase importada porque el SDK de Google los reorganiza
-            # entre versiones, y un ImportError aqui tumbaria a Gemini
-            # entero por un detalle de empaquetado ajeno.
-            nombre_error = type(error).__name__
-            if nombre_error in ("ServerError", "ResourceExhausted", "ServiceUnavailable"):
-                logging.error("Gemini: fallo transitorio (%s); reintentable", nombre_error)
+            # quema el proveedor a la primera.
+            #
+            # SE MIRA EL CODIGO HTTP Y NO EL NOMBRE DE LA CLASE, y esto es
+            # una correccion de un fallo mio del mismo 02/08: la primera
+            # version buscaba los nombres "ResourceExhausted" y
+            # "ServiceUnavailable", que **no existen en este SDK** - los
+            # confundi con los de google.api_core. Verificado despues
+            # inspeccionando google.genai.errors: solo define APIError,
+            # ClientError (4xx) y ServerError (5xx). Resultado: de los tres
+            # nombres, solo uno se disparaba, y los 429 -los mas
+            # frecuentes- seguian quemando el proveedor.
+            #
+            # El codigo HTTP es un DATO de la API, no un nombre que yo
+            # suponga, asi que no puede volver a pasar lo mismo. Y ademas
+            # aguanta que Google renombre o reorganice sus clases.
+            codigo = getattr(error, "code", None)
+            transitorio = codigo == 429 or (isinstance(codigo, int) and 500 <= codigo < 600)
+            if transitorio:
+                logging.error("Gemini: fallo transitorio (HTTP %s); reintentable", codigo)
                 raise ErrorConexion("Gemini", str(error)) from error
+            nombre_error = type(error).__name__
             # F5.2 (27/07): tipo, no texto. Gemini con INVALID_ARGUMENT puede
             # devolver "contents[N].parts[0].text = '...'" - el texto que
             # escribio JIM, dentro del propio mensaje de error. Detalle
@@ -889,7 +994,31 @@ class _ProveedorGemini(_ProveedorLLM):
 
         if tool_calls:
             return RespuestaLLM(tool_calls=tool_calls, raw=content)
-        return RespuestaLLM(texto=_texto_de_gemini(respuesta))
+
+        # Hallazgo del 24/07: Gemini a veces ESCRIBE la llamada a la tool
+        # como texto normal en vez de usar el mecanismo estructurado, con el
+        # formato nativo de Llama que no le corresponde:
+        #
+        #     <function=buscar_en_recuerdos{"consulta": "..."}</function>
+        #
+        # Es el MISMO fallo que en Groq da tool_use_failed (arreglado hoy),
+        # solo que Groq lo caza y devuelve 400 y Gemini lo deja pasar: la
+        # tool nunca se ejecuta y el churro acaba en la pantalla de JIM.
+        texto = _texto_de_gemini(respuesta)
+        rescatada = _rescatar_tool_call(texto)
+        if rescatada is not None:
+            logging.warning("Gemini: tool-call escrita como texto; rescatada")
+            return RespuestaLLM(tool_calls=[rescatada], raw=content)
+        if _PARECE_TOOL_CALL.search(texto or ""):
+            # Se reconoce la forma pero no se pudo leer. NO se le enseña a
+            # JIM: un churro de maquinaria interna no es una respuesta, y
+            # ademas le haria pensar que el bot esta roto de otra manera.
+            logging.warning("Gemini: tool-call como texto ILEGIBLE; descartada")
+            return RespuestaLLM(texto=(
+                "Se me ha cruzado un cable pidiendo una herramienta. "
+                "Vuelve a preguntármelo, por favor."
+            ))
+        return RespuestaLLM(texto=texto)
 
     def _registrar_peticion(self, estado, respuesta):
         # Con el formato Content/Part propio de Gemini, no dicts sueltos.

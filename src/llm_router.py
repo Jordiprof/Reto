@@ -155,10 +155,20 @@ class LLMRouter:
                     # dijera el modelo - si fuera parte del texto acabaria
                     # guardado en el historial y en el RAG.
                     if not es_primario:
+                        # Se dice POR QUE se cayo, en castellano (02/08,
+                        # peticion de Jordi probando). Antes ponia el nombre
+                        # de la clase -"(ErrorLimitePeticiones)"- que no le
+                        # dice nada a quien lee: cada ErrorLLM ya trae su
+                        # `plantilla_usuario` redactada para humanos, asi
+                        # que se usa esa y se añade que hacer.
+                        motivo = (
+                            ultimo_error.mensaje_usuario.lstrip("⚠️ ").rstrip(".")
+                            if ultimo_error is not None
+                            else f"{self.eslabones[0].proveedor} ha fallado"
+                        )
                         self.aviso_fallback = (
-                            f"⚠️ {self.eslabones[0].proveedor} no ha podido responder "
-                            f"({type(ultimo_error).__name__ if ultimo_error else 'fallo'}); "
-                            f"te contesto con {eslabon.proveedor}."
+                            f"⚠️ {motivo}. Te contesto con {eslabon.proveedor}"
+                            f" ({eslabon.modelo})."
                         )
                         logging.info(
                             f"Router: respondio el fallback {eslabon.proveedor} "
@@ -168,6 +178,25 @@ class LLMRouter:
 
         # Si llegamos aqui, TODOS los proveedores fallaron. Relanzamos el
         # ultimo error para que el Agente lo convierta en mensaje_usuario.
+        #
+        # Antes de eso se deja escrito QUIENES cayeron y por que (02/08).
+        # Hasta hoy solo se veia el mensaje del ULTIMO error, asi que si
+        # groq se quedaba sin cuota, ollama daba timeout y gemini estaba
+        # saturado, leias "gemini no responde" y parecia un problema de
+        # gemini - cuando el problema era que te habias quedado sin los
+        # tres. Es la misma idea del aviso de fallback: una degradacion que
+        # no se ve es como si no existiera.
+        logging.error(
+            "Router: cayeron TODOS los proveedores (%s)",
+            ", ".join(e.proveedor for e in self.eslabones),
+        )
+        self.aviso_fallback = (
+            "⚠️ Se me han caído los "
+            f"{len(self.eslabones)} proveedores ("
+            + ", ".join(e.proveedor for e in self.eslabones)
+            + "). Suele ser cuota agotada: los límites por minuto se "
+            "recuperan en un minuto, y los diarios al día siguiente."
+        )
         raise ultimo_error
 
 

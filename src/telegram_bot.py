@@ -824,9 +824,15 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         "" if "documentos" in agente.categorias_activas
         else " Actívalo antes con /tools → categoría 'documentos'."
     )
+    # Se dice QUE se puede hacer con el, y se dice AQUI (02/08, peticion de
+    # Jordi probando): `/condensar` no aparecia por ningun sitio salvo en
+    # /comandos, o sea que habia que acordarse de que existe. El momento en
+    # que sirve saberlo es este - cuando acabas de mandar un documento.
     await mensaje.reply_text(
-        f"Documento recibido: {adjunto.nombre} ({len(datos) // 1000} KB). "
-        f"Pregúntame algo sobre él.{aviso_troceo}{aviso_categoria}"
+        f"📄 Documento recibido: {adjunto.nombre} ({len(datos) // 1000} KB)."
+        f"{aviso_troceo}{aviso_categoria}\n\n"
+        "• Pregúntame lo que quieras sobre él.\n"
+        "• /condensar — te lo resumo ENTERO (rápido aquí, o completo en un .md)."
     )
 
 

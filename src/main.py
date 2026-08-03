@@ -634,9 +634,17 @@ def _sesion():
                     "" if "documentos" in agente.categorias_activas
                     else " Actívalo antes en /tools → categoría 'documentos'."
                 )
+                # Se dice QUE se puede hacer con el, y se dice AQUI (02/08,
+                # peticion de Jordi probando): `/condensar` existia desde
+                # hace horas y no aparecia por ningun sitio salvo en
+                # /comandos, o sea que habia que acordarse de que existe.
+                # El momento en que sirve saberlo es justo este - cuando
+                # acabas de dar un documento -, no cuando abres un menu.
                 print(
-                    f"Documento recibido: {nombre} ({len(datos) // 1000} KB). "
-                    f"Pregúntame algo sobre él.{aviso}"
+                    f"Documento recibido: {nombre} ({len(datos) // 1000} KB).{aviso}\n"
+                    f"  · Pregúntame lo que quieras sobre él.\n"
+                    f"  · /condensar → te lo resumo ENTERO (rápido en pantalla, "
+                    f"o completo en un .md)."
                 )
                 continue
 

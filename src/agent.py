@@ -264,11 +264,27 @@ class Agente:
             return self.historial
 
         ultimo = self.historial[-1]
+        # BUG del 02/08 (Jordi probando): con el PDF cargado, preguntó por
+        # quién ganó el Mundial y el bot contestó "no encuentro en ese
+        # documento algo que indique que España ganó". El aviso decía "si
+        # la pregunta va sobre él", pero el modelo lo leía como que TODO va
+        # sobre el documento - un adjunto secuestraba la conversación
+        # entera hasta que se cerrara.
+        #
+        # Se arregla diciendo lo contrario TAMBIÉN, y explícito: es la
+        # misma lección que la alucinación de "pediré permiso" (01/08) y
+        # que el aviso de herramienta apagada (02/08). Cuando el modelo
+        # puede rellenar un hueco con algo plausible, no basta con no
+        # sugerírselo: hay que decirle qué hacer en el caso contrario.
         aviso = (
-            f"[Aviso del sistema: JIM acaba de adjuntar el documento "
+            f"[Aviso del sistema: JIM tiene adjunto el documento "
             f"«{self.documento_pendiente.nombre}». Si la pregunta va sobre él, "
-            f"usa la herramienta leer_documento (no lleva argumentos). NO le "
-            f"pidas que lo suba: ya lo ha hecho.]\n\n"
+            f"usa la herramienta leer_documento (no lleva argumentos) y NO le "
+            f"pidas que lo suba: ya lo ha hecho. Si la pregunta NO va sobre el "
+            f"documento, IGNÓRALO por completo y responde con normalidad: tener "
+            f"un adjunto no convierte todo lo que diga JIM en una pregunta sobre "
+            f"él, y contestar «eso no está en el documento» a algo que no lo "
+            f"mencionaba es un error.]\n\n"
         )
         return self.historial[:-1] + [
             {**ultimo, "content": aviso + ultimo["content"]}
