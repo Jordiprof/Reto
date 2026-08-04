@@ -15,10 +15,16 @@
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LinkPreviewOptions,
+    Update,
+)
 from telegram.constants import ChatAction, MessageLimit
 from telegram.ext import (
     Application,
@@ -36,6 +42,7 @@ from src.agent import Agente
 from src.cerrojo import CerrojoMemoria, MemoriaOcupada
 from src.config import (
     MODELOS,
+    PROVEEDORES,
     ClaveApiNoConfigurada,
     ConfiguracionTelegramInvalida,
     obtener_api_key,
@@ -156,6 +163,45 @@ def _huella(user_id: int | None) -> str:
     ).hexdigest()
 
 
+_NEGRITA = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_CURSIVA = re.compile(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])")
+_VIÑETA = re.compile(r"^(\s*)[*+-]\s+", re.MULTILINE)
+_TITULO = re.compile(r"^\s*#{1,6}\s+", re.MULTILINE)
+
+
+def _sin_markdown(texto: str) -> str:
+    """Quita el Markdown que escribe el modelo y lo deja en texto legible.
+
+    EL PROBLEMA (04/08, Jordi probando): "veo muchos símbolos * ** no me
+    gusta". Los mensajes normales del bot se mandan SIN parse_mode, asi que
+    los `**negrita**` y las viñetas `* ` del modelo llegan tal cual, con los
+    asteriscos a la vista.
+
+    POR QUE SE LIMPIA EN VEZ DE ENCENDER parse_mode="Markdown", que es lo
+    que parece obvio: porque el texto lo escribe el MODELO y puede tener
+    Markdown roto -un `*` suelto, un `_` en mitad de una palabra- y
+    Telegram, ante eso, **rechaza el mensaje ENTERO**, no solo el trozo
+    raro. Eso ya paso el 30/07 con un `_` sin escapar en el nombre de un
+    dominio. O sea: encender el formato convierte un defecto cosmetico en
+    una respuesta perdida.
+
+    Limpiar es determinista y no puede fallar: en el peor caso se queda un
+    asterisco sin quitar, que es exactamente lo que ya pasaba.
+
+    Los mensajes NUESTROS (menus, /start, /voz) siguen con parse_mode y
+    negritas de verdad: esos los escribimos nosotros y sabemos que son
+    validos. Esto solo toca lo que viene del modelo.
+    """
+    texto = _NEGRITA.sub(r"\1", texto)
+    texto = _CURSIVA.sub(r"\1", texto)
+    # Las viñetas no se borran: se cambian por "•", que es lo que el
+    # asterisco queria decir. Se conserva la sangria para que las listas
+    # anidadas sigan leyendose como listas.
+    texto = _VIÑETA.sub(r"\1• ", texto)
+    texto = _TITULO.sub("", texto)
+    return texto
+
+
 def _trocear(texto: str, limite: int = _LIMITE_TELEGRAM) -> list[str]:
     """Parte una respuesta larga en trozos que Telegram acepte.
 
@@ -186,8 +232,15 @@ def _trocear(texto: str, limite: int = _LIMITE_TELEGRAM) -> list[str]:
 
 def _configuracion_por_defecto() -> tuple[str, str, str]:
     """Proveedor/modelo/clave con los que arranca el bot. El router
-    (ADR-004) se encarga solo de degradar a los fallbacks si este falla."""
-    proveedor = "groq"
+    (ADR-004) se encarga solo de degradar a los fallbacks si este falla.
+
+    03/08: el nombre ya no va escrito a mano aqui. Salia "groq" fijo, asi
+    que reordenar la preferencia de ADR-001 dejaba al bot arrancando con el
+    proveedor viejo mientras la CLI usaba el nuevo - una divergencia
+    silenciosa entre los dos canales, de la misma familia que la de
+    /salir. Ahora sale de config.PROVEEDORES, que es la unica fuente.
+    """
+    proveedor = next(iter(PROVEEDORES))
     modelo = obtener_modelo_por_defecto(proveedor)
     return proveedor, modelo, obtener_api_key(proveedor)
 
@@ -616,8 +669,22 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
     if aviso and not fallo:
         await mensaje.reply_text(aviso)
 
-    for trozo in _trocear(respuesta):
-        await mensaje.reply_text(trozo)
+    # LA FOTO SALIA DOS VECES (04/08, visto por Jordi probando). No era un
+    # envio duplicado: eran DOS caminos distintos que acababan en la misma
+    # imagen. La tool de NASA deja el enlace en la bandeja (para send_photo)
+    # Y ademas se lo da al modelo con "dale este enlace al usuario", que se
+    # añadio el 01/08 pensando en la CLI -donde el enlace en texto es lo
+    # UNICO que hay-. En Telegram ese enlace dentro del texto genera su
+    # propia vista previa, o sea una SEGUNDA imagen.
+    #
+    # Se arregla en el CANAL y no en la tool a proposito: quien sabe si una
+    # imagen se puede enseñar es quien la va a enseñar. La CLI sigue
+    # recibiendo el enlace en el texto, donde le sigue haciendo falta.
+    medios = list(getattr(_agentes.get(usuario.id), "media_pendiente", []))
+    sin_vista_previa = LinkPreviewOptions(is_disabled=True) if medios else None
+
+    for trozo in _trocear(_sin_markdown(respuesta)):
+        await mensaje.reply_text(trozo, link_preview_options=sin_vista_previa)
 
     # Salida binaria (01/08, peticion de Jordi): si alguna tool dejo una
     # imagen en la bandeja del turno, se manda como FOTO. Va despues del
@@ -626,7 +693,7 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
     # registra y se sigue - Telegram puede rechazar una imagen por tamaño o
     # por no poder descargarla, y eso no puede costarnos la respuesta.
     if not fallo:
-        for medio in list(getattr(_agentes.get(usuario.id), "media_pendiente", [])):
+        for medio in medios:
             try:
                 await mensaje.reply_photo(medio["url"], caption=medio["titulo"][:200])
             except Exception as error:
@@ -806,6 +873,20 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # En to_thread porque es CPU pura y bloquearia el bucle de eventos.
         from src.documentos import preparar
 
+        # SE AVISA POR ESCRITO, no solo con "escribiendo…" (04/08, Jordi:
+        # "cuando le mandas el pdf se queda pillado"). El chat_action de
+        # Telegram dura unos 5 segundos y desaparece solo; preparar un PDF
+        # grande son ~40. O sea que durante medio minuto el bot parecia
+        # muerto justo despues de que le mandaras un fichero.
+        #
+        # Es la misma regla que la CLI ya cumplia ("Preparando el
+        # documento…") y la misma del 01/08: el trabajo caro se hace donde
+        # se puede AVISAR, y avisar quiere decir dejar algo en pantalla que
+        # siga ahi mientras dura.
+        await mensaje.reply_text(
+            f"📄 Recibido «{documento.file_name}». Me lo estoy leyendo, "
+            "dame un momento…"
+        )
         await context.bot.send_chat_action(mensaje.chat_id, ChatAction.TYPING)
         try:
             fragmentos = await asyncio.to_thread(preparar, adjunto)
@@ -862,15 +943,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     hacer - con 14 comandos detras, eso deja al usuario a ciegas."""
     if update.effective_message:
         await update.effective_message.reply_text(
-            "👋 Hola JIM, soy *Jimmy*, tu agente personal.\n\n"
-            "Escríbeme normal y ya está. Además puedo:\n\n"
-            "🧠 *Acordarme* de lo que hablamos, hoy y dentro de un mes — y lo "
-            "que me cuentas se guarda cifrado en tu máquina, no en la nube.\n"
-            "🛠️ *Usar herramientas*: calcular, mirar el tiempo, leer una web "
-            "autorizada, la foto del día de la NASA…\n"
-            "📄 *Leer un PDF o un Word* que me mandes de adjunto.\n"
-            "🎙️ *Escucharte y contestarte hablando*, si lo enciendes en /voz.\n\n"
-            "Toca /ayuda para verlo por temas, o el botón de menú de aquí abajo.",
+            "👋 ¡Hola JIM! Soy *Jimmy*. Escríbeme normal y ya está.\n\n"
+            "🧠 Me acuerdo de lo que hablamos\n"
+            "🔢 Calculo\n"
+            "🌦️ Miro el tiempo\n"
+            "📄 Leo el PDF o Word que me mandes\n"
+            "🔭 Te paso la foto del día de la NASA\n"
+            "🌐 Resumo una web autorizada\n"
+            "🎙️ Te escucho y te contesto hablando (/voz)\n\n"
+            "/comandos para verlo todo.",
             parse_mode="Markdown",
         )
 
@@ -1041,8 +1122,16 @@ async def cmd_limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # conversacion SIGUIENTE se escriba encima de la anterior.
         _rutas.pop(usuario.id, None)
         _nombres.pop(usuario.id, None)
+    # Mismo texto que la CLI (04/08). Antes cada canal decía una cosa
+    # distinta de la MISMA operación -"Conversación borrada" en la terminal,
+    # "sigue en mi memoria" aquí- y Jordi lo vio poniendo las dos pantallas
+    # al lado. Es la misma familia que la divergencia de /salir del 01/08:
+    # un estado compartido no puede describirse de dos maneras.
     await update.effective_message.reply_text(
-        "Listo, empezamos de cero. Lo de antes sigue en mi memoria a largo plazo."
+        "Listo, empezamos de cero. Con esto cada mensaje vuelve a ser barato: "
+        "el historial se reenvía entero en cada turno.\n"
+        "Lo de antes NO se borra —sigue guardado y lo puedo recordar—. "
+        "Para borrar de verdad, /borrar."
     )
 
 
@@ -1146,7 +1235,13 @@ async def _condensar_con_formato(update: Update, formato: str) -> None:
             markdown, datos = await asyncio.to_thread(
                 condensar, texto_doc, adjunto.nombre, llamar,
                 tamaño, TOPE_BLOQUES_TELEGRAM, avisos.append, formato,
+                agente.lectura_condensada,
             )
+            # Igual que en la CLI: se guarda para el proximo /condensar del
+            # mismo documento. Se asigna DESPUES del to_thread, o sea ya de
+            # vuelta en el hilo del bot - el hilo de condensar no toca al
+            # Agente, solo devuelve.
+            agente.lectura_condensada = datos["lectura"]
         except ResumenImposible as error:
             await mensaje.reply_text(f"⚠️ {error}")
             return
@@ -1490,7 +1585,13 @@ async def cmd_borrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             meta = await asyncio.to_thread(leer_metadatos, ruta)
         except (OSError, ValueError, ConversacionNoDescifrable):
             continue
-        fecha = (meta.get("fecha") or "")[:10]
+        # CON LA HORA, no solo el dia (04/08). Con `[:10]` dos charlas del
+        # mismo dia salian con la etiqueta identica salvo el nombre, y Jordi
+        # leyo eso como "lo ha guardado dos veces". No lo habia guardado dos
+        # veces -verificado: 11 ficheros, cero duplicados-, pero la lista lo
+        # PARECIA, que para el caso es igual de malo. La otra lista del
+        # fichero ya usaba `[:16]`: esto era ademas una incoherencia.
+        fecha = (meta.get("fecha") or "")[:16].replace("T", " ")
         nombre = meta.get("nombre") or "(sin nombre)"
         # El TEXTO del boton puede ser largo y bonito; el callback_data lleva
         # solo el nombre del fichero (Telegram lo limita a 64 bytes, y una

@@ -1,9 +1,13 @@
 import os
+
 from dotenv import load_dotenv
 from ollama import Client
 
 load_dotenv()
-client = Client(host="https://ollama.com", headers={"Authorization": "Bearer " + os.environ["OLLAMA_API_KEY"]})
+client = Client(
+    host="https://ollama.com",
+    headers={"Authorization": "Bearer " + os.environ["OLLAMA_API_KEY"]},
+)
 
 for nombre in ["gpt-oss:120b", "gpt-oss:120b-cloud"]:
     try:

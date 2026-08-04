@@ -66,15 +66,53 @@ class ErrorLimitePeticiones(ErrorLLM):
     un motivo para fallar.
     """
     plantilla_usuario = "límite de {proveedor} superado."
-    reintentable = True
+
+    @property
+    def es_diario(self) -> bool:
+        """True si el limite es POR DIA (y no por minuto).
+
+        Se mira en un solo sitio porque de ello dependen DOS cosas que
+        tienen que decir lo mismo: lo que se le cuenta al usuario y lo que
+        hace el router. Ver `reintentable` justo debajo.
+        """
+        detalle = (self.detalle or "").lower()
+        return "per day" in detalle or "rpd" in detalle or "tpd" in detalle
+
+    @property
+    def reintentable(self) -> bool:
+        """Reintentable SALVO si la cuota agotada es la DIARIA.
+
+        CORRECCION del 03/08, encontrada leyendo el log de una sesion de
+        pruebas de Jordi. Hasta hoy esto era `reintentable = True` a secas,
+        y el resultado era que el codigo CONTRADECIA a su propio mensaje:
+        el aviso decia "esto no se arregla esperando un rato" y el router,
+        acto seguido, esperaba y reintentaba. Tres veces. En CADA mensaje.
+
+        Medido en el log del 03/08: de 21:50:52 a 22:03:20, trece minutos,
+        quince mensajes seguidos, groq fallo en TODOS sin recuperarse ni
+        una vez. Cada mensaje se dejaba tres llamadas y ~4 segundos en un
+        proveedor que ya sabiamos muerto hasta el dia siguiente: unas 45
+        llamadas tiradas.
+
+        La leccion, que es la del 02/08 pero al reves: alli el prompt
+        prometia y el codigo no garantizaba; aqui el que rompia la promesa
+        era el propio codigo, que sabia distinguir el limite diario para
+        HABLAR y no para ACTUAR. Por eso `es_diario` es ahora una sola
+        propiedad de la que beben las dos.
+
+        Se deja como property y no como atributo de clase a proposito: el
+        dato que lo decide (el detalle del proveedor) solo existe cuando
+        hay instancia. Sin detalle -como en los tests del router- sale
+        True, que es el comportamiento de siempre.
+        """
+        return not self.es_diario
 
     @property
     def mensaje_usuario(self) -> str:
         detalle = (self.detalle or "").lower()
         # Los limites POR DIA se dicen aparte: son los unicos que NO se
         # arreglan esperando un rato ni limpiando nada.
-        por_dia = "per day" in detalle or "rpd" in detalle or "tpd" in detalle
-        if por_dia:
+        if self.es_diario:
             return (
                 f"⚠️ has agotado la cuota DIARIA de {self.proveedor}. Esto no se "
                 "arregla esperando un rato ni limpiando la conversación: hay que "

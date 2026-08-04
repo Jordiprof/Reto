@@ -22,8 +22,10 @@ from src.tools import (
     categorias_por_defecto,
     fijar_bandeja,
     fijar_categorias_activas,
+    fijar_proveedor_actual,
     restaurar_bandeja,
     restaurar_categorias_activas,
+    restaurar_proveedor_actual,
     tools_de,
 )
 
@@ -72,7 +74,19 @@ class Agente:
         self.categorias_activas = categorias_por_defecto()
         # F5.5 #7: el ultimo PDF/Word que le han dado a JIM (/documento en
         # CLI, adjunto en Telegram). None = no hay ninguno puesto.
-        self.documento_pendiente: DocumentoAdjunto | None = None
+        self._documento_pendiente: DocumentoAdjunto | None = None
+        # 03/08 (idea de Jordi probando /condensar dos veces seguidas sobre
+        # el mismo PDF): la lectura de la PASADA 1 del ultimo condensado.
+        # Sirve para que pedir primero el resumen rapido y despues el
+        # completo no vuelva a releer el documento entero - la lectura de
+        # cada bloque es identica para los dos formatos.
+        #
+        # Vive AQUI, al lado de documento_pendiente y no dentro de
+        # DocumentoAdjunto (que es frozen) ni en un cache global: asi tiene
+        # exactamente la misma vida que el documento y la heredan los dos
+        # canales sin escribir nada en ninguno de los dos. Se suelta en
+        # limpiar(), junto con el documento.
+        self.lectura_condensada: list[str] = []
         # AUD-03: cuantos mensajes se tiraron del contexto en el ultimo
         # turno. Lo lee el canal para avisar por pantalla.
         self.compactados = 0
@@ -81,6 +95,31 @@ class Agente:
         # sepa mostrarlo -Telegram con send_photo- y lo ignora quien no -la
         # CLI-. Se vacia en cada turno; ver fijar_bandeja en tools.py.
         self.media_pendiente: list = []
+
+    # documento_pendiente es una PROPIEDAD y no un atributo normal por una
+    # sola razon: que soltar la lectura cacheada no dependa de que alguien
+    # se acuerde de hacerlo. Los dos canales asignan el documento por su
+    # cuenta (main.py y telegram_bot.py), y cargar un PDF nuevo sin pasar
+    # por limpiar() dejaria viva la lectura del ANTERIOR - o sea que
+    # /condensar te devolveria, tan tranquilo, el resumen del documento
+    # equivocado. Mismo criterio que `Herramienta.repetible = False`
+    # (LOG-07): ante el olvido, el comportamiento seguro.
+    @property
+    def documento_pendiente(self) -> DocumentoAdjunto | None:
+        return self._documento_pendiente
+
+    @documento_pendiente.setter
+    def documento_pendiente(self, documento: DocumentoAdjunto | None) -> None:
+        # Se compara por IDENTIDAD y no por igualdad, a proposito y siendo
+        # conservador: DocumentoAdjunto es un dataclass frozen, asi que
+        # volver a subir el mismo PDF crea un objeto distinto pero "igual".
+        # Con identidad, ese caso tira la lectura y la rehace; lo peor que
+        # pasa es pagar unas llamadas de mas. Con igualdad, el dia que dos
+        # documentos distintos coincidieran servirias el resumen del que no
+        # es, y eso ya no es un coste: es una respuesta falsa.
+        if documento is not self._documento_pendiente:
+            self.lectura_condensada = []
+        self._documento_pendiente = documento
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
@@ -127,6 +166,18 @@ class Agente:
         # adjunto, y se restauran en el finally por el mismo motivo: si no,
         # un turno heredaria las del turno anterior mientras el hilo viva.
         token_categorias = fijar_categorias_activas(self.categorias_activas)
+        # 03/08: CUANTO texto puede devolver una tool depende de a quien se
+        # le va a mandar, porque la cuota diaria no es la misma en los tres
+        # proveedores (ver _tope_documento en tools.py). Va por el mismo
+        # camino y se restaura en el mismo finally que los de arriba.
+        #
+        # Se fija el proveedor PRIMARIO, sabiendo que si el router degrada a
+        # un fallback el tope aplicado sera el del primario y no el del que
+        # de verdad contesta. Se acepta a proposito: el tope se decide ANTES
+        # de saber quien va a responder, y la alternativa -recortar distinto
+        # en cada reintento- cambiaria el texto del historial a mitad de
+        # turno. Con Groq primero el efecto es conservador (recorta de mas).
+        token_proveedor = fijar_proveedor_actual(self.proveedor)
         try:
             # 2) El router prueba la cadena (primario + fallbacks) y resuelve
             #    por dentro el tool-calling con la calculadora (F4.3-F4.5).
@@ -145,6 +196,7 @@ class Agente:
             restaurar_documento_actual(token)
             restaurar_bandeja(token_bandeja)
             restaurar_categorias_activas(token_categorias)
+            restaurar_proveedor_actual(token_proveedor)
 
         self.historial.append({"role": "assistant", "content": respuesta})
         return respuesta
@@ -228,6 +280,8 @@ class Agente:
         # F5.5 #7: "empezamos de cero" incluye el documento puesto sobre la
         # mesa - si no se soltara aqui, una charla nueva podria seguir
         # leyendo un PDF de la charla anterior sin que nadie lo haya pedido.
+        # Soltar el documento suelta tambien su lectura cacheada: de eso se
+        # encarga el setter de la propiedad, no hace falta repetirlo aqui.
         self.documento_pendiente = None
 
     def _mensajes_del_turno(self) -> list:

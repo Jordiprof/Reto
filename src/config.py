@@ -78,10 +78,42 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # mas tarde, solo del proveedor que se elija (lectura perezosa - leccion
 # del diario del 16/07: cargar todo de golpe rompe si falta una clave
 # que ni se iba a usar).
+#
+# EL ORDEN DE ESTE DICCIONARIO ES LA PREFERENCIA OFICIAL DE ADR-001, y no
+# es decorativo: de el salen las TRES cosas a la vez -el orden del menu de
+# la CLI (o sea con cual arranca Jordi si da a Enter), el proveedor con el
+# que arranca el bot de Telegram, y la cadena de fallback del router-.
+#
+# Se hizo asi el 03/08, al reordenarlo: antes "groq primero" estaba escrito
+# a mano en tres sitios distintos y cambiar la decision obligaba a acordarse
+# de los tres. Misma leccion que la lista de dominios del 30/07, donde
+# obtener_dominios_agrupados() duplicaba el parseo: una sola fuente de
+# verdad, y las demas derivan.
+#
+# El POR QUE del orden (cuota y calidad, con numeros medidos) esta en
+# llm_router._ORDEN_ADR001, que es quien lo consume para el fallback.
 PROVEEDORES = {
-    "groq": "GROQ_API_KEY",
     "ollama": "OLLAMA_API_KEY",
+    "groq": "GROQ_API_KEY",
     "gemini": "GEMINI_API_KEY",
+}
+
+# Modelos de RESERVA dentro de un mismo proveedor: a estos se degrada antes
+# de cambiar de proveedor entero (03/08, idea de Jordi). El porque y la
+# medicion que lo respalda estan en llm_router._reservas_del_mismo_proveedor.
+#
+# Resumen: en Groq el cupo es POR MODELO -verificado con las cabeceras
+# x-ratelimit-* de la API, no leido en la documentacion-, asi que quedarse
+# sin llama-3.3 no deja sin gpt-oss-120b. Y gpt-oss-120b tiene el DOBLE de
+# cuota diaria (200.000 tokens/dia contra 100.000).
+#
+# Solo Groq: en Ollama y Gemini no esta medido, y un eslabon de mas cuesta
+# una llamada tirada cuando el proveedor cae por algo que no sea cuota.
+# El ORDEN es la cadena: llama-3.3 -> gpt-oss-120b -> qwen3.6-27b (decision
+# de Jordi, 04/08: llama-3.3 se queda de titular y los otros dos entran por
+# ese orden). Los tres verificados en vivo el 04/08.
+MODELOS_DE_RESERVA = {
+    "groq": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b"],
 }
 
 # Nombre de la variable de entorno con el modelo POR DEFECTO de cada
@@ -110,10 +142,25 @@ MODELOS_ENV = {
 MODELOS = {
     # Groq: 3 modelos verificados en vivo el 23/07 (se retira "qwen3-32b",
     # ya no existe en la API - la version "qwen3.6-27b" sigue viva).
+    # AMPLIADO el 04/08 a peticion de Jordi, con los 7 verificados en vivo
+    # ese mismo dia (HTTP 200 real, no leidos de una lista).
+    #
+    # De los 14 que ofrece Groq solo estos SIRVEN PARA CHATEAR. Los otros 7
+    # se quedan fuera a proposito y conviene saber por que, para no volver a
+    # mirarlo: `canopylabs/orpheus-*` son sintesis de voz, `whisper-large-*`
+    # son transcripcion (esos SI se usan, pero desde voz.py y a dedo), y
+    # `meta-llama/llama-prompt-guard-2-*` y `openai/gpt-oss-safeguard-20b`
+    # son CLASIFICADORES DE SEGURIDAD: devuelven una etiqueta de riesgo, no
+    # una conversacion. Meterlos en el menu seria ofrecer modelos que no
+    # pueden responder.
     "groq": [
-        "llama-3.3-70b-versatile",  # el que veniamos usando de default
-        "openai/gpt-oss-120b",      # mismo modelo que en Ollama, para comparar proveedor
-        "qwen/qwen3.6-27b",         # modelo de razonamiento, bueno con JSON/multilenguaje
+        "llama-3.3-70b-versatile",  # titular (decision de Jordi, 04/08)
+        "openai/gpt-oss-120b",      # 1ª reserva: DOBLE cuota diaria (200k/dia)
+        "qwen/qwen3.6-27b",         # 2ª reserva. OJO: escribe su razonamiento en <think>
+        "openai/gpt-oss-20b",       # hermano pequeño del 120b, misma cuota diaria
+        "llama-3.1-8b-instant",     # el mas rapido y barato en tokens
+        "groq/compound",            # sistema con herramientas propias de Groq
+        "groq/compound-mini",       # la version ligera del anterior
     ],
     # Ollama Cloud: los mismos 6 modelos probados el 16-17/07, RENOMBRADOS
     # el 23/07 (la API quito el sufijo "-cloud"/":cloud" - mismo modelo,
@@ -142,6 +189,16 @@ MODELOS = {
     # Se añade "gpt-oss:20b" (01/08): gratis, con tools, y es el "nivel 1"
     # ligero de Ollama. Interesa tenerlo a mano precisamente porque Groq se
     # queda sin cuota a menudo y este es el mas barato de la cadena.
+    # QUITADO el 04/08: "qwen3.5:cloud". Llevaba en el menu desde el 23/07 y
+    # NUNCA ha funcionado - devuelve HTTP 403 "this model requires a
+    # subscription". Estaba anotado tres lineas mas arriba, en la lista de
+    # descartados por 403, y aun asi seguia ofreciendose para elegir: la
+    # nota decia una cosa y el catalogo hacia otra. Salio comprobando en
+    # vivo los 7, a peticion de Jordi (que ademas pidio probar
+    # `deepseek-v4-flash` en sus tres variantes: los tres 403 tambien, o
+    # sea que la restriccion de Pro sigue igual que el 23/07).
+    #
+    # Los 6 que quedan verificados con HTTP 200 real el 04/08.
     "ollama": [
         "gpt-oss:120b",
         "gpt-oss:20b",

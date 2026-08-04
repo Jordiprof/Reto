@@ -363,6 +363,24 @@ _PATRONES_NEGATIVA = (
     "no tengo ni idea", "no puedo decirte", "no tengo registro", "no encuentro",
     "no me lo has dicho", "nunca me lo has dicho", "no tengo ese dato",
     "está apagado", "esta apagado", "está apagada", "esta apagada",
+    # AMPLIADO el 04/08. Jordi hizo `/recuerdo cual es tu comida favorita` y
+    # entre los resultados salieron DOS turnos con esta respuesta:
+    #
+    #   "No tengo una comida favorita - como IA no como, así que no
+    #    desarrollo gustos culinarios."
+    #
+    # El filtro no la cazaba, y con razon: no es un "no lo sé". Es OTRA
+    # familia -el bot explicando que es una maquina y no tiene gustos- que
+    # como recuerdo vale exactamente lo mismo: nada. Ocupa una plaza que le
+    # quita el sitio a un recuerdo de verdad.
+    #
+    # Se listan las formas concretas y no un "no tengo" a secas, que se
+    # llevaria por delante frases utiles ("no tengo dudas de que..."). Misma
+    # regla que el resto: ante la duda, NO filtrar.
+    "no tengo una comida", "no tengo un color", "no tengo preferencias",
+    "no tengo gustos", "no tengo edad", "no tengo cuerpo", "no tengo emociones",
+    "no tengo sentimientos", "como ia no", "como inteligencia artificial no",
+    "soy una ia", "soy una inteligencia artificial",
 )
 
 # Solo se mira el PRINCIPIO de la respuesta, y este numero no es a ojo: sale
@@ -476,6 +494,16 @@ def buscar(consulta: str, n: int = 3) -> list[dict]:
     # son la RED DE SEGURIDAD. Si el filtro se lo llevara todo, es mejor
     # devolver ruido que dejar al usuario sin nada por una heuristica.
     apartados = []
+    # Respuestas ya enseñadas, para no repetir la MISMA dos veces (04/08).
+    # Jordi hizo `/recuerdo cual es tu comida favorita` y le salieron dos
+    # entradas distintas -"cual es tu comida favorita?" y "cual SERA tu
+    # comida favorita?"- con la respuesta palabra por palabra IDENTICA.
+    # Como recuerdos son dos, pero como informacion es una, y la segunda
+    # solo gasta una plaza. Se compara la respuesta y no la pregunta porque
+    # es donde esta el dato: dos preguntas distintas con la misma respuesta
+    # aportan lo mismo, y la misma pregunta con respuestas distintas SI son
+    # dos recuerdos (el dato cambio, y eso interesa verlo).
+    vistas: set[str] = set()
     for meta, distancia in turnos:
         if len(salida) >= n:
             break
@@ -525,8 +553,18 @@ def buscar(consulta: str, n: int = 3) -> list[dict]:
         # de "color favorito", DOS eran el bot diciendo que no sabia).
         if _es_negativa(respuesta):
             apartados.append(turno)
-        else:
-            salida.append(turno)
+            continue
+
+        # Dedup por respuesta. Se normaliza (minúsculas y espacios
+        # colapsados) para que un salto de linea de mas no cuente como
+        # respuesta distinta. Los turnos SIN respuesta no se deduplican:
+        # todos tendrian la misma clave vacia y se quedaria solo uno.
+        if respuesta:
+            clave = " ".join(respuesta.split()).lower()
+            if clave in vistas:
+                continue
+            vistas.add(clave)
+        salida.append(turno)
 
     # RED DE SEGURIDAD: si lo unico que habia eran negativas, se devuelven.
     # El filtro puede equivocarse; dejar al usuario sin ningun resultado

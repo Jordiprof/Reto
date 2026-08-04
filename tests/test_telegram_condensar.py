@@ -64,6 +64,12 @@ class _AgenteFalso:
     def __init__(self, documento=None):
         self.documento_pendiente = documento
         self.proveedor, self.api_key, self.modelo = "groq", "clave", "llama-3.3"
+        # 03/08: la lectura cacheada de la pasada 1 (ver Agente.lectura_condensada).
+        # Este doble se quedo desfasado del Agente real en cuanto se añadio el
+        # atributo, y los dos tests de aqui empezaron a fallar con un
+        # AttributeError disfrazado de "no he podido resumir" - que es
+        # justamente por lo que el except de cmd_condensar es tan ancho.
+        self.lectura_condensada: list[str] = []
 
 
 def _con_documento(monkeypatch, tmp_path=None, respuesta="# Resumen\n\ncontenido"):

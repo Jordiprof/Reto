@@ -163,9 +163,27 @@ Saca los PUNTOS DESTACADOS de este bloque, y solo de este bloque. Reglas:
 TEXTO DEL BLOQUE:
 {bloque}"""
 
+# 03/08: la frase de ENTRADA y la ETIQUETA de lo que se pega debajo son
+# parametros, porque con UN SOLO BLOQUE lo que se le manda al modelo no son
+# "los puntos destacados" sino el DOCUMENTO ENTERO. Decirle que un texto
+# crudo son puntos ya destilados le hace tratarlo como si alguien lo
+# hubiera resumido antes: resume un resumen que no existe, y se pierde
+# justo el detalle que la pasada unica venia a salvar.
+#
+# Lo que NO cambia entre los dos casos es todo lo demas -la estructura
+# exigida y las reglas-, que es precisamente lo que tenia que seguir siendo
+# igual para que el resultado no dependa de por que camino se llego.
+_ENTRADA_VARIOS_BLOQUES = (
+    "Tienes los puntos destacados de las {total} partes de un documento "
+    "titulado «{titulo}», en orden."
+)
+_ENTRADA_UN_BLOQUE = "Tienes el texto completo de un documento titulado «{titulo}»."
+_ETIQUETA_VARIOS_BLOQUES = "PUNTOS DESTACADOS POR BLOQUE:"
+_ETIQUETA_UN_BLOQUE = "TEXTO DEL DOCUMENTO:"
+
+
 _PROMPT_FINAL = """\
-Tienes los puntos destacados de las {total} partes de un documento titulado
-«{titulo}», en orden. Escribe con ellos un documento en Markdown.
+{entrada} Escribe con ello un documento en Markdown.
 
 Estructura EXACTA que debe tener:
 
@@ -187,27 +205,26 @@ Lo que el documento menciona pero no explica, o lo que quedó a medias. Si
 no hay nada, escribe "Nada reseñable".
 
 Reglas:
-- NO te inventes nada que no esté en los puntos. Si algo no aparece, no está.
-- Junta lo que se repita en varios bloques en un solo punto.
+- NO te inventes nada que no esté en el texto. Si algo no aparece, no está.
+- Junta lo que se repita en varios sitios en un solo punto.
 - No expliques lo que estás haciendo: escribe directamente el documento.
 
-PUNTOS DESTACADOS POR BLOQUE:
+{etiqueta}
 {puntos}"""
 
 
 _PROMPT_FINAL_RAPIDO = """\
-Tienes los puntos destacados de las {total} partes de un documento titulado
-«{titulo}», en orden. Escribe un resumen BREVE, de unas {lineas} líneas.
+{entrada} Escribe un resumen BREVE, de unas {lineas} líneas.
 
 Reglas:
 - Prosa corrida y párrafos cortos. NADA de listas, títulos ni secciones.
 - Cuenta de qué va el documento y lo esencial que hay que saber; deja fuera
   el detalle fino, los ejemplos y las enumeraciones largas.
 - Si hay dos o tres datos que serían un error no mencionar, mencionálos.
-- NO te inventes nada que no esté en los puntos. Si algo no aparece, no está.
+- NO te inventes nada que no esté en el texto. Si algo no aparece, no está.
 - No expliques lo que estás haciendo: escribe directamente el resumen.
 
-PUNTOS DESTACADOS POR BLOQUE:
+{etiqueta}
 {puntos}"""
 
 # Formatos de salida (02/08, peticion de Jordi tras ver el completo
@@ -244,6 +261,7 @@ def condensar(
     tope_bloques: int = TOPE_BLOQUES,
     avisar=None,
     formato: str = "completo",
+    lectura_previa: list[str] | None = None,
 ) -> tuple[str, dict]:
     """Condensa el texto entero y devuelve (markdown, datos).
 
@@ -258,6 +276,9 @@ def condensar(
     Si un bloque falla, se sigue con los demas y se anota - un bloque
     perdido es un resumen incompleto, pero perder los otros nueve por uno
     seria mucho peor (mismo espiritu que RNF-02).
+
+    `lectura_previa` son los puntos de la PASADA 1 de una llamada anterior
+    sobre el MISMO documento. Ver el porque en el bloque de la pasada 1.
     """
     if formato not in FORMATOS:
         raise ValueError(f"formato debe ser uno de {FORMATOS}, no {formato!r}")
@@ -271,23 +292,75 @@ def condensar(
     bloques = bloques[:tope_bloques]
     total = len(bloques)
 
+    # UN SOLO BLOQUE = UNA SOLA LLAMADA (03/08, encontrado por Jordi
+    # probando: "se lo lee dos veces"). Con un bloque, la pasada 1 resumia
+    # el bloque y la pasada 2 resumia ESE RESUMEN - o sea que el modelo
+    # escribia el documento final sin haber visto nunca el texto original,
+    # solo su propio resumen de segunda mano. No era solo lento: era PEOR,
+    # porque cada pasada pierde detalle.
+    #
+    # Con varios bloques la pasada 2 sigue siendo imprescindible (es la que
+    # junta y ordena, y los bloques juntos no cabrian en una llamada). Con
+    # uno solo no reduce nada, asi que se le da el texto tal cual.
+    #
+    # Nota de coste: aqui `avisar` no dice "bloque 1 de 1" porque no hay
+    # dos fases que contar - se pasa directo al aviso de escritura.
+    de_una_pasada = total == 1 and not lectura_previa
+
     if avisar:
-        avisar(f"Voy a leerlo en {total} bloque(s). Esto tarda un rato.")
+        avisar(
+            "Leyéndolo y escribiendo el resumen…"
+            if de_una_pasada
+            else f"Voy a leerlo en {total} bloque(s). Esto tarda un rato."
+        )
 
     # PASADA 1 (mapa): los puntos destacados de cada bloque, por separado.
-    puntos, fallidos = [], []
-    for i, bloque in enumerate(bloques, start=1):
+    #
+    # SE REUTILIZA ENTRE FORMATOS (03/08, idea de Jordi tras pedir primero
+    # el rapido y luego el completo del mismo PDF: "ya lo tenia leido y
+    # cargado, deberia haberse puesto a crear directamente el .md").
+    #
+    # Es correcto porque _PROMPT_BLOQUE no recibe `formato`: la lectura de
+    # cada bloque es IDENTICA para el rapido y para el completo, y lo unico
+    # que cambia es el prompt de la pasada 2. Ya estaba escrito arriba
+    # ("LO QUE CAMBIA ES SOLO EL PROMPT DE LA SEGUNDA PASADA") y aun asi se
+    # releia entero: el comentario lo sabia y el codigo no.
+    #
+    # Quien guarda la lectura es el llamante (CLI o bot), junto al
+    # documento y con su misma vida: si sueltas el documento se va con el.
+    fallidos: list[int] = []
+    if de_una_pasada:
+        # El texto original va TAL CUAL a la pasada final. No se guarda como
+        # lectura reutilizable a proposito: no es un resumen, es el
+        # documento entero, y cachearlo seria guardar dos veces lo mismo.
+        puntos = [bloques[0]]
+        lectura = []
+        llamadas_pasada1 = 0
+    elif lectura_previa:
         if avisar:
-            avisar(f"Bloque {i} de {total}…")
-        try:
-            respuesta = llamar(
-                _PROMPT_BLOQUE.format(n=i, total=total, titulo=titulo, bloque=bloque)
-            )
-        except Exception as error:
-            logging.error("Resumen: fallo el bloque %d (%s)", i, type(error).__name__)
-            fallidos.append(i)
-            continue
-        puntos.append(f"### Bloque {i} de {total}\n{respuesta.strip()}")
+            avisar("Ya lo tengo leído de antes; voy directo al resumen.")
+        puntos = list(lectura_previa)
+        lectura = puntos
+        llamadas_pasada1 = 0
+    else:
+        puntos = []
+        for i, bloque in enumerate(bloques, start=1):
+            if avisar:
+                avisar(f"Bloque {i} de {total}…")
+            try:
+                respuesta = llamar(
+                    _PROMPT_BLOQUE.format(n=i, total=total, titulo=titulo, bloque=bloque)
+                )
+            except Exception as error:
+                logging.error("Resumen: fallo el bloque %d (%s)", i, type(error).__name__)
+                fallidos.append(i)
+                continue
+            puntos.append(f"### Bloque {i} de {total}\n{respuesta.strip()}")
+        # Solo se ofrece para reutilizar si se leyo el documento ENTERO. Con
+        # bloques fallidos la lectura esta coja, y guardarla convertiria un
+        # fallo pasajero de cuota en un resumen incompleto para siempre.
+        lectura = [] if fallidos else puntos
+        llamadas_pasada1 = total
 
     if not puntos:
         raise ResumenImposible(
@@ -296,17 +369,30 @@ def condensar(
         )
 
     # PASADA 2 (reduccion): de los puntos sueltos al documento estructurado.
-    if avisar:
+    # Con `de_una_pasada` esta es la UNICA llamada, y el aviso ya se dio
+    # arriba: repetirlo aqui haria creer que va por la segunda de dos.
+    if avisar and not de_una_pasada:
         avisar("Ordenando todo y escribiendo el resumen…")
     todos_los_puntos = "\n\n".join(puntos)
+    # Con una sola pasada `puntos` es el texto original, no un resumen: la
+    # frase de entrada y la etiqueta cambian para no mentirle al modelo
+    # sobre lo que esta leyendo (ver _ENTRADA_UN_BLOQUE).
+    entrada = (
+        _ENTRADA_UN_BLOQUE if de_una_pasada else _ENTRADA_VARIOS_BLOQUES
+    ).format(total=total, titulo=titulo)
+    etiqueta = _ETIQUETA_UN_BLOQUE if de_una_pasada else _ETIQUETA_VARIOS_BLOQUES
+
     if formato == "rapido":
         prompt_final = _PROMPT_FINAL_RAPIDO.format(
-            total=total, titulo=titulo, puntos=todos_los_puntos,
-            lineas=_lineas_del_rapido(total),
+            entrada=entrada, etiqueta=etiqueta, puntos=todos_los_puntos,
+            titulo=titulo, lineas=_lineas_del_rapido(total),
         )
     else:
+        # `titulo` sigue haciendo falta aunque ya no este en la frase de
+        # entrada: la estructura exigida lo usa como titulo `#` del .md.
         prompt_final = _PROMPT_FINAL.format(
-            total=total, titulo=titulo, puntos=todos_los_puntos,
+            entrada=entrada, etiqueta=etiqueta, puntos=todos_los_puntos,
+            titulo=titulo,
         )
     markdown = llamar(prompt_final).strip()
 
@@ -332,8 +418,15 @@ def condensar(
         "bloques_procesados": total,
         "bloques_fallidos": fallidos,
         "recortado": recortado,
-        "llamadas": total + 1,
+        # Ya no es siempre total+1: con un solo bloque es 1, y reutilizando
+        # una lectura previa es 1 tambien. El numero se CUENTA, no se
+        # deduce de una formula que la primera excepcion deja mintiendo.
+        "llamadas": llamadas_pasada1 + 1,
         "formato": formato,
+        # La lectura de la pasada 1, para que el llamante la guarde junto al
+        # documento y se la devuelva en el proximo /condensar (ver
+        # `lectura_previa`). Vacia si no hay nada que merezca reutilizarse.
+        "lectura": lectura,
     }
 
 

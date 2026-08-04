@@ -14,14 +14,48 @@ from dataclasses import dataclass
 
 # Cada eslabon de la cadena necesita SU proveedor + clave + modelo. El
 # router los prueba en orden.
-from src.config import ClaveApiNoConfigurada, obtener_api_key, obtener_modelo_por_defecto
+from src.config import (
+    MODELOS_DE_RESERVA,
+    PROVEEDORES,
+    ClaveApiNoConfigurada,
+    obtener_api_key,
+    obtener_modelo_por_defecto,
+)
 from src.llm_client import responder_proveedor
-from src.llm_errors import ErrorLLM, ErrorPresupuestoAgotado
+from src.llm_errors import ErrorLimitePeticiones, ErrorLLM, ErrorPresupuestoAgotado
 from src.llm_types import Turno
 
 # ADR-001: orden oficial de la cadena de proveedores. Anthropic queda fuera
 # porque todavia no esta implementado como proveedor.
-_ORDEN_ADR001 = ["groq", "ollama", "gemini"]
+#
+# REORDENADO EL 03/08 (decision de Jordi): ollama pasa a primero y groq a
+# segundo. El orden original -groq primero- se eligio el 16/07 por VELOCIDAD,
+# cuando el agente no tenia ni tools ni documentos y un turno era un mensaje
+# corto. Ese supuesto ya no se sostiene:
+#
+#   - Groq free son 100.000 tokens/DIA. Con un documento cargado el
+#     historial reenvia ~5.000 tokens por turno (AUD-03, tope subido a
+#     20.000 caracteres el 01/08), asi que la cuota del dia se va en unos
+#     20 mensajes. Medido en la sesion del 03/08: se agoto a media bateria
+#     de pruebas y no volvio en trece minutos.
+#   - Ollama Cloud, en la MISMA sesion: cero fallos, entre 1,1 y 6,0
+#     segundos por respuesta.
+#
+# Y hay un segundo motivo, de calidad y no de cuota: llama-3.3-70b
+# REESCRIBIO las fechas de una prevision del tiempo que la herramienta le
+# habia dado bien (2026-08-03 -> 2024-03-07), copiando en cambio las 21
+# cifras de temperatura sin un solo error. Con el mismo dato y la misma
+# herramienta, gpt-oss:120b y nemotron-3-ultra las escribieron bien.
+#
+# LO QUE NO CAMBIA, y conviene no confundirlo: esto es el orden del CHAT.
+# La transcripcion de voz sigue yendo a Groq siempre y a dedo (voz.py, con
+# su propio cliente), y /condensar sigue eligiendo Gemini a dedo por cuota
+# de tokens por minuto. Son tres decisiones independientes.
+#
+# Se DERIVA de config.PROVEEDORES en vez de repetirse aqui: ese diccionario
+# es la unica fuente de verdad del orden (ver su comentario), asi que el
+# menu de la CLI, el arranque del bot y esta cadena no pueden separarse.
+_ORDEN_ADR001 = list(PROVEEDORES)
 
 # SEG-03 (hallazgo de la auditoria del 27/07): sin este tope, un solo
 # mensaje del usuario podia disparar hasta 45 llamadas reales al LLM -
@@ -96,8 +130,26 @@ class LLMRouter:
         # ESTE mensaje, y que el mensaje siguiente empiece limpio.
         turno = Turno(self.max_llamadas_por_turno)
 
+        # 03/08: proveedor cuyos modelos de RESERVA hay que saltarse. Se
+        # rellena cuando ese proveedor cae por algo que NO es cuota.
+        #
+        # El motivo: la reserva existe porque en Groq el cupo es por modelo
+        # (ver _reservas_del_mismo_proveedor), asi que cambiar de modelo
+        # ayuda ante una cuota agotada y SOLO ante eso. Si la clave es mala
+        # o no hay red, el modelo siguiente del mismo proveedor fallara
+        # igual: probarlo es una llamada tirada por cada reserva, que es
+        # justo lo que SEG-03 vino a evitar.
+        sin_reservas_para: str | None = None
+
         for indice, eslabon in enumerate(self.eslabones):
             es_primario = (indice == 0)
+
+            if eslabon.proveedor == sin_reservas_para:
+                logging.info(
+                    "Router: salto la reserva %s/%s (el fallo no era de cuota)",
+                    eslabon.proveedor, eslabon.modelo,
+                )
+                continue
 
             # Bucle de reintentos DENTRO del mismo proveedor.
             for intento in range(self.max_reintentos + 1):
@@ -125,6 +177,12 @@ class LLMRouter:
                         )
                         self._dormir(espera)
                         continue
+
+                    # Cambiar de modelo solo salva de una CUOTA agotada (el
+                    # cupo es por modelo). Ante cualquier otro fallo, las
+                    # reservas de este proveedor se saltan.
+                    if not isinstance(error, ErrorLimitePeticiones):
+                        sin_reservas_para = eslabon.proveedor
 
                     # Fallo fatal, o agotados los reintentos: se abandona
                     # este proveedor y se prueba el siguiente de la cadena.
@@ -213,6 +271,7 @@ def construir_cadena(proveedor_primario: str, api_key: str, modelo: str,
     respaldo) - la misma que usa el menu para el primario.
     """
     eslabones = [Eslabon(proveedor_primario, api_key, modelo)]
+    eslabones += _reservas_del_mismo_proveedor(proveedor_primario, api_key, modelo)
 
     for proveedor in _ORDEN_ADR001:
         if proveedor == proveedor_primario:
@@ -221,6 +280,43 @@ def construir_cadena(proveedor_primario: str, api_key: str, modelo: str,
             clave = obtener_api_key(proveedor)
         except ClaveApiNoConfigurada:
             continue  # sin clave configurada: no puede ser fallback
-        eslabones.append(Eslabon(proveedor, clave, obtener_modelo_por_defecto(proveedor)))
+        modelo_fallback = obtener_modelo_por_defecto(proveedor)
+        eslabones.append(Eslabon(proveedor, clave, modelo_fallback))
+        eslabones += _reservas_del_mismo_proveedor(proveedor, clave, modelo_fallback)
 
     return LLMRouter(eslabones, **kwargs_router)
+
+
+def _reservas_del_mismo_proveedor(proveedor: str, clave: str,
+                                  modelo_en_uso: str) -> list[Eslabon]:
+    """Otros modelos DEL MISMO proveedor a los que degradar antes de
+    cambiar de proveedor entero (03/08, idea de Jordi).
+
+    POR QUE FUNCIONA, y esto hubo que MEDIRLO porque la documentacion
+    resumida decia lo contrario ("rate limits apply at the organization
+    level... shared across all models"). Se comprobo contra la API real
+    mirando las cabeceras x-ratelimit-*: se gastaron cuatro llamadas SOLO
+    en llama-3.3 y despues
+
+        llama-3.3-70b   peticiones 993   tokens 10.969   <- baja
+        gpt-oss-120b    peticiones 997   tokens  7.920   <- INTACTO
+
+    o sea que en Groq cada modelo tiene SU PROPIO cupo, de peticiones y de
+    tokens. Quedarse sin llama-3.3 no deja sin gpt-oss-120b. Es justo la
+    leccion del 30/07 y del 02/08 otra vez: no fiarse de un resumen pegado
+    -aunque venga de la documentacion oficial- sin verificarlo con
+    evidencia real.
+
+    Y ademas gpt-oss-120b tiene el DOBLE de cuota diaria que llama-3.3
+    (200.000 tokens/dia contra 100.000), asi que la reserva no es un
+    parche peor: en lo que mas duele es mejor que el titular.
+
+    NO se hace para Ollama ni Gemini: ahi no esta medido, y añadir un
+    eslabon de mas cuesta una llamada tirada cada vez que el proveedor cae
+    por algo que no sea cuota. Se amplia cuando haya numeros, no antes.
+    """
+    reservas = []
+    for candidato in MODELOS_DE_RESERVA.get(proveedor, []):
+        if candidato != modelo_en_uso:
+            reservas.append(Eslabon(proveedor, clave, candidato))
+    return reservas

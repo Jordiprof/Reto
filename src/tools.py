@@ -24,6 +24,7 @@ from contextvars import ContextVar
 # a mano. frozen=True la hace inmutable: el registro de herramientas no
 # debe poder modificarse en caliente.
 from dataclasses import dataclass
+from datetime import date
 
 # HTMLParser: de la biblioteca estandar, para sacar el texto visible de una
 # pagina web sin añadir BeautifulSoup como dependencia (F5.5 #6).
@@ -490,10 +491,47 @@ def _formatear_prevision(datos: dict, donde: str) -> str:
     )
     for fecha, codigo, minima, maxima, lluvia, viento in columnas:
         lineas.append(
-            f"- {fecha}: {_estado_de(codigo)}, {minima}-{maxima}°C, "
+            f"- {_con_dia_semana(fecha)}: {_estado_de(codigo)}, {minima}-{maxima}°C, "
             f"lluvia {lluvia}%, viento hasta {viento} km/h"
         )
     return "\n".join(lineas)
+
+
+_DIAS_SEMANA = (
+    "lunes", "martes", "miércoles", "jueves",
+    "viernes", "sábado", "domingo",
+)
+
+
+def _con_dia_semana(fecha: str) -> str:
+    """"2026-08-03" -> "lunes 2026-08-03".
+
+    MITIGACION, no garantia (03/08). El caso real: Jordi pidio la prevision
+    de 3 dias y llama-3.3-70b le escribio 2024-03-07/08/09 copiando en
+    cambio las VEINTIUNA cifras de temperatura, viento y lluvia sin un solo
+    error. O sea que la herramienta acerto y el modelo reescribio solo las
+    fechas. Con el mismo dato, gpt-oss:120b y nemotron-3-ultra las
+    escribieron bien - es cosa de ese modelo, no del codigo.
+
+    Por que esto no puede ser una garantia, y conviene decirlo claro: el
+    auto-chequeo de NASA APOD (29/07) compara lo PEDIDO con lo DEVUELTO y
+    funciona porque el desajuste esta dentro de la respuesta de la API.
+    Aqui la API responde bien; lo que se estropea es el texto que el modelo
+    escribe DESPUES, y a eso no llega ningun control de esta capa.
+
+    Lo que si hace el dia de la semana es volver la mentira INCONSISTENTE
+    consigo misma: "lunes 2024-03-07" es un jueves, asi que una fecha
+    reescrita deja de ser plausible y se ve. La garantia de verdad fue
+    cambiar el modelo por defecto (ADR-001, mismo dia).
+    """
+    try:
+        dia = date.fromisoformat(fecha)
+    except (ValueError, TypeError):
+        # La fecha la da Open-Meteo y siempre es ISO, pero si algun dia
+        # cambiara el formato es mejor enseñarla tal cual que perder la
+        # prevision entera por un adorno.
+        return str(fecha)
+    return f"{_DIAS_SEMANA[dia.weekday()]} {fecha}"
 
 
 def consultar_tiempo(ciudad: str, dias: int = 0) -> str:
@@ -591,6 +629,30 @@ def fijar_bandeja(bandeja: list | None):
 
 def restaurar_bandeja(token) -> None:
     _BANDEJA.reset(token)
+
+
+# 03/08: QUE PROVEEDOR va a recibir lo que devuelva la tool. Mismo patron y
+# mismo contrato que la bandeja y el documento actual, y por el mismo
+# motivo: una tool no recibe el Agente ni debe recibirlo -es una funcion
+# suelta y probable a mano-, pero el TAMAÑO de lo que devuelve si depende
+# de a quien se le manda, porque la cuota diaria no es la misma en los tres.
+#
+# Vacio ("") cuando nadie lo ha fijado: entonces se usa el tope general,
+# que es el mas generoso. Fallar hacia el comportamiento de siempre.
+_PROVEEDOR: ContextVar[str] = ContextVar("proveedor_actual", default="")
+
+
+def fijar_proveedor_actual(proveedor: str):
+    """La llama Agente.preguntar al empezar el turno."""
+    return _PROVEEDOR.set(proveedor or "")
+
+
+def restaurar_proveedor_actual(token) -> None:
+    _PROVEEDOR.reset(token)
+
+
+def proveedor_actual() -> str:
+    return _PROVEEDOR.get()
 
 
 def _dejar_imagen(url: str, titulo: str) -> None:
@@ -966,6 +1028,31 @@ def resumir_url(url: str) -> str:
 # otra vez sino resumir por bloques (resumir cada tercio y luego juntar).
 _MAX_CARACTERES_DOCUMENTO = 20000
 
+# ...SALVO EN GROQ (03/08, decision de Jordi). El tope no puede ser el mismo
+# para los tres proveedores porque su cuota DIARIA no lo es, y este texto
+# es justo el que mas la gasta: se queda en el historial y se REENVIA en
+# cada turno posterior (AUD-03).
+#
+# La cuenta, con los limites verificados hoy contra la API (cabeceras
+# x-ratelimit-*, no la documentacion):
+#
+#   Groq llama-3.3    100.000 tokens/DIA
+#   20.000 caracteres ~ 5.400 tokens por turno  ->  la cuota se va en ~18 turnos
+#   10.000 caracteres ~ 2.700 tokens por turno  ->  la cuota dura el DOBLE
+#
+# Ollama y Gemini se quedan en 20.000: sus cuotas dan de sobra y recortar
+# ahi solo empeoraria el resumen sin ganar nada. Es el mismo criterio que
+# el tamaño de bloque de /condensar: el numero se saca de la cuota REAL del
+# proveedor, no de un valor redondo que valga para todos.
+_MAX_CARACTERES_DOCUMENTO_GROQ = 10000
+
+_TOPES_POR_PROVEEDOR = {"groq": _MAX_CARACTERES_DOCUMENTO_GROQ}
+
+
+def _tope_documento() -> int:
+    """Cuanto documento cabe, segun a QUIEN se le va a mandar."""
+    return _TOPES_POR_PROVEEDOR.get(proveedor_actual(), _MAX_CARACTERES_DOCUMENTO)
+
 
 class ArgsLeerDocumento(BaseModel):
     """El modelo sigue sin elegir NADA sobre QUE fichero leer -no hay
@@ -1026,7 +1113,8 @@ def leer_documento(consulta: str = "") -> str:
             "documento escaneado sin OCR, o estar vacío)."
         )
 
-    if len(texto) <= _MAX_CARACTERES_DOCUMENTO:
+    tope = _tope_documento()
+    if len(texto) <= tope:
         return _envolver(_ETIQUETA_FUENTE, texto)
 
     # No cabe entero. Si sabemos QUE se busca, se busca (01/08).
@@ -1038,7 +1126,7 @@ def leer_documento(consulta: str = "") -> str:
         partes = [
             f"[fragmento {i + 1} de {total}]\n{trozo}" for i, trozo in elegidos
         ]
-        cuerpo = "\n\n(...)\n\n".join(partes)[:_MAX_CARACTERES_DOCUMENTO]
+        cuerpo = "\n\n(...)\n\n".join(partes)[:tope]
         # Mismo criterio que el aviso de abajo: se dice PRIMERO y como
         # prohibicion. Aqui ademas hay que decir que lo que llega NO es el
         # documento seguido, o el modelo puede leer dos fragmentos lejanos
@@ -1055,7 +1143,7 @@ def leer_documento(consulta: str = "") -> str:
         )
         return aviso + _envolver(_ETIQUETA_FUENTE, cuerpo)
 
-    recortado = texto[:_MAX_CARACTERES_DOCUMENTO]
+    recortado = texto[:tope]
 
     # DEFENSA CONTRA ALUCINACION (31/07, encontrada probando en real).
     #
@@ -1079,7 +1167,7 @@ def leer_documento(consulta: str = "") -> str:
     # dispararia el coste del turno y desplazaria la conversacion real).
     aviso = (
         f"⚠️ ATENCIÓN: «{adjunto.nombre}» tiene {len(texto)} caracteres y solo "
-        f"has recibido los primeros {_MAX_CARACTERES_DOCUMENTO}. NO afirmes que "
+        f"has recibido los primeros {tope}. NO afirmes que "
         "el documento no menciona algo, ni que no trata un tema: no has visto el "
         "final. Si te preguntan por lo que falta, di que solo has leído esa "
         "primera parte.\n"

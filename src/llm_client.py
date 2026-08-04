@@ -173,6 +173,20 @@ def _nombre_seguro(texto: object, limite: int = 40) -> str:
     return limpio or "?"
 
 
+def _recortar(error: object, limite: int = 300) -> str:
+    """Una linea de log con el detalle de un error de CUOTA, sin reventar
+    el fichero ni permitir inyeccion de lineas falsas.
+
+    Se usa SOLO donde sabemos que el detalle son cifras de cuota y no
+    contenido de la conversacion (ver el except de RateLimitError). Los
+    saltos de linea se aplanan por lo mismo que `_nombre_seguro` sanea el
+    nombre de una tool: el log se audita, y un '\\n' dentro de un texto
+    ajeno forja una entrada que parece nuestra.
+    """
+    texto = " ".join(str(error).split())
+    return texto[:limite] if len(texto) <= limite else texto[:limite] + "…"
+
+
 def _campos_seguros(argumentos: object) -> str:
     """Devuelve solo los NOMBRES de los campos que mando el LLM, ordenados.
 
@@ -670,7 +684,21 @@ class _ProveedorGroq(_ProveedorLLM):
             logging.error("Groq: fallo de conexion")
             raise ErrorConexion("Groq", str(error)) from error
         except RateLimitError as error:
-            logging.error("Groq: limite de peticiones superado")
+            # 03/08: se GUARDA el detalle del proveedor, no solo "limite
+            # superado". Salio intentando diagnosticar por que groq se
+            # agotaba: el log repetia quince veces "Groq: limite de
+            # peticiones superado" y era imposible saber si el limite era
+            # por minuto o del dia -que es justo lo que decide si esperar
+            # sirve de algo-. El docstring de ErrorLLM ya prometia que el
+            # detalle iba al log "tan detallado como antes"; no iba.
+            #
+            # SOLO para rate limit, y por eso no rompe la politica de logs
+            # de solo metadatos (27/07): el texto de un 429 son cifras de
+            # cuota ("on tokens per day (TPD): Limit 100000, Used 99876"),
+            # nunca contenido de la conversacion. En los demas except sigue
+            # yendo solo el tipo, porque ahi el detalle SI puede arrastrar
+            # el cuerpo de la peticion.
+            logging.error("Groq: limite de peticiones superado | %s", _recortar(error))
             raise ErrorLimitePeticiones("Groq", str(error)) from error
         except APIError as error:
             # 02/08: se separa el caso en que el MODELO escribio mal la
@@ -799,8 +827,32 @@ class _ProveedorOllama(_ProveedorLLM):
             # clase. Misma leccion que el fallo de los nombres inventados de
             # Gemini el 02/08.
             codigo = getattr(error, "status_code", None)
-            if codigo == 429 or (isinstance(codigo, int) and 500 <= codigo < 600):
+            if codigo == 429:
+                # 03/08: un 429 es un LIMITE, no un fallo de red, y hay que
+                # tiparlo como tal para que la logica de cuota DIARIA de
+                # ErrorLimitePeticiones se aplique tambien aqui. Antes caia
+                # en ErrorConexion, que es reintentable SIEMPRE: con la
+                # cuota del dia agotada eso son tres llamadas tiradas por
+                # mensaje, para siempre.
+                logging.error(
+                    "Ollama: limite de peticiones superado | %s", _recortar(error)
+                )
+                raise ErrorLimitePeticiones("Ollama", str(error)) from error
+            if isinstance(codigo, int) and 500 <= codigo < 600:
                 logging.error("Ollama: fallo transitorio (HTTP %s); reintentable", codigo)
+                raise ErrorConexion("Ollama", str(error)) from error
+            # 03/08: FALLO DE RED sin codigo HTTP. Salio del log de Jordi:
+            # "Ollama: error (ConnectionError)" -> el router lo clasifico
+            # como ErrorPeticionInvalida y degrado el proveedor SIN UN SOLO
+            # REINTENTO. Un cable que se cae no es una peticion invalida:
+            # no hay codigo HTTP porque la peticion no llego a viajar.
+            #
+            # Se comprueban las dos familias a proposito: httpx.TransportError
+            # (lo que lanza el SDK por dentro) y el ConnectionError de
+            # Python (lo que sube desde el socket). Quedarse con una sola
+            # dejaria fuera justo el caso que aparecio en el log.
+            if isinstance(error, (httpx.TransportError, ConnectionError)):
+                logging.error("Ollama: fallo de conexion (%s)", type(error).__name__)
                 raise ErrorConexion("Ollama", str(error)) from error
             # El resto sigue en el cajon generico (no reintentable): Ollama
             # no define excepciones tan especificas como Groq en su SDK.
@@ -967,8 +1019,16 @@ class _ProveedorGemini(_ProveedorLLM):
             # suponga, asi que no puede volver a pasar lo mismo. Y ademas
             # aguanta que Google renombre o reorganice sus clases.
             codigo = getattr(error, "code", None)
-            transitorio = codigo == 429 or (isinstance(codigo, int) and 500 <= codigo < 600)
-            if transitorio:
+            if codigo == 429:
+                # 03/08: igual que en Ollama. Un 429 se tipa como LIMITE y
+                # no como fallo de red, para que la distincion "por minuto
+                # / por dia" de ErrorLimitePeticiones valga en los tres
+                # proveedores y no solo en Groq.
+                logging.error(
+                    "Gemini: limite de peticiones superado | %s", _recortar(error)
+                )
+                raise ErrorLimitePeticiones("Gemini", str(error)) from error
+            if isinstance(codigo, int) and 500 <= codigo < 600:
                 logging.error("Gemini: fallo transitorio (HTTP %s); reintentable", codigo)
                 raise ErrorConexion("Gemini", str(error)) from error
             nombre_error = type(error).__name__
