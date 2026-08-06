@@ -154,6 +154,59 @@ def test_un_docx_corrupto_se_rechaza():
         validar_adjunto(b"esto no es un zip de verdad", "roto.docx")
 
 
+def test_LOG02_no_se_fia_del_campo_file_size_de_la_cabecera(monkeypatch):
+    """Auditoria del 04/08 (LOG-02): `entrada.file_size` lo escribe quien
+    CREA el ZIP -es la cabecera local del formato- y se puede falsear sin
+    que el fichero deje de ser un ZIP valido. No hay forma de fabricar eso
+    con `zipfile.writestr()` (recalcula el campo, ver el comentario de
+    `_docx_con_entrada_gigante`), asi que aqui se simula reemplazando lo
+    que devuelve `paquete.open()`: una entrada que DICE pesar 1 byte pero
+    cuyo contenido real, al leerlo, son 60.000.000.
+
+    Se usa un file-like minimo (no el `ZipExtFile` real) A PROPOSITO: la
+    implementacion real de zipfile verifica el CRC-32 contra `file_size` al
+    CERRAR el miembro, y esa verificacion se dispara ANTES de que el
+    `DocumentoNoValido` de nuestro codigo termine de propagarse, dejando
+    ver un `BadZipFile` en su lugar -detalle de implementacion de la
+    libreria, no del codigo que se esta probando-. Con un file-like que no
+    verifica nada al cerrar, la unica razon por la que el test puede fallar
+    es que NUESTRO codigo vuelva a fiarse de `file_size`.
+
+    Si alguien revirtiera el arreglo (volver a leer `entrada.file_size` en
+    vez de medir bytes reales al descomprimir), este test empezaria a
+    fallar: el ZIP con la cabecera mentirosa dejaria de rechazarse. Hace de
+    test de mutacion sin tener que romper el codigo a mano."""
+    grande = _docx_con_entrada_gigante(60_000_000)
+    contenido_real = b"0" * 60_000_000
+
+    class _MiembroConCabeceraMentirosa:
+        """Simula lo que devuelve `ZipFile.open()`: mismo contenido real
+        que un ataque de verdad tendria, sin la verificacion de CRC al
+        cerrar que complica el test sin aportar nada a lo que se prueba."""
+
+        def __init__(self, datos):
+            self._buffer = io.BytesIO(datos)
+
+        def read(self, n=-1):
+            return self._buffer.read(n)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def open_con_cabecera_mentirosa(self, entrada, *args, **kwargs):
+        if isinstance(entrada, zipfile.ZipInfo):
+            entrada.file_size = 1  # la cabecera MIENTE
+        return _MiembroConCabeceraMentirosa(contenido_real)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", open_con_cabecera_mentirosa)
+
+    with pytest.raises(DocumentoNoValido, match="sospechosamente grande"):
+        validar_adjunto(grande, "bomba.docx")
+
+
 # --- Extraccion de texto --------------------------------------------------
 
 

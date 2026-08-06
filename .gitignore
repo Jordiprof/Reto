@@ -43,3 +43,8 @@ voces/
 # Cerrojo entre procesos (01/08): centinela que impide CLI + bot a la vez.
 # Es estado LOCAL de la maquina, no codigo.
 .memoria.lock
+
+# Documentos con inyecciones de prompt, para probar el bot EN REAL (07/08).
+# Fuera del repo a proposito: son ficheros cuyo contenido esta escrito para
+# manipular a un modelo, y no tienen por que acabar en un clon de nadie.
+pruebas_inyeccion/

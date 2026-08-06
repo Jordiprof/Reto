@@ -113,3 +113,108 @@ def test_el_historial_enseña_la_HORA_y_no_solo_el_dia():
     cuerpo = inspect.getsource(telegram_bot.cmd_historial)
     assert '[:10]' not in cuerpo, "vuelve a cortar la fecha sin la hora"
     assert '[:16]' in cuerpo
+
+
+# --- El estado de espera y los adjuntos (07/08) --------------------------
+
+
+def _update_texto(uid=111, texto="hola"):
+    from types import SimpleNamespace
+
+    async def reply_text(t, *a, **kw):
+        return None
+
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=uid),
+        effective_message=SimpleNamespace(text=texto, voice=None, reply_text=reply_text),
+    )
+
+
+def _update_adjunto(uid=111):
+    from types import SimpleNamespace
+
+    async def reply_text(t, *a, **kw):
+        return None
+
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=uid),
+        effective_message=SimpleNamespace(
+            text=None, voice=None, document=SimpleNamespace(file_name="x.docx"),
+            reply_text=reply_text,
+        ),
+    )
+
+
+def _update_voz(uid=111):
+    from types import SimpleNamespace
+
+    async def reply_text(t, *a, **kw):
+        return None
+
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=uid),
+        effective_message=SimpleNamespace(
+            text=None, voice=SimpleNamespace(duration=3), reply_text=reply_text,
+        ),
+    )
+
+
+def test_un_ADJUNTO_cancela_el_dime_que_busco():
+    """BUG REAL de Jordi (07/08): tenía un «dime qué busco» pendiente de
+    /recuerdo, mandó un documento, y la pregunta siguiente -"de qué trata el
+    documento?"- se la comió /recuerdo, devolviéndole una búsqueda en la
+    memoria en vez de leer el fichero.
+
+    La puerta exigía `mensaje.text` y un adjunto no lo tiene, así que salía
+    sin limpiar; y manejar_documento tampoco pasa por `_turno`, que es donde
+    el estado se consume. Mismo agujero que la nota de voz del 01/08, por la
+    puerta de al lado."""
+    import asyncio
+
+    from src import telegram_bot
+
+    telegram_bot._esperando_texto[111] = "recuerdo"
+    asyncio.run(telegram_bot.puerta_soltar_espera(_update_adjunto(), None))
+
+    assert 111 not in telegram_bot._esperando_texto
+
+
+def test_un_COMANDO_sigue_cancelando():
+    """Caso de control: lo del 01/08 no se puede haber roto al ampliar."""
+    import asyncio
+
+    from src import telegram_bot
+
+    telegram_bot._esperando_texto[111] = "guardar"
+    asyncio.run(telegram_bot.puerta_soltar_espera(_update_texto(texto="/ayuda"), None))
+
+    assert 111 not in telegram_bot._esperando_texto
+
+
+def test_un_TEXTO_normal_NO_cancela():
+    """El texto normal es justo lo que se está esperando: si lo cancelara,
+    /recuerdo y /guardar por botón no funcionarían nunca."""
+    import asyncio
+
+    from src import telegram_bot
+
+    telegram_bot._esperando_texto[111] = "recuerdo"
+    asyncio.run(telegram_bot.puerta_soltar_espera(_update_texto(texto="tarta"), None))
+
+    assert telegram_bot._esperando_texto.get(111) == "recuerdo"
+    telegram_bot._esperando_texto.clear()
+
+
+def test_una_NOTA_DE_VOZ_no_la_cancela_aqui():
+    """A propósito: la voz SÍ acaba en `_turno`, que consume el estado por
+    el camino normal (arreglo del 01/08). Cancelarla aquí además rompería
+    poder contestar por voz a un «dime qué busco»."""
+    import asyncio
+
+    from src import telegram_bot
+
+    telegram_bot._esperando_texto[111] = "recuerdo"
+    asyncio.run(telegram_bot.puerta_soltar_espera(_update_voz(), None))
+
+    assert telegram_bot._esperando_texto.get(111) == "recuerdo"
+    telegram_bot._esperando_texto.clear()

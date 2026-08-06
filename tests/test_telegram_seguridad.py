@@ -14,6 +14,7 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from telegram.constants import ChatType
 from telegram.ext import ApplicationHandlerStop
 
 from src import config, telegram_bot
@@ -28,6 +29,7 @@ def estado_limpio(monkeypatch):
     telegram_bot._marcas.clear()
     telegram_bot._rutas.clear()
     telegram_bot._voz_activa.clear()
+    telegram_bot._esperando_texto.clear()
     monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, "111")
     monkeypatch.setenv(config.TELEGRAM_TOKEN_ENV, "123456:token-de-mentira")
     yield
@@ -36,14 +38,21 @@ def estado_limpio(monkeypatch):
     telegram_bot._marcas.clear()
     telegram_bot._rutas.clear()
     telegram_bot._voz_activa.clear()
+    telegram_bot._esperando_texto.clear()
 
 
-def _update(user_id=111, texto="hola", nombre="Jordi", enviados=None, teclados=None):
+def _update(user_id=111, texto="hola", nombre="Jordi", enviados=None, teclados=None,
+           tipo_chat=ChatType.PRIVATE):
     """Update falso: solo los atributos que leen nuestros callbacks.
 
     `teclados` guarda el reply_markup de cada respuesta: desde el 31/07 hay
     menus (historial, /voz, /ayuda) cuyo contenido esta en los BOTONES y no
     en el texto, y sin esto un test no puede verlos.
+
+    `tipo_chat` (04/08, AUT-01): PRIVATE por defecto, para que la bateria
+    existente de tests (que representa el uso normal, un chat 1:1) no tenga
+    que enterarse del cambio. Se puede poner GROUP/SUPERGROUP a proposito
+    para probar el rechazo nuevo.
     """
     enviados = enviados if enviados is not None else []
     teclados = teclados if teclados is not None else []
@@ -61,7 +70,10 @@ def _update(user_id=111, texto="hola", nombre="Jordi", enviados=None, teclados=N
         if user_id is None
         else SimpleNamespace(id=user_id, first_name=nombre, username=nombre)
     )
-    return SimpleNamespace(effective_user=usuario, effective_message=mensaje)
+    chat = None if tipo_chat is None else SimpleNamespace(id=user_id, type=tipo_chat)
+    return SimpleNamespace(
+        effective_user=usuario, effective_message=mensaje, effective_chat=chat,
+    )
 
 
 def _context():
@@ -99,6 +111,47 @@ def test_el_usuario_autorizado_pasa():
     """Caso de control: sin esto, 'rechazarlo todo' pasaria los dos tests
     anteriores y el bot no funcionaria para nadie."""
     asyncio.run(telegram_bot.puerta_allowlist(_update(user_id=111), _context()))
+
+
+@pytest.mark.parametrize("tipo", [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL])
+def test_AUT01_el_usuario_autorizado_NO_pasa_desde_un_grupo(tipo):
+    """Auditoria del 04/08 (AUT-01): la allowlist protegia QUIEN puede
+    hablar con el bot, pero no DONDE se publica la respuesta. Antes de este
+    arreglo, JIM escribiendo desde un grupo (Telegram permite añadir un bot
+    a uno en un toque, sin querer o sin pensarlo) pasaba la puerta -es su
+    user_id- y la respuesta -memoria, recuerdos, lo que fuera- quedaba
+    visible para todo el grupo. Exactamente el escape que RNF-06 promete
+    que no pasa, solo que de destino y no de acceso.
+
+    Mismo criterio que la voz: RNF-06 no se cumple porque "no lo hare", se
+    cumple porque el codigo no lo deja."""
+    update = _update(user_id=111, tipo_chat=tipo)
+
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(telegram_bot.puerta_allowlist(update, _context()))
+
+
+def test_AUT01_sin_chat_tampoco_pasa():
+    """effective_chat puede ser None de verdad (canal, poll...), igual que
+    effective_user. Mismo criterio: sin dato que autorizar, fuera."""
+    update = _update(user_id=111, tipo_chat=None)
+
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(telegram_bot.puerta_allowlist(update, _context()))
+
+
+def test_AUT01_el_rechazo_por_grupo_es_SILENCIOSO():
+    """Mismo criterio que el rechazo por user_id desconocido: no se
+    responde nada. Confirmar que el bot existe (aunque sea con un "esto es
+    privado") es justo la informacion que un desconocido en un grupo
+    tampoco necesita."""
+    enviados = []
+    update = _update(user_id=111, tipo_chat=ChatType.GROUP, enviados=enviados)
+
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(telegram_bot.puerta_allowlist(update, _context()))
+
+    assert enviados == []
 
 
 def test_al_desconocido_no_se_le_responde_nada():
@@ -505,6 +558,51 @@ def test_limpiar_borra_de_verdad_el_historial(monkeypatch):
     assert 111 not in telegram_bot._agentes
 
 
+def test_limpiar_AVISA_si_se_apagan_memoria_o_web(monkeypatch):
+    """Bug conocido desde el 02/08, avisado en vez de arreglado (decision
+    de Jordi, 04/08): /limpiar destruye el Agente y el que lo sustituye
+    arranca con categorias_por_defecto() -memoria y web OFF-. Si el que se
+    cerraba las tenia encendidas, esa vuelta atras pasaba EN SILENCIO."""
+    enviados = []
+    monkeypatch.setattr(
+        telegram_bot, "_configuracion_por_defecto", lambda: ("groq", "m", "k")
+    )
+    telegram_bot._agentes[111] = SimpleNamespace(
+        historial=[], categorias_activas={"memoria", "web", "calculadora"}
+    )
+
+    asyncio.run(telegram_bot.cmd_limpiar(_update(user_id=111, enviados=enviados), _context()))
+
+    aviso = enviados[-1]
+    assert "memoria" in aviso
+    assert "web" in aviso
+    assert "calculadora" not in aviso, "esa nunca se apaga por defecto"
+
+
+def test_limpiar_NO_avisa_si_no_habia_nada_encendido():
+    """Caso de control: sin categorias sensibles activas, el mensaje se
+    queda igual que antes del arreglo - no hay que meter ruido de mas."""
+    enviados = []
+    telegram_bot._agentes[111] = SimpleNamespace(
+        historial=[], categorias_activas=set()
+    )
+
+    asyncio.run(telegram_bot.cmd_limpiar(_update(user_id=111, enviados=enviados), _context()))
+
+    assert "apagarse" not in enviados[-1]
+
+
+def test_limpiar_NO_revienta_con_un_agente_sin_categorias_activas():
+    """El aviso es de CORTESIA: un doble de test (u objeto futuro) sin el
+    atributo no puede tumbar el comando principal."""
+    enviados = []
+    telegram_bot._agentes[111] = SimpleNamespace(historial=[])
+
+    asyncio.run(telegram_bot.cmd_limpiar(_update(user_id=111, enviados=enviados), _context()))
+
+    assert 111 not in telegram_bot._agentes  # limpio igual, sin reventar
+
+
 def test_un_fallo_al_crear_el_agente_avisa_al_usuario(monkeypatch):
     """_agente_de() lee la API key; si falta, lanzaba FUERA del try y el
     usuario no recibía ni el aviso genérico: silencio total y permanente,
@@ -747,16 +845,6 @@ def test_historial_vacio_lo_dice(monkeypatch):
     assert "Todavía no hay" in " ".join(enviados)
 
 
-def test_guardar_sin_nombre_explica_como_se_usa():
-    enviados = []
-    contexto = _context()
-    contexto.args = []
-
-    asyncio.run(telegram_bot.cmd_guardar(_update(enviados=enviados), contexto))
-
-    assert "/guardar" in " ".join(enviados)
-
-
 def test_guardar_pone_nombre_y_no_lo_pisa_el_turno_siguiente(
     monkeypatch, persistencia_espiada
 ):
@@ -933,14 +1021,37 @@ def test_recuerdo_ensena_lo_que_hay_en_memoria(monkeypatch):
     assert "cabe mas comida" in salida
 
 
-def test_recuerdo_sin_texto_explica_como_se_usa():
+def test_recuerdo_sin_texto_ESPERA_el_siguiente_mensaje():
+    """CAMBIO del 07/08. Antes solo se imprimia la sintaxis y no quedaba
+    nada esperando, asi que si el usuario hacia lo natural -escribir la
+    busqueda sola en el mensaje siguiente- ese mensaje se lo comia el LLM.
+    Jordi lo vio con /guardar: escribio el nombre y el bot le contesto con
+    un resumen inventado, sin guardar nada.
+
+    Ahora reutiliza la maquina de estados que YA existia para los botones
+    del menu, asi que los dos caminos se comportan igual."""
     enviados = []
     contexto = _context()
     contexto.args = []
 
     asyncio.run(telegram_bot.cmd_recuerdo(_update(enviados=enviados), contexto))
 
-    assert "/recuerdo" in " ".join(enviados)
+    assert telegram_bot._esperando_texto.get(111) == "recuerdo"
+    assert "siguiente mensaje" in " ".join(enviados)
+
+
+def test_guardar_sin_nombre_ESPERA_el_siguiente_mensaje():
+    """El caso que Jordi encontro de verdad (07/08): hizo /guardar, le
+    salio la sintaxis, escribio el nombre solo... y el bot le contesto con
+    un resumen inventado de la conversacion. La charla NO se guardo."""
+    enviados = []
+    contexto = _context()
+    contexto.args = []
+
+    asyncio.run(telegram_bot.cmd_guardar(_update(enviados=enviados), contexto))
+
+    assert telegram_bot._esperando_texto.get(111) == "guardar"
+    assert "siguiente mensaje" in " ".join(enviados)
 
 
 def test_recuerdo_sin_resultados_lo_dice(monkeypatch):
@@ -1015,6 +1126,26 @@ def test_salir_cierra_la_charla_en_los_dos_casos(monkeypatch, tmp_path, dato):
     assert 111 not in telegram_bot._rutas
     assert 111 not in telegram_bot._agentes
     assert 111 not in telegram_bot._nombres
+
+
+@pytest.mark.parametrize("dato", ["salir:conservar", "salir:descartar"])
+def test_salir_TAMBIEN_avisa_si_se_apagan_categorias(monkeypatch, tmp_path, dato):
+    """Mismo aviso que /limpiar, para el otro camino que destruye el
+    Agente: guardar-y-cerrar y descartar-y-cerrar comparten el mismo bug."""
+    editado = []
+    telegram_bot._rutas[111] = tmp_path / "conv.json"
+    telegram_bot._nombres[111] = "una etiqueta"
+    telegram_bot._agentes[111] = SimpleNamespace(
+        historial=[], categorias_activas={"memoria"}
+    )
+    monkeypatch.setattr(telegram_bot, "olvidar_conversacion", lambda r: 0)
+    monkeypatch.setattr(telegram_bot, "borrar_conversacion", lambda r: True)
+
+    asyncio.run(
+        telegram_bot.manejar_boton(_update_boton(dato, editado=editado), _context())
+    )
+
+    assert "memoria" in editado[-1]
 
 
 def test_los_botones_de_salir_no_crean_un_agente(monkeypatch, tmp_path):

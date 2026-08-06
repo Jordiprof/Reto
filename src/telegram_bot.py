@@ -25,7 +25,7 @@ from telegram import (
     LinkPreviewOptions,
     Update,
 )
-from telegram.constants import ChatAction, MessageLimit
+from telegram.constants import ChatAction, ChatType, MessageLimit
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -66,6 +66,7 @@ from src.storage import (
     leer_metadatos,
     listar_conversaciones,
 )
+from src.tools import categorias_por_defecto
 
 # --- Limites ---------------------------------------------------------------
 
@@ -200,6 +201,45 @@ def _sin_markdown(texto: str) -> str:
     texto = _VIÑETA.sub(r"\1• ", texto)
     texto = _TITULO.sub("", texto)
     return texto
+
+
+def _aviso_categorias_perdidas(agente: Agente | None) -> str:
+    """Bug conocido desde el 02/08, avisado en vez de arreglado (decision
+    de Jordi tras la auditoria del 04/08): `/limpiar`, `/cerrar` y `/borrar`
+    destruyen el Agente (`_agentes.pop`), y el que lo sustituye en el turno
+    siguiente arranca con `categorias_por_defecto()` -memoria y web OFF por
+    exposicion-. Si el que se cerraba las tenia ENCENDIDAS, esa vuelta atras
+    pasaba sin decir nada.
+
+    ESTO NO CAMBIA LA POLITICA: seguir apagando por defecto sigue siendo lo
+    correcto (fallar cerrado). Lo unico que cambia es que deja de ser
+    SILENCIOSO, que es la misma norma que ya rige el resto del proyecto
+    desde el aviso de "categoria apagada" del 02/08 y el de cifrado antes
+    de eso: ante la duda, se dice.
+
+    Llamar ANTES de hacer el pop (necesita leer categorias_activas del
+    Agente que esta a punto de desaparecer). Devuelve "" si no hay nada
+    que perder -el caso normal, con memoria/web ya apagadas- para que
+    quien lo use pueda concatenar sin comprobar antes.
+
+    `getattr` y no `agente.categorias_activas` a proposito: esto es un
+    aviso de CORTESIA, y un aviso nunca puede tumbar el comando principal
+    -mismo criterio que el envio de la foto de la NASA o `_persistir`,
+    "un fallo aqui se registra y se sigue"-. Sin el, un Agente sin ese
+    atributo (un doble de test, o un objeto futuro que no lo declare)
+    haria fallar /limpiar entero por un detalle informativo.
+    """
+    if agente is None:
+        return ""
+    activas = getattr(agente, "categorias_activas", None)
+    if not activas:
+        return ""
+    perdidas = activas - categorias_por_defecto()
+    if not perdidas:
+        return ""
+    lista = ", ".join(sorted(perdidas))
+    verbo = "vuelve" if len(perdidas) == 1 else "vuelven"
+    return f"\n\n⚠️ {lista} {verbo} a apagarse. Enciéndelo otra vez en /tools si lo necesitas."
 
 
 def _trocear(texto: str, limite: int = _LIMITE_TELEGRAM) -> list[str]:
@@ -373,6 +413,28 @@ async def puerta_allowlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             raise ApplicationHandlerStop
 
+        # AUT-01 (auditoria del 04/08): la allowlist protegia QUIEN puede
+        # hablar con el bot, pero no DONDE se publica la respuesta. JIM es
+        # el unico autorizado -eso ya lo garantiza el paso de arriba-, pero
+        # Telegram deja añadir un bot a un grupo en un toque, sin querer o
+        # sin pensarlo. Si eso pasa, el bot sigue contestando -es su
+        # user_id- y la respuesta (memoria, recuerdos, lo que sea) queda
+        # VISIBLE para todo el grupo: exactamente el escape que RNF-06
+        # promete que no pasa.
+        #
+        # Se comprueba effective_chat.type y no un booleano guardado en
+        # algun sitio: es un DATO de la peticion, no una promesa de
+        # comportamiento - la misma diferencia que ya se establecio para la
+        # voz (RNF-06 no se cumple porque "no lo hare", se cumple porque el
+        # codigo no lo deja).
+        chat = update.effective_chat
+        if chat is None or chat.type != ChatType.PRIVATE:
+            logging.warning(
+                "Telegram: update rechazado, chat no privado (huella=%s)",
+                _huella(usuario.id),
+            )
+            raise ApplicationHandlerStop
+
     except ApplicationHandlerStop:
         raise  # el rechazo normal: pasa tal cual
 
@@ -460,12 +522,36 @@ async def puerta_soltar_espera(update: Update, context: ContextTypes.DEFAULT_TYP
     ApplicationHandlerStop: solo limpia y deja pasar, para que el comando se
     ejecute normalmente despues. Puesto DESPUES de la allowlist a proposito:
     un desconocido no debe poder tocar ni este diccionario.
+
+    AMPLIADO el 07/08 con un caso REAL de Jordi: tenia un "dime que busco"
+    pendiente, mando un DOCUMENTO, y despues pregunto "de que trata el
+    documento?" - esa pregunta se la comio /recuerdo y le devolvio una
+    busqueda en la memoria en vez de leer el fichero.
+
+    Pasaba porque esta puerta exigia `mensaje.text` y un adjunto no lo
+    tiene, asi que salia por el `return` sin limpiar; y `manejar_documento`
+    tampoco pasa por `_turno`, que es donde el estado se consume. O sea:
+    el mismo agujero que la nota de voz del 01/08, por la puerta de al lado.
+
+    Mandar un fichero es un cambio de intencion tan claro como escribir un
+    comando, asi que cancela igual.
     """
     usuario = update.effective_user
     mensaje = update.effective_message
-    if usuario is None or mensaje is None or not mensaje.text:
+    if usuario is None or mensaje is None:
         return
-    if mensaje.text.startswith("/"):
+    # Un comando escrito, o CUALQUIER adjunto (documento, foto, audio...).
+    # La nota de voz NO entra aqui a proposito: esa si acaba en `_turno`,
+    # que consume el estado por el camino normal.
+    #
+    # getattr para `voice` y no `mensaje.voice`: un Message real de PTB
+    # siempre tiene el atributo (None si no hay audio), pero esta puerta
+    # corre ANTES que nada y no puede ser lo que reviente si algun dia le
+    # llega un objeto que no lo declare. Mismo criterio que en
+    # _aviso_categorias_perdidas: lo accesorio no tumba lo principal.
+    es_comando = bool(mensaje.text) and mensaje.text.startswith("/")
+    es_adjunto = not mensaje.text and getattr(mensaje, "voice", None) is None
+    if es_comando or es_adjunto:
         _esperando_texto.pop(usuario.id, None)
 
 
@@ -521,6 +607,7 @@ async def _cerrar_con_nombre(update: Update, nombre: str) -> None:
     try:
         async with _cerrojo_de(usuario.id):
             ruta = await asyncio.to_thread(_persistir, usuario.id, nombre)
+            aviso = _aviso_categorias_perdidas(_agentes.get(usuario.id))
             # Se cierra igual que en _CONSERVAR: se olvida el contexto y se
             # suelta el fichero, para que el mensaje siguiente estrene charla.
             _agentes.pop(usuario.id, None)
@@ -530,7 +617,7 @@ async def _cerrar_con_nombre(update: Update, nombre: str) -> None:
             await mensaje.reply_text("No había nada que guardar, así que la cierro sin más.")
         else:
             await mensaje.reply_text(
-                f"Guardada como «{nombre}». Empezamos conversación nueva."
+                f"Guardada como «{nombre}». Empezamos conversación nueva.{aviso}"
             )
     except Exception as error:
         logging.error("Telegram: fallo al guardar con nombre (%s)", type(error).__name__)
@@ -1115,6 +1202,12 @@ async def cmd_limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if usuario is None or update.effective_message is None:
         return
     async with _cerrojo_de(usuario.id):
+        # LEIDO ANTES DEL POP (auditoria del 04/08): el Agente que se va a
+        # destruir es el UNICO sitio donde vive que categorias tenia
+        # encendidas. Un turno despues, `_agente_de` construye uno nuevo
+        # con `categorias_por_defecto()` y ya no hay forma de saber que se
+        # perdio.
+        aviso = _aviso_categorias_perdidas(_agentes.get(usuario.id))
         _agentes.pop(usuario.id, None)
         # F5.2+: se suelta tambien el fichero de la charla. Lo ya guardado NO
         # se borra (sigue en conversations/ y en el RAG, igual que /limpiar en
@@ -1131,7 +1224,7 @@ async def cmd_limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "Listo, empezamos de cero. Con esto cada mensaje vuelve a ser barato: "
         "el historial se reenvía entero en cada turno.\n"
         "Lo de antes NO se borra —sigue guardado y lo puedo recordar—. "
-        "Para borrar de verdad, /borrar."
+        f"Para borrar de verdad, /borrar.{aviso}"
     )
 
 
@@ -1379,10 +1472,20 @@ async def cmd_guardar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     nombre = " ".join(context.args).strip() if context.args else ""
     if not nombre:
-        await mensaje.reply_text(
-            "Escribe el nombre después del comando, por ejemplo:\n"
-            "/guardar ideas de herramientas"
-        )
+        # BUG REAL encontrado por Jordi probando (07/08). Antes esto solo
+        # imprimia la sintaxis ("escribe el nombre despues del comando") y
+        # NO dejaba nada esperando. El usuario hizo lo natural -escribir el
+        # nombre solo, en el mensaje siguiente- y ese mensaje se lo comio el
+        # LLM: contesto con un resumen inventado de la conversacion y la
+        # charla NO se guardo. Silencioso y desconcertante.
+        #
+        # Se reutiliza la maquina de estados que YA existia para los botones
+        # del menu (_esperando_texto + _PETICIONES_TEXTO): el mecanismo
+        # estaba hecho, solo que este camino no lo usaba. Ahora los dos
+        # caminos -boton y comando a pelo- se comportan igual, que es la
+        # misma leccion de simetria del 28/07.
+        _esperando_texto[usuario.id] = "guardar"
+        await mensaje.reply_text(_PETICIONES_TEXTO["guardar"])
         return
     await _ejecutar_guardar(usuario.id, mensaje, nombre)
 
@@ -1441,15 +1544,17 @@ async def cmd_recuerdo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """/recuerdo <texto>: la busqueda llega como argumento del comando. Ver
     _recuerdo_con_texto para la version por boton, que la pide en el
     mensaje SIGUIENTE."""
+    usuario = update.effective_user
     mensaje = update.effective_message
-    if mensaje is None:
+    if usuario is None or mensaje is None:
         return
 
     consulta = " ".join(context.args).strip() if context.args else ""
     if not consulta:
-        await mensaje.reply_text(
-            "Dime qué quieres que busque, por ejemplo:\n/recuerdo el chiste del plato"
-        )
+        # Mismo arreglo y mismo motivo que en cmd_guardar (07/08): sin
+        # dejar nada esperando, el mensaje siguiente se lo comia el LLM.
+        _esperando_texto[usuario.id] = "recuerdo"
+        await mensaje.reply_text(_PETICIONES_TEXTO["recuerdo"])
         return
     await _ejecutar_recuerdo(mensaje, consulta)
 
@@ -1904,6 +2009,7 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 )
             else:
                 texto = "Guardada. Empezamos conversación nueva."
+            texto += _aviso_categorias_perdidas(_agentes.get(usuario.id))
             # En los dos casos se cierra la charla: se olvida el contexto en
             # curso y se suelta el fichero, para que el mensaje siguiente
             # estrene conversacion.
@@ -1987,14 +2093,24 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if ruta is None:
             await consulta.edit_message_text("Esa conversación ya no existe.")
             return
-        borrado = await asyncio.to_thread(_borrar_del_todo, ruta)
-        # Si era la conversacion ABIERTA, hay que soltarla: si no, el
-        # siguiente turno la volveria a escribir en la misma ruta y la
-        # resucitaria (guardar_conversacion con ruta= crea el fichero
-        # aunque ya no exista).
-        if _rutas.get(usuario.id) == ruta:
-            _rutas.pop(usuario.id, None)
-            _nombres.pop(usuario.id, None)
+        # LOG-03 (auditoria del 04/08): BAJO EL CERROJO, no suelto como
+        # estaba. Era el UNICO camino de todo el fichero que tocaba estado
+        # compartido sin _cerrojo_de -se verifico grep-eando: todos los
+        # demas lo llevan-. Sin el, un mensaje que llegara casi a la vez
+        # (p.ej. una nota de voz que dispara _persistir) podia reindexar el
+        # JSON justo entre "sacarlo del indice vectorial" y "borrarlo del
+        # disco", dejando vectores huerfanos apuntando a un fichero que ya
+        # no existe. Con un solo usuario el disparador solo puedes ser tu
+        # mismo, pero el resultado -indice corrupto- es real igualmente.
+        async with _cerrojo_de(usuario.id):
+            borrado = await asyncio.to_thread(_borrar_del_todo, ruta)
+            # Si era la conversacion ABIERTA, hay que soltarla: si no, el
+            # siguiente turno la volveria a escribir en la misma ruta y la
+            # resucitaria (guardar_conversacion con ruta= crea el fichero
+            # aunque ya no exista).
+            if _rutas.get(usuario.id) == ruta:
+                _rutas.pop(usuario.id, None)
+                _nombres.pop(usuario.id, None)
         await consulta.edit_message_text(
             "Borrada del disco y de mi memoria." if borrado else "No he podido borrarla."
         )

@@ -228,6 +228,17 @@ def test_el_mensaje_de_error_no_revela_a_que_ip_resolvio():
     ("http://127.0.0.1:8080/admin", "127.0.0.1"),
     ("http://169.254.169.254/latest/meta-data/", "169.254.169.254"),
     ("http://10.0.0.1/", "10.0.0.1"),
+    # AÑADIDOS el 07/08 probando en real: los NOMBRES reservados caían por
+    # la otra vía (la lista blanca), cuyo texto termina en "pídele a JIM que
+    # lo añada a DOMINIOS_PERMITIDOS_WEB" — o sea, explicándole cómo
+    # autorizar su propio localhost. Mismo fallo que el 02/08 con
+    # 192.168.1.1, por una puerta distinta. El bloqueo ya era correcto; lo
+    # que estaba mal era el CONSEJO.
+    ("https://localhost:8080", "localhost"),
+    ("http://localhost/panel", "localhost"),
+    ("https://metadata.google.internal/", "metadata.google.internal"),
+    ("http://mi-nas.local/", "mi-nas.local"),
+    ("http://algo.localhost/", "algo.localhost"),
 ])
 def test_una_IP_interna_NO_invita_a_añadirla_a_la_lista(url, host):
     """BUG REAL encontrado por Jordi probando el 02/08. Pidió resumir
@@ -258,3 +269,23 @@ def test_un_dominio_normal_SIGUE_diciendo_como_autorizarlo():
         validar_url("https://sitio-cualquiera.com/")
 
     assert "DOMINIOS_PERMITIDOS_WEB" in str(error.value)
+
+
+def test_el_mensaje_habla_a_JIM_en_SEGUNDA_persona():
+    """FALLO REAL del 07/08. El texto decía "la única manera es que JIM
+    añada ese dominio", y el modelo -que está hablando CON JIM- leyó "JIM"
+    como un tercero. Contestó "¿te parece bien que le pida a JIM que lo
+    añada?" y luego "JIM, ¿puedes añadir wikipedia.org...? 🙏", dirigiéndose
+    a un administrador que no existe.
+
+    Es primo hermano de la alucinación del 01/08 ("he pedido que se añada,
+    avisaré cuando esté"): la prohibición de inventarse una cola de
+    aprobación ya estaba puesta, pero nombrar a JIM en tercera persona le
+    volvía a ofrecer un intermediario al que dirigirse."""
+    with pytest.raises(UrlNoPermitida) as error:
+        validar_url("https://sitio-cualquiera.com/")
+
+    mensaje = str(error.value)
+    assert "TÚ MISMO" in mensaje
+    assert "nadie puede hacerlo por ti" in mensaje
+    assert "que JIM añada" not in mensaje, "vuelve a hablar de JIM en tercera persona"

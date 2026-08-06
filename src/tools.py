@@ -194,8 +194,17 @@ _ETIQUETAS_DE_DATO = (_ETIQUETA_RECUERDO, _ETIQUETA_FUENTE)
 # como si estuviera fuera de ella - la version en miniatura de una inyeccion
 # SQL, cerrando la comilla.
 # re.IGNORECASE + \s*: se cierran tambien "</RECUERDO>" y "< / fuente >".
+#
+# LOG-01 (auditoria del 04/08): `[^>]*` ANTES del `>` final, para tragarse
+# tambien los ATRIBUTOS de una etiqueta falsa. Hasta hoy la regex exigia
+# "\s*>" justo detras del nombre, asi que "</fuente>" se limpiaba pero
+# "</fuente falsa=\"1\">" pasaba INTACTO -verificado probandolo-: el hueco
+# es exactamente el mismo que cerrar una comilla SQL con algo detras. `\b`
+# tras el nombre evita el falso positivo contrario ("fuentecita" no debe
+# limpiarse); `[^>]*` es lineal y no puede causar ReDoS (sin grupos
+# anidados que compitan por los mismos caracteres).
 _ETIQUETA_EN_TEXTO = re.compile(
-    rf"<\s*/?\s*(?:{'|'.join(_ETIQUETAS_DE_DATO)})\s*>", re.IGNORECASE
+    rf"<\s*/?\s*(?:{'|'.join(_ETIQUETAS_DE_DATO)})\b[^>]*>", re.IGNORECASE
 )
 
 

@@ -48,6 +48,12 @@ _MAX_BYTES_ADJUNTO = 15_000_000
 # propio ataque) ya habria ocurrido.
 _MAX_BYTES_DESCOMPRIMIDOS = 50_000_000
 
+# Tamaño del bloque al MEDIR la descompresion real (LOG-02). 1 MB: grande
+# para que no sean miles de llamadas a .read() en un documento normal,
+# pequeño para que un ZIP bomb se corte a los pocos bloques y no cerca del
+# limite entero.
+_BLOQUE_LECTURA_ZIP = 1_000_000
+
 _EXTENSIONES_VALIDAS = {".pdf": "pdf", ".docx": "docx"}
 
 
@@ -87,11 +93,32 @@ def validar_adjunto(datos: bytes, nombre_original: str) -> DocumentoAdjunto:
         try:
             with zipfile.ZipFile(BytesIO(datos)) as paquete:
                 for entrada in paquete.infolist():
-                    if entrada.file_size > _MAX_BYTES_DESCOMPRIMIDOS:
-                        raise DocumentoNoValido(
-                            "Ese .docx no parece un documento normal (una de sus partes "
-                            "es sospechosamente grande al descomprimir)."
-                        )
+                    # LOG-02 (auditoria del 04/08): se MIDE lo que sale de
+                    # verdad al descomprimir, no `entrada.file_size`. Ese
+                    # campo vive en la cabecera local del ZIP -la escribe
+                    # quien crea el fichero- y se puede falsear sin que el
+                    # ZIP deje de ser valido: un adjunto con la cabecera
+                    # diciendo "1 KB" y el contenido real siendo un ZIP
+                    # bomb de gigabytes pasaba este chequeo intacto, porque
+                    # nunca se llegaba a mirar lo que habia DENTRO. Es la
+                    # misma leccion que "no confiar en el Content-Length"
+                    # de un HTTP: la cabecera es lo que DICE el emisor, no
+                    # lo que hay.
+                    #
+                    # Se lee por BLOQUES y se corta en cuanto se supera el
+                    # limite -no se descomprime entero antes de comprobar-,
+                    # que es justo lo que evita gastar la memoria que este
+                    # control existe para proteger.
+                    leidos = 0
+                    with paquete.open(entrada) as miembro:
+                        while trozo := miembro.read(_BLOQUE_LECTURA_ZIP):
+                            leidos += len(trozo)
+                            if leidos > _MAX_BYTES_DESCOMPRIMIDOS:
+                                raise DocumentoNoValido(
+                                    "Ese .docx no parece un documento normal (una de "
+                                    "sus partes es sospechosamente grande al "
+                                    "descomprimir)."
+                                )
         except zipfile.BadZipFile:
             raise DocumentoNoValido("Ese .docx está dañado o no es un fichero Word de verdad.")
 

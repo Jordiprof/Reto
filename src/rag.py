@@ -381,6 +381,20 @@ _PATRONES_NEGATIVA = (
     "no tengo gustos", "no tengo edad", "no tengo cuerpo", "no tengo emociones",
     "no tengo sentimientos", "como ia no", "como inteligencia artificial no",
     "soy una ia", "soy una inteligencia artificial",
+    # AMPLIADO otra vez el 07/08, con los casos REALES que Jordi vio en
+    # Telegram. Dos huecos distintos:
+    #
+    # (a) "No puedo SABER cual es tu postre favorito porque el grupo
+    #     «memoria» SIGUE apagado" -> ni "no puedo decirte" ni "esta
+    #     apagado" casaban con esa redaccion. La leccion es que la lista de
+    #     patrones envejece: el modelo redacta la misma negativa de formas
+    #     nuevas cada vez, asi que esto se amplia cuando aparece un caso
+    #     real, no adivinando de antemano.
+    # (b) "no tengo registrado" faltaba pese a ser de las mas frecuentes.
+    "no puedo saber", "no puedo recordar", "no sabria decirte",
+    "no tengo registrado", "no tengo constancia", "no me consta",
+    "sigue apagado", "sigue apagada", "grupo memoria", "grupo «memoria»",
+    "está desactivado", "esta desactivado", "está desactivada", "esta desactivada",
 )
 
 # Solo se mira el PRINCIPIO de la respuesta, y este numero no es a ojo: sale

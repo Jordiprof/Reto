@@ -40,6 +40,27 @@ from src.config import obtener_dominios_permitidos
 # ftp://, gopher:// (usable para hablar con otros protocolos) o data:.
 _ESQUEMAS_PERMITIDOS = ("http", "https")
 
+# NOMBRES que significan "esta misma maquina" o "la red de dentro", sin ser
+# una IP escrita a pelo (07/08, encontrado probando).
+#
+# El agujero era de MENSAJE, no de bloqueo: `localhost` no es una IP
+# literal, asi que _es_ip_interna_literal decia False y el guardian lo
+# rechazaba por la OTRA via -"no esta en la lista blanca"-, cuyo texto
+# termina en "la unica manera es que JIM lo añada a DOMINIOS_PERMITIDOS_WEB".
+# O sea: le explicaba a JIM como autorizar su propio localhost. Es el mismo
+# fallo del 02/08 con 192.168.1.1, por una puerta distinta.
+#
+# El bloqueo de verdad seguia y sigue estando (la resolucion DNS de abajo
+# caza 127.0.0.1 igual), pero un control que enseña a saltarselo esta a
+# medio hacer. Ver el comentario largo en validar_url.
+#
+# Se comprueban tambien los SUFIJOS: `.localhost` y `.local` estan
+# reservados por RFC para nombres que no salen de la maquina o de la LAN, y
+# `.internal` es la convencion de las nubes (metadata.google.internal es el
+# equivalente por nombre de 169.254.169.254).
+_NOMBRES_INTERNOS = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+_SUFIJOS_INTERNOS = (".localhost", ".local", ".internal", ".home.arpa")
+
 
 class UrlNoPermitida(Exception):
     """La URL no supera el guardian. El mensaje esta escrito para que lo
@@ -65,18 +86,27 @@ def _resolver(host: str) -> list:
 
 
 def _es_ip_interna_literal(host: str) -> bool:
-    """True solo si el host YA ES una IP interna escrita a pelo.
+    """True si el host se reconoce como interno SIN tener que resolverlo:
+    o es una IP interna escrita a pelo, o es un nombre reservado que
+    significa "esta maquina" / "la red de dentro".
 
     Distinto de _es_interna: aquel decide sobre una IP ya resuelta y trata
     lo no interpretable como peligroso (fallar cerrado). Este responde a
-    otra pregunta - "¿lo que ha escrito es literalmente una IP interna?" -
-    y por eso un nombre de dominio devuelve False: todavia no sabemos a
+    otra pregunta - "¿lo que ha escrito ya se sabe que es interno?" - y por
+    eso un dominio publico normal devuelve False: todavia no sabemos a
     donde apunta, y eso lo decide la resolucion DNS mas abajo.
+
+    Lo de los NOMBRES se añadio el 07/08 y NO cambia lo que se bloquea
+    -localhost ya se bloqueaba, por la lista blanca- sino QUE SE LE DICE AL
+    USUARIO: por la via de la lista blanca el mensaje acaba en "pidele a
+    JIM que lo añada a DOMINIOS_PERMITIDOS_WEB", que aqui es justo el
+    consejo que no hay que dar.
     """
     try:
         ipaddress.ip_address(host)
     except ValueError:
-        return False  # es un nombre, no una IP: aqui no se decide nada
+        # No es una IP. ¿Es uno de los nombres reservados?
+        return host in _NOMBRES_INTERNOS or host.endswith(_SUFIJOS_INTERNOS)
     return _es_interna(host)
 
 
@@ -192,9 +222,23 @@ def validar_url(url: str) -> str:
             f"'{host}' no está en mi lista de sitios autorizados y no puedo leerlo. "
             "IMPORTANTE: no existe ninguna forma de pedir permiso, ni cola de "
             "aprobación, ni nadie a quien avisar. NO digas que vas a solicitarlo, "
-            "ni que avisarás cuando esté disponible: sería mentira. La ÚNICA "
-            "manera es que JIM añada ese dominio a DOMINIOS_PERMITIDOS_WEB en el "
-            "fichero .env y reinicie el bot. Dile eso tal cual."
+            "ni que avisarás cuando esté disponible: sería mentira. "
+            # SE LE HABLA A JIM EN SEGUNDA PERSONA (07/08, fallo real). Antes
+            # ponia "la unica manera es que JIM añada ese dominio", y el
+            # modelo -que esta hablando CON JIM- leyo "JIM" como un tercero:
+            # contesto "¿te parece bien que le pida a JIM que lo añada?" y
+            # despues "JIM, ¿puedes añadir wikipedia.org...? 🙏", dirigiendose
+            # a un administrador que no existe. Se quedo esperando a alguien
+            # que era la propia persona que le estaba escribiendo.
+            #
+            # Es un primo hermano de la alucinacion del 01/08 ("he pedido que
+            # se añada, avisare cuando este"): la prohibicion de inventarse
+            # una cola de aprobacion ya estaba, pero nombrar a JIM en tercera
+            # persona le volvia a ofrecer un intermediario al que dirigirse.
+            "La ÚNICA manera es que lo añadas TÚ MISMO a DOMINIOS_PERMITIDOS_WEB "
+            "en el fichero .env y reinicies el bot; nadie puede hacerlo por ti, "
+            "y quien me escribe ES quien tiene que hacerlo. Díselo tal cual, en "
+            "segunda persona."
         )
 
     for ip in _resolver(host):
