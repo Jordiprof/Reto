@@ -1,7 +1,8 @@
 # ADR-001 — Proveedor(es) LLM
 
-**Estado:** ✅ Decisión (16/07/2026)
-**Fecha:** 15/07/2026 (hipótesis) → 16/07/2026 (decisión) · **Decisor:** Jordi
+**Estado:** ✅ Decisión (16/07/2026) · **↻ Revisada el 03/08/2026** (ver §Revisión)
+**Fecha:** 15/07/2026 (hipótesis) → 16/07/2026 (decisión) → 03/08/2026 (revisión del orden)
+**Decisor:** Jordi
 
 ## Contexto
 
@@ -173,3 +174,78 @@ que hice yo. Se descarta la fuente no oficial que afirmaba lo contrario.
   Anthropic) — cada SDK tiene su propia firma, visto en los smoke tests de F1.2–F1.5.
 - Idea aparcada para Fase 4/5 (ver E3): una tool `consultar_otro_modelo` que delegue en
   otro proveedor de esta misma cadena — orquestación ligera sin romper la arquitectura.
+
+---
+
+## Revisión (03/08/2026) — el orden cambia: **Ollama → Groq → Gemini**
+
+> La decisión original **no se borra**: se deja escrita arriba tal y como se tomó, porque
+> era correcta con los datos y el uso que había en julio. Lo que cambió fue el uso.
+
+### Qué motivó revisarla
+
+Groq iba primero **por velocidad**, y en aquel momento eso era lo que importaba: un turno
+era un mensaje corto, sin herramientas ni documentos. Ese supuesto dejó de valer al llegar
+F5.5:
+
+- Groq (free) da **100.000 tokens/día** en `llama-3.3-70b-versatile`.
+- Con un documento cargado, el historial reenvía **~5.000 tokens en cada turno** (AUD-03),
+  porque el texto del documento se queda en el contexto.
+- **La cuota diaria se agota en ~18 mensajes.** Medido en una sesión real del 03/08: de
+  21:50 a 22:03, quince mensajes seguidos, Groq falló en **todos** sin recuperarse.
+- Ollama Cloud, en esa misma sesión: **cero fallos**, entre 1,1 y 6,0 s por respuesta.
+
+Y hay un segundo motivo, de **calidad** y no de cuota: `llama-3.3-70b` reescribió las
+fechas de una previsión meteorológica que la herramienta le había dado bien
+(`2026-08-03` → `2024-03-07`), copiando en cambio las 21 cifras de temperatura sin un
+error. Con el mismo dato, `gpt-oss:120b` y `nemotron-3-ultra` las escribieron bien.
+
+### La cadena hoy
+
+| Orden | Proveedor / modelo | Por qué ahí |
+|---|---|---|
+| 1 | **Ollama Cloud** `gpt-oss:120b` | Cuota holgada y cero fallos medidos |
+| 2 | **Groq** `llama-3.3-70b-versatile` | Sigue siendo el más rápido cuando tiene cuota |
+| 3 | **Groq** `openai/gpt-oss-120b` | **El DOBLE de cuota diaria** (200.000 tok/día) |
+| 4 | **Groq** `qwen/qwen3.6-27b` | Tercera reserva del mismo proveedor |
+| 5 | **Gemini** `gemini-3.5-flash` | Sin cambios respecto a la decisión original |
+
+### Hallazgo que lo hizo posible: **en Groq el cupo es POR MODELO**
+
+Idea de Jordi al ver que Groq se agotaba: *"¿da igual cambiarle de modelo, o se queda sin
+límite solo llama-3.3?"*. La documentación resumida decía **"rate limits apply at the
+organization level… shared across all models"**, lo cual chocaba con que la propia tabla
+diera límites distintos por modelo.
+
+Se verificó **contra la API real**, leyendo las cabeceras `x-ratelimit-*`. Cuatro llamadas
+gastadas **solo** en `llama-3.3`:
+
+| Modelo | Peticiones | Tokens |
+|---|---|---|
+| `llama-3.3-70b-versatile` | 993 ⬇ | 10.969 ⬇ |
+| `openai/gpt-oss-120b` | **997 (intacto)** | **7.920 (intacto)** |
+
+Cupos independientes. Por eso la cadena degrada ahora a **otro modelo del mismo
+proveedor** antes de cambiar de proveedor entero — y esa reserva **se salta si el fallo no
+es de cuota**, porque cambiar de modelo solo salva de una cuota agotada (con una clave
+mala el siguiente fallaría igual y sería una llamada tirada, justo lo que SEG-03 vino a
+evitar).
+
+**A Ollama y Gemini NO se les pone reserva de modelo**: no publican contadores de cuota
+(comprobado el 03/08), así que cualquier afirmación sobre si sus cupos son por modelo
+sería una suposición. Se amplía cuando haya números, no antes.
+
+### Lo que NO cambia
+
+- **La transcripción de voz** sigue yendo a Groq siempre y a dedo (`whisper-large-v3-turbo`
+  en `voz.py`, con su propio cliente y su propio cupo: 20 RPM / 2.000 RPD).
+- **`/condensar`** sigue eligiendo `gemini-2.5-flash` a dedo, por cuota de tokens por
+  minuto (250.000 frente a los 12.000 de Groq).
+- Son **tres decisiones independientes**: el orden del chat no las toca.
+
+### Consecuencia de arquitectura
+
+El orden pasa a derivarse de **una sola fuente**: el orden del diccionario
+`config.PROVEEDORES`. Antes "Groq primero" estaba escrito a mano en **tres** sitios (el
+menú de la CLI, el arranque del bot y la cadena del router), y cambiar la decisión obligaba
+a acordarse de los tres. Hay un test que exige que no vuelvan a separarse.

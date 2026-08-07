@@ -1,10 +1,14 @@
 # E4 — Entrega Final
 ## JIMMY — Asistente personal con IA (CLI + Telegram)
 
-**Versión:** 1.0
-**Fecha:** 15/07/2026 (v0.1, esqueleto) → 31/07/2026 (**v1.0**, redacción final)
+**Versión:** 1.1
+**Fecha:** 15/07/2026 (v0.1, esqueleto) → 31/07/2026 (v1.0) → 07/08/2026 (**v1.1**)
 **Autor:** Jordi
 **Estado:** Entregado — Fase 5 cerrada
+
+> **v1.1 (07/08):** actualizado tras siete días más de trabajo que la v1.0 no recogía —
+> voz, cerrojo entre procesos, `/condensar`, reordenación de ADR-001, dos auditorías de
+> seguridad y las baterías de prueba manual. Los tests pasaron de 374 a 784.
 
 ---
 
@@ -23,15 +27,16 @@ entender esas piezas, no consumirlas.
 
 | Métrica | Valor |
 |---|---|
-| Código fuente | **6.019 líneas** (13 módulos) |
-| Tests | **5.559 líneas · 374 tests, todos en verde** |
-| Proporción test/código | **0,92 : 1** |
+| Código fuente | **10.586 líneas** (17 módulos) |
+| Tests | **11.683 líneas · 784 tests, todos en verde** |
+| Proporción test/código | **1,10 : 1** — hay más test que código |
 | Herramientas implementadas | 7, en 6 categorías |
-| ADR | 6, todos aceptados |
-| Entradas del diario de decisiones | 13 días documentados |
-| Commits | 64 |
-| Lint (`ruff`) | limpio |
-| CI (GitHub Actions) | verde: lint + tests + `pip-audit` |
+| ADR | 6 aceptados (ADR-001 **revisado** el 03/08) |
+| Entradas del diario de decisiones | **20 días · 151 decisiones** |
+| Commits | 83 |
+| Lint (`ruff`) | limpio en **todo** el repo (`src`, `tests` y `scripts`) |
+| CI (GitHub Actions) | verde: lint + tests + `pip-audit` sobre el lockfile |
+| Auditorías de seguridad | **3** (23/07, 27/07, 04-07/08) |
 
 ---
 
@@ -80,22 +85,40 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 
 | Fichero | Tests | Qué protege |
 |---|---|---|
-| `test_tools.py` | 106 | Herramientas, validación de argumentos, SEG-07, categorías |
-| `test_telegram_seguridad.py` | 80 | Las dos puertas, privacidad de logs, comandos, adjuntos |
-| `test_red_segura.py` | 27 | Guardián anti-SSRF |
+| `test_tools.py` | 115 | Herramientas, validación de argumentos, SEG-07, categorías |
+| `test_telegram_seguridad.py` | 90 | Las tres puertas, privacidad de logs, comandos, adjuntos |
+| `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
+| `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
+| `test_red_segura.py` | 38 | Guardián anti-SSRF |
+| `test_resumen_largo.py` | 36 | `/condensar` por bloques |
+| `test_rag.py` | 29 | Memoria semántica, privacidad del índice |
+| `test_readme.py` | 26 | **Que el README no mienta** |
+| `test_llm_loop.py` | 25 | Bucle de tools, presupuesto, idempotencia |
+| `test_llm_router.py` | 24 | Reintentos, degradación, reservas de modelo |
+| `test_voz.py` | 21 | Whisper + Piper, límites de duración |
+| `test_telegram_voz.py` | 20 | La puerta de la voz antes de descargar el audio |
 | `test_storage.py` | 20 | Cifrado, metadatos en claro, borrado |
-| `test_llm_loop.py` | 19 | Bucle de tools, presupuesto, idempotencia |
-| `test_documentos.py` | 18 | PDF/Word, bomba de descompresión |
-| `test_config.py` | 17 | Configuración, lista blanca de dominios |
+| `test_cuota_y_orden.py` | 20 | Cuota diaria, orden de proveedores, tope por proveedor |
+| `test_config.py` | 19 | Configuración, lista blanca de dominios |
+| `test_avisos_caida.py` | 19 | Avisos de caída distinguiendo tokens/peticiones/día |
+| `test_condensar_lectura.py` | 17 | Caché de lectura, una llamada por bloque |
+| `test_recuerdo_y_limpiar.py` | 16 | Ruido del RAG, `/limpiar`, reglas del prompt |
 | `test_config_logging.py` | 16 | Modo depuración opt-in |
+| `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
 | `test_logging.py` | 14 | Política de solo metadatos |
-| `test_rag.py` | 13 | Memoria semántica, privacidad del índice |
+| `test_agent.py` | 14 | Núcleo, contaminación de historial |
 | `test_llm_gemini.py` | 13 | Traducción del dialecto de Gemini |
+| `test_tool_call_mal_generada.py` | 12 | `tool_use_failed` como reintentable |
+| `test_telegram_presentacion.py` | 12 | Markdown, foto duplicada, estado y adjuntos |
+| `test_compactar_historial.py` | 12 | AUD-03: el historial no crece sin freno |
+| `test_tools_apagadas.py` | 11 | Aviso de categoría apagada |
 | `test_main_menus.py` | 11 | Menús de la CLI |
-| `test_llm_router.py` | 9 | Reintentos y degradación |
-| `test_agent.py` | 8 | Núcleo, contaminación de historial |
-| `test_llm_client.py` | 3 | Despacho de tools |
-| **TOTAL** | **374** | |
+| `test_cerrojo.py` | 11 | Cerrojo del SO entre procesos |
+| `test_telegram_condensar.py` | 9 | `/condensar` por Telegram |
+| `test_clave_cifrado.py` | 9 | Validación de la clave Fernet |
+| `test_redirecciones.py` | 7 | Que una redirección no salte el guardián |
+| `test_llm_client.py` | 5 | Despacho de tools |
+| **TOTAL** | **784** | |
 
 ### 3.2 Cómo se ejecutan
 
@@ -117,8 +140,8 @@ destaparon tests que no comprobaban lo que decían**. Detalle en E3 §6.1.
 
 ### 3.4 Pruebas manuales contra APIs reales
 
-Cada herramienta se probó contra su API de verdad antes de darla por hecha. Esto encontró
-**seis fallos que ningún test vio**:
+Cada herramienta se probó contra su API de verdad antes de darla por hecha. **Esta es la
+técnica que más fallos ha encontrado en todo el proyecto** — y ninguno lo vio un test:
 
 | # | Fallo encontrado usando el bot | Causa |
 |---|---|---|
@@ -128,10 +151,25 @@ Cada herramienta se probó contra su API de verdad antes de darla por hecha. Est
 | 4 | `leer_documento` reventaba solo en el venv | Dependencias instaladas en el Python equivocado |
 | 5 | `leer_documento` **nunca se ejecutaba** en Telegram | Groq manda `null` cuando la tool no tiene parámetros |
 | 6 | El agente se **citaba a sí mismo** como prueba tras inventarse un nombre | Su alucinación se persistió, se indexó y volvió como "recuerdo" |
+| 7 | El guardián de SSRF **enseñaba a saltárselo** | Una IP interna no está en la lista blanca, así que salía por el mensaje genérico: *"pide que añadan 192.168.1.1 a la lista"* |
+| 8 | El modelo **reescribió las fechas** de una previsión meteorológica | Copió las 21 cifras sin error y cambió solo el año y el mes. La API había respondido bien |
+| 9 | La cuota diaria se reintentaba **tres veces por mensaje** | El aviso decía "esto no se arregla esperando" y el código, acto seguido, esperaba |
+| 10 | `/condensar` leía el documento **dos veces** | Con un solo bloque, la segunda pasada resumía su propio resumen |
+| 11 | La foto de la NASA llegaba **duplicada** a Telegram | Dos caminos: `send_photo` y la vista previa del enlace en el texto |
+| 12 | `/guardar` **se comió una conversación** | Sin argumento no dejaba nada esperando: el nombre se lo tragó el LLM, que contestó con un resumen inventado |
+| 13 | Un adjunto **no cancelaba** un `/recuerdo` pendiente | La pregunta siguiente sobre el documento se la comió la búsqueda en memoria |
+| 14 | El modelo hablaba con **un JIM imaginario** | El guardián decía "que JIM lo añada" en tercera persona, y el modelo —hablando con JIM— buscó un intermediario |
+| 15 | El bot **envenenó su propia memoria** | Se inventó que su comida favorita era "pizza con albahaca"; quedó indexado como hecho y `/recuerdo` lo devolvía |
 
 **El nº 5 lo destapó el log, no el chat** — y el log solo tenía metadatos. La política de
 privacidad del 27/07 resultó tener justo el dato que hacía falta, sin un solo carácter de
 contenido.
+
+**Los nº 7, 13 y 14 son el mismo fallo por tres puertas distintas**, y esa es la lección
+más útil de todas: arreglar el camino concreto no cierra la clase. El estado de espera
+sobrevivía a una nota de voz (01/08, arreglado), y seguía sobreviviendo a un adjunto
+(07/08). El guardián dejó de enseñar a saltárselo con IP literales (02/08), y seguía
+haciéndolo con `localhost` (07/08).
 
 ---
 
@@ -181,34 +219,39 @@ python -m src.telegram_bot
 ## 5. Checklist de entrega
 
 ### 5.1 Código
-- [x] Todo en repositorio Git con historial real (64 commits)
-- [x] README funcional y verificado
-- [x] Lint limpio (`ruff check src tests`)
-- [x] Sin secretos en el código ni en el historial (verificado con `git log --all`)
+- [x] Todo en repositorio Git con historial real (83 commits)
+- [x] README funcional y verificado — **con 26 tests que impiden que vuelva a mentir**
+- [x] Lint limpio en **todo** el repo (`ruff check .`, incluido `scripts/`)
+- [x] Sin secretos en el código ni en el historial (`gitleaks` sobre 81 commits, 4 ramas)
 - [x] Dependencias auditadas (`pip-audit` en CI, sin `continue-on-error`)
-- [x] Versiones fijadas en `requirements-lock.txt`
+- [x] Versiones fijadas y **con hashes** en `requirements-lock.txt` (`--require-hashes`)
 
 ### 5.2 Tests
-- [x] 374 tests en verde
+- [x] 784 tests en verde
 - [x] Controles críticos validados **por mutación**
 - [x] Tests de privacidad que reproducen la fuga real del 27/07
-- [x] CI verde en GitHub Actions
+- [x] CI verde en GitHub Actions, con permisos mínimos y Actions fijadas por SHA
 - [x] Prueba manual contra APIs reales de cada herramienta
+- [x] **Baterías de prueba manual guionizadas** (CLI y Telegram), incluida prompt injection
 
 ### 5.3 Documentación
 - [x] E1, E2, E3, E4 completos y actualizados
-- [x] ADR-001 a ADR-006 aceptados
-- [x] Diario de decisiones con 13 días, sin huecos
+- [x] ADR-001 a ADR-006 aceptados (ADR-001 **revisado** el 03/08, con la decisión original intacta)
+- [x] Diario de decisiones con **20 días y 151 decisiones**, sin huecos
 - [x] Reflexión final (§7)
+- [x] Tres informes de auditoría de seguridad (23/07, 27/07, 04-07/08)
 
 ### 5.4 Funcionalidad
 - [x] CLI y bot funcionando
 - [x] Memoria compartida entre los dos canales (con test de invariante)
 - [x] 7 herramientas activables por categoría
-- [x] Router degradando entre proveedores
+- [x] Router degradando entre proveedores **y entre modelos del mismo proveedor**
 - [x] Cifrado en reposo
-- [ ] Voz por Telegram — **pendiente**
+- [x] **Voz por Telegram** ✅ 31/07 — Whisper por Groq + Piper local, ambos apagados al arrancar
+- [x] **Cerrojo entre procesos** ✅ 01/08 — CLI y bot ya no pueden corromper el índice
+- [x] **`/condensar`** ✅ 02/08 — resumen por bloques de documentos largos
 - [ ] Hosting 24/7 — **decisión abierta**
+- [ ] Mini eval harness — opcional desde el principio (`[F5.0/T6]`)
 
 ---
 
@@ -217,14 +260,24 @@ python -m src.telegram_bot
 | Limitación | Por qué está así | Cómo se cerraría |
 |---|---|---|
 | El texto del turno **sí** viaja al proveedor LLM | Inevitable sin modelo local | Ollama local |
+| **La voz sale de la máquina al transcribir** | Whisper corre en Groq. Es un dato **biométrico** | Whisper local (descartado: decenas de segundos en CPU). Mitigado: apagado por defecto, con el aviso en el propio menú |
+| **Telegram no cifra de extremo a extremo** | Los mensajes pasan por sus servidores | Ninguna: es el precio del canal. Declarado, no disimulado |
 | Un solo usuario: el bot **no arranca** con más de uno | El índice del RAG no está particionado | Particionar por `user_id` |
-| CLI y bot a la vez sobre `chroma_db/` no está protegido | El cerrojo protege hilos, no procesos | Cerrojo de fichero |
-| El RAG devuelve **preguntas, no respuestas** | Cada mensaje se indexa suelto | Indexar pares pregunta-respuesta |
-| Documentos largos: solo 8.000 caracteres | Coste de contexto | Trocear + buscar por relevancia |
 | El modelo no ve las **imágenes** de un PDF | `pypdf` extrae texto, no OCR | Contar imágenes y avisar; OCR |
-| **DNS rebinding** no se cierra en el guardián | Haría falta conectar por IP con cabecera `Host` | Documentado como límite |
-| `/salir` significa cosas distintas en CLI y bot | Deuda de nomenclatura | Renombrar o documentar |
-| CVE-2026-45829 en `chromadb` sin parche | No explotable en modo embebido | Vigilada: si va a VPS, **nunca** como servicio |
+| No se puede pedir **un fragmento por número** | La búsqueda es por significado; un número no significa nada | Índice por posición además del semántico |
+| **DNS rebinding** no se cierra en el guardián | Haría falta conectar por IP con cabecera `Host` | Resolver una vez y fijar la IP |
+| CVE-2026-45829 en `chromadb` sin parche | **1.5.9 es la última que existe** (verificado en PyPI). No explotable en modo embebido | Vigilada: si va a VPS, **nunca** como servicio |
+| El modelo puede **reescribir un dato** que la herramienta le dio bien | No hay control que lo cierre: la API responde bien y el texto se estropea después | Mitigado (día de la semana en las fechas, regla en el prompt) + elegir mejor modelo |
+| **La insistencia puede vencer a la cautela** del modelo | Es un límite del modelo, no del código | Regla en el prompt; verificado que ahora aguanta 3 insistencias |
+
+### 6.1 Limitaciones que la v1.0 declaraba y **ya están cerradas**
+
+| Limitación de la v1.0 | Cerrada |
+|---|---|
+| ~~CLI y bot a la vez sobre `chroma_db/` no está protegido~~ | ✅ **01/08** — `src/cerrojo.py`, cerrojo del SO. El segundo proceso no arranca |
+| ~~El RAG devuelve **preguntas, no respuestas**~~ | ✅ **02/08** — ventana de turno: si el acierto es la pregunta, adjunta su respuesta |
+| ~~Documentos largos: solo 8.000 caracteres~~ | ✅ **01-02/08** — troceo + búsqueda por relevancia, y `/condensar` para el documento entero |
+| ~~`/salir` significa cosas distintas en CLI y bot~~ | ✅ **01/08** — en Telegram pasa a llamarse `/cerrar`, con `/salir` como alias oculto |
 
 ---
 
@@ -256,6 +309,23 @@ la recuperó de su propia memoria y **la citó como prueba**. Ver un sistema fab
 para sostener un error propio ha sido la lección más incómoda y la más útil: la memoria no
 distingue lo que pasó de lo que el modelo dijo que pasó, salvo que se lo digas explícitamente.
 
+**4. Un arreglo cierra un camino, no una clase (añadido el 07/08).** Tres veces me ha pasado
+lo mismo: arreglo un fallo, lo doy por cerrado, y semanas después reaparece **por la puerta
+de al lado**. El estado de espera que se comía el mensaje siguiente lo arreglé para las notas
+de voz (01/08) y seguía roto para los adjuntos (07/08). El guardián que enseñaba a saltárselo
+lo arreglé para las IP literales (02/08) y seguía haciéndolo con `localhost` (07/08). La
+pregunta que aprendí a hacerme no es *"¿está arreglado?"* sino *"¿por dónde más se entra
+aquí?"* — y la respuesta suele estar en el propio código, a un `grep` de distancia.
+
+**5. Verificar una alerta cuesta un comando; no verificarla puede costar mucho más.** Una
+auditoría automática marcó como bloqueante un *"secreto filtrado en el historial de git"* y
+pedía **rotar la clave y reescribir el historial**. Lo comprobé: era un valor de un test que
+existe justamente para verificar que una clave rota **no** se filtra. La misma auditoría pedía
+actualizar `chromadb` "a una versión parcheada" que **no existe**. Dos operaciones
+destructivas, cero problemas reales. Esto ya me había pasado con una tabla de riesgo generada
+por una IA y con una lista de dominios "auditada": la costumbre de pedir evidencia antes de
+actuar es de lo más rentable que me llevo.
+
 **Lo que haría distinto.** Comitear más pequeño y más a menudo: al final acabé con cambios de
 tres asuntos distintos enredados en los mismos ficheros. Y verificar el entorno de ejecución
 antes de cantar victoria, no después.
@@ -270,11 +340,23 @@ mis datos.
 
 ## 8. Trabajo futuro
 
-Lo inmediato: **voz por Telegram** (Whisper por Groq para escuchar, **Piper local** para
-hablar — la voz es un dato biométrico, así que la salida no sale de la máquina).
+**Lo inmediato: decidir el hosting 24/7.** Es lo único que separa a JIMMY de estar vivo de
+verdad: hoy solo funciona con el PC encendido. Opciones evaluadas en E1 §7.
 
-Después: Tavily, Obsidian y Outlook (evaluadas, no construidas) y la comparación honesta con
-**LangGraph** reimplementando el router como grafo.
+**Lo siguiente, por orden de valor:**
+
+| Tema | Por qué |
+|---|---|
+| **Mini eval harness** | Previsto como opcional desde F5.0/T6. Hoy la calidad de las respuestas se juzga a ojo; un harness la mediría entre modelos y entre cambios de prompt |
+| **Conversor de formatos** (F5.5 #9) | La única tool del catálogo que quedó sin construir. Estrenaría `escribe_disco` |
+| Tavily, Obsidian, Outlook | Evaluadas y no construidas (ADR-006). Outlook es **la única que sacaría datos personales**: matizaría RNF-06 |
+| Indexar pares pregunta-respuesta *de verdad* | Hoy se resuelve al **buscar** (ventana de turno). Indexarlos como pareja sería la solución completa |
+| Particionar el RAG por usuario | Hoy el bot **no arranca** con más de un `user_id`, a propósito |
+
+**Descartado por el camino:** la comparación con **LangGraph** (F5.6). Era un extra desde el
+principio y el tiempo se fue en cosas con más valor — doce bugs reales del 01/08, la memoria
+del RAG, el condensado de documentos y tres agujeros de seguridad. Una comparación honesta
+exige reimplementar el router entero, y a medias no dice nada.
 
 Detalle completo y motivos de las descartadas en **E3 §9**.
 

@@ -1,8 +1,8 @@
 # E2 — Arquitectura y Diseño
 ## JIMMY — Asistente personal con IA (CLI + Telegram)
 
-**Versión:** 1.0
-**Fecha:** 20/07/2026 (v0.2) → 23/07/2026 (v0.4) → 31/07/2026 (**v1.0**, cierre de Fase 5)
+**Versión:** 1.1
+**Fecha:** 20/07/2026 (v0.2) → 23/07/2026 (v0.4) → 31/07/2026 (v1.0) → 07/08/2026 (**v1.1**)
 **Autor:** Jordi
 **Estado:** Vigente
 
@@ -81,21 +81,28 @@ flowchart TB
 
 | Componente | Fichero | Líneas | Responsabilidad |
 |---|---|---|---|
-| CLI | `src/main.py` | 741 | Bucle de terminal, menús y comandos. Delega todo en `Agente` |
-| Bot Telegram | `src/telegram_bot.py` | 1347 | E/S por Telegram + las dos puertas de seguridad. Reutiliza `Agente` |
-| Agente | `src/agent.py` | 128 | Núcleo: historial, categorías activas, documento adjunto, guardado |
-| Router | `src/llm_router.py` | 172 | Cadena de proveedores con backoff exponencial y degradación (ADR-004) |
-| Adaptadores | `src/llm_client.py` | 723 | Un adaptador por SDK + el bucle de tools, escrito **una sola vez** |
-| Formas neutras | `src/llm_types.py` | 125 | `RespuestaLLM`, `ToolCall` y `Turno` (presupuesto + idempotencia) |
-| Errores tipados | `src/llm_errors.py` | 99 | Excepciones que declaran si son `reintentable` — guían al router |
-| Herramientas | `src/tools.py` | 1215 | Registro, JSON Schema derivado de Pydantic, categorías, saneado SEG-07 |
-| Guardián de URLs | `src/red_segura.py` | 145 | Anti-SSRF: lista blanca + bloqueo de IPs internas |
-| Documentos | `src/documentos.py` | 208 | Validación y extracción de PDF/Word, tope anti-bomba de descompresión |
+| CLI | `src/main.py` | 969 | Bucle de terminal, menús y comandos. Delega todo en `Agente` |
+| Bot Telegram | `src/telegram_bot.py` | 2.557 | E/S por Telegram + las **tres** puertas de seguridad. Reutiliza `Agente` |
+| Agente | `src/agent.py` | 365 | Núcleo: historial, compactación, categorías, documento y su lectura cacheada |
+| Router | `src/llm_router.py` | 322 | Cadena de proveedores **y de modelos** con backoff y degradación (ADR-004) |
+| Adaptadores | `src/llm_client.py` | 1.125 | Un adaptador por SDK + el bucle de tools, escrito **una sola vez** |
+| Formas neutras | `src/llm_types.py` | 139 | `RespuestaLLM`, `ToolCall` y `Turno` (presupuesto + idempotencia) |
+| Errores tipados | `src/llm_errors.py` | 217 | Excepciones que declaran si son `reintentable` — guían al router |
+| Herramientas | `src/tools.py` | 1.652 | Registro, JSON Schema derivado de Pydantic, categorías, saneado SEG-07 |
+| Guardián de URLs | `src/red_segura.py` | 252 | Anti-SSRF: lista blanca + IPs y **nombres** internos + sin redirecciones |
+| Documentos | `src/documentos.py` | 479 | PDF/Word: validación, troceo, caché por hash, anti-bomba de descompresión |
+| Resumen por bloques | `src/resumen_largo.py` | 513 | `/condensar`: dos pasadas, caché de lectura, Gemini a dedo por cuota |
 | Persistencia | `src/storage.py` | 342 | JSON cifrado (Fernet) + índice SQLite |
-| Memoria semántica | `src/rag.py` | 331 | ChromaDB embebido + embeddings locales, con cerrojo de hilos |
-| Configuración | `src/config.py` | 443 | Carga de `.env`, catálogo de modelos, lista blanca de dominios |
+| Memoria semántica | `src/rag.py` | 586 | ChromaDB embebido + embeddings locales, ventana de turno, filtro de ruido |
+| Voz | `src/voz.py` | 322 | Whisper en Groq para escuchar + Piper **local** para hablar |
+| Cerrojo | `src/cerrojo.py` | 140 | Cerrojo del SO: impide que CLI y bot corran a la vez |
+| Configuración | `src/config.py` | 606 | Carga de `.env`, catálogo de modelos, lista blanca de dominios |
 
-**Total: 6.019 líneas de código fuente + 5.559 de tests.**
+**Total: 10.586 líneas de código fuente + 11.683 de tests (784 tests).**
+
+> La proporción se ha invertido respecto a la v1.0: hay **más línea de test que de código**
+> (1,10 : 1). No es casualidad — es la consecuencia directa de RNF-08 y de que cada bug
+> encontrado usando el bot se cierra con su test de regresión.
 
 ---
 
@@ -331,7 +338,7 @@ exponer, no después.
 
 | ADR | Decisión | Estado |
 |---|---|---|
-| [ADR-001](ADR/ADR-001-proveedor-llm.md) | Cadena de proveedores: Groq → Ollama → Gemini | Aceptado 16/07 |
+| [ADR-001](ADR/ADR-001-proveedor-llm.md) | Cadena de proveedores: **Ollama → Groq → Gemini** | Aceptado 16/07, **revisado 03/08** |
 | [ADR-002](ADR/ADR-002-memoria-evolutiva.md) | Memoria evolutiva: JSON → SQLite → RAG semántico | Aceptado 20/07 |
 | [ADR-003](ADR/ADR-003-framework-agente.md) | Agente a mano, sin framework; **un solo agente** | Aceptado 22/07 |
 | [ADR-004](ADR/ADR-004-router-fallback.md) | Router con reintentos y degradación automática | Aceptado 23/07 |

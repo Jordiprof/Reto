@@ -1,8 +1,8 @@
 # E1 — Especificación de Requisitos
 ## JIMMY — Asistente personal con IA (CLI + Telegram)
 
-**Versión:** 2.0
-**Fecha:** 15/07/2026 (v1.0) → 27/07/2026 (v1.5) → 31/07/2026 (**v2.0**, cierre de Fase 5)
+**Versión:** 2.1
+**Fecha:** 15/07/2026 (v1.0) → 27/07/2026 (v1.5) → 31/07/2026 (v2.0) → 07/08/2026 (**v2.1**)
 **Autor:** Jordi
 **Estado:** Vigente — documento vivo
 
@@ -86,7 +86,11 @@ caben en el mes del reto.
 | RF-10 | El agente resuelve el caso de uso completo: asistente personal por Telegram | Alta | Experto | ✅ |
 | RF-11 | El bot **solo** responde a `user_id` en lista blanca; el resto se ignora **antes** de llamar al LLM | Crítica | Experto | ✅ |
 | RF-20 | El bot acepta **documentos adjuntos** (PDF/Word) y responde sobre su contenido | Media | Experto | ✅ |
-| RF-21 | Entrada y salida por **voz** en Telegram | Media | Experto | ⏳ pendiente |
+| RF-21 | Entrada y salida por **voz** en Telegram | Media | Experto | ✅ 31/07 |
+| RF-23 | El bot **solo responde en chat privado**, nunca dentro de un grupo | Crítica | Experto | ✅ 07/08 |
+| RF-24 | CLI y bot **no pueden correr a la vez** sobre el mismo almacén | Alta | Experto | ✅ 01/08 |
+| RF-25 | Un documento largo se resume **entero por bloques** (`/condensar`) | Media | Experto | ✅ 02/08 |
+| RF-26 | El historial **no crece sin freno**: se compacta y se avisa | Alta | Experto | ✅ 02/08 |
 
 ### 2.6 Catálogo de herramientas implementadas
 
@@ -204,15 +208,20 @@ función con una firma, cambiar el motor no toca el bot.
 
 | Requisito | ADR | Dónde vive | Cómo se verifica |
 |---|---|---|---|
-| RF-07, RF-08, RF-09 | ADR-003 | `src/tools.py`, `src/llm_client.py` | `tests/test_tools.py` (106) |
+| RF-07, RF-08, RF-09 | ADR-003 | `src/tools.py`, `src/llm_client.py` | `tests/test_tools.py` (115) |
 | RF-13 | ADR-006 | `src/tools.py` (`categorias_por_defecto`) | `tests/test_tools.py` |
-| RF-14, RF-15, RF-16, RF-22 | ADR-001, ADR-004 | `src/llm_router.py`, `src/llm_types.py` | `test_llm_router.py` (9), `test_llm_loop.py` (19) |
-| RF-12, RF-18 | ADR-002 | `src/rag.py`, `src/storage.py` | `test_rag.py` (13), `test_storage.py` (20) |
-| RF-11, RNF-05 | ADR-005 | `src/telegram_bot.py` (puertas grupo −1) | `test_telegram_seguridad.py` (80) |
+| RF-14, RF-15, RF-16, RF-22 | ADR-001, ADR-004 | `src/llm_router.py`, `src/llm_types.py` | `test_llm_router.py` (24), `test_llm_loop.py` (25), `test_cuota_y_orden.py` (20) |
+| RF-12, RF-18 | ADR-002 | `src/rag.py`, `src/storage.py` | `test_rag.py` (29), `test_storage.py` (20) |
+| RF-11, RNF-05 | ADR-005 | `src/telegram_bot.py` (puertas grupo −1) | `test_telegram_seguridad.py` (90) |
 | RF-17, RNF-06 | ADR-002, ADR-005 | `src/storage.py` (Fernet) | `test_storage.py` |
-| RF-20 | ADR-006 | `src/documentos.py` | `test_documentos.py` (18) |
-| RNF-06 (SSRF) | ADR-006 | `src/red_segura.py` | `test_red_segura.py` (27) |
+| RF-20 | ADR-006 | `src/documentos.py` | `test_documentos.py` (39) |
+| RNF-06 (SSRF) | ADR-006 | `src/red_segura.py` | `test_red_segura.py` (38), `test_redirecciones.py` (7) |
 | RNF-07 | ADR-005 | `src/llm_client.py` (`_ejecutar_tool`) | `test_logging.py` (14), `test_config_logging.py` (16) |
+| RF-21 | ADR-006 | `src/voz.py` (Whisper + Piper) | `test_voz.py` (21), `test_telegram_voz.py` (20) |
+| RF-23 | ADR-005 | `src/telegram_bot.py` (`puerta_allowlist`) | `test_telegram_seguridad.py` |
+| RF-24 | — | `src/cerrojo.py` (cerrojo del SO) | `test_cerrojo.py` (11), uno con subproceso real |
+| RF-25 | — | `src/resumen_largo.py` | `test_resumen_largo.py` (36), `test_condensar_lectura.py` (17) |
+| RF-26 | — | `src/agent.py` (`compactar_si_hace_falta`) | `test_compactar_historial.py` (12) |
 | RNF-08 | — | `docs/diario_decisiones.md` | Pruebas de mutación documentadas con fecha |
 
 ---
@@ -221,7 +230,7 @@ función con una firma, cambiar el motor no toca el bot.
 
 **Cerradas**
 - ~~Temática del Experto~~ → asistente personal por Telegram (20/07)
-- ~~Proveedor definitivo~~ → ADR-001: Groq → Ollama → Gemini (16/07)
+- ~~Proveedor definitivo~~ → ADR-001: Groq → Ollama → Gemini (16/07), **revisado el 03/08 a Ollama → Groq → Gemini** por cuota diaria medida
 - ~~¿Memoria semántica?~~ → **sí** (21/07): quiero recall multi-día real, no recargar la última conversación
 - ~~¿Agente único o multiagente?~~ → **único** (21/07): 30 herramientas es un problema de organización, no de coordinación
 - ~~¿Gmail?~~ → aparcada (21/07): el token caduca a los 7 días en modo Testing

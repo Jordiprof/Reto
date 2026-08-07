@@ -1,8 +1,8 @@
 # E3 — Estado del Arte, Investigación y Plan de Fases
 ## JIMMY — Asistente personal con IA (CLI + Telegram)
 
-**Versión:** 1.0
-**Fecha:** 15/07/2026 (v0.1) → 21/07/2026 (v0.3) → 31/07/2026 (**v1.0**, cierre de Fase 5)
+**Versión:** 1.1
+**Fecha:** 15/07/2026 (v0.1) → 21/07/2026 (v0.3) → 31/07/2026 (v1.0) → 07/08/2026 (**v1.1**)
 **Autor:** Jordi
 **Estado:** Vigente
 
@@ -154,15 +154,41 @@ recargar la última conversación.
 | `all-MiniLM-L6-v2` | ~90 MB | ❌ El más citado en tutoriales, pero entrenado sobre todo en **inglés** — peor recuperación en conversaciones en español (RF-12) |
 | `paraphrase-multilingual-MiniLM-L12-v2` | ~470 MB | ✅ Multilingüe, buen equilibrio para correr en local (o en una Raspberry Pi) |
 
-### 5.3 Límite conocido del RAG (encontrado el 31/07, sin cerrar)
+### 5.3 El límite del RAG — encontrado el 31/07, **cerrado el 02/08**
 
-Cada mensaje se indexa **suelto**, así que la búsqueda empareja **pregunta con pregunta**.
-Buscar *"¿cómo te llamas?"* devuelve otras veces que hice esa misma pregunta, no la
-respuesta. El dato solo aparece si buscas el término que ya está en la respuesta — o sea,
-**solo lo encuentras si ya sabes la respuesta**.
+**El problema.** Cada mensaje se indexaba **suelto**, así que la búsqueda emparejaba
+**pregunta con pregunta**. Buscar *"¿cómo te llamas?"* devolvía otras veces que hice esa
+misma pregunta, no la respuesta. El dato solo aparecía si buscabas el término que ya está
+en la respuesta — o sea, **solo lo encontrabas si ya sabías la respuesta**. Reproducido dos
+veces (01/08 y 02/08): `/recuerdo color favorito` devolvía 5 de 5 preguntas.
 
-Mitigado en el prompt (se le obliga a admitir que no lo tiene si solo le salen preguntas).
-El arreglo real es **indexar cada intercambio como pareja**. Anotado, no hecho.
+**La solución elegida: ventana de turno, no reindexado.** Se sigue indexando mensaje a
+mensaje —vectores afilados, `chroma_db/` intacto, cero reindexado— y es `rag.buscar()` quien
+devuelve el **turno completo**: si el acierto es una pregunta, adjunta su respuesta, y al
+revés. Con dedup por turno y sobre-muestreo (`n*3`) cortado **antes** de descifrar, así que
+no cuesta ni un descifrado extra.
+
+**Descartado el "par en un solo vector"** que proponía el backlog original: las respuestas
+largas de este bot diluirían la pregunta dentro del vector y empeorarían justo lo que hoy
+sí acierta.
+
+**Lo que apareció después, y es más interesante que el problema original.** Al usarlo se vio
+que el ruido no venía solo del emparejamiento:
+
+1. **Las negativas ocupaban plaza.** De 5 resultados, dos eran el bot diciendo que no sabía.
+   Se filtran **al buscar** y no al indexar, a propósito: el índice no se toca, así que si
+   el criterio resulta malo se cambia una constante sin reindexar nada.
+2. **La lista de patrones envejece.** El filtro buscaba *"está apagado"* y el modelo escribió
+   *"sigue apagado"*. Se amplía cuando aparece un caso real, no adivinando.
+3. **El bot envenenaba su propia memoria.** Se inventó que su comida favorita era "pizza con
+   albahaca"; eso se guardó y se indexó como cualquier otra frase, y `/recuerdo tarta de
+   queso` empezó a devolverlo (casaba por "queso"). **La memoria no distingue lo que pasó de
+   lo que el modelo dijo que pasó.** Se cierra en el prompt, no en el filtro: prohibiéndole
+   inventarse preferencias propias.
+
+**Lo que sigue pendiente:** indexar los pares *de verdad* (hoy se resuelve al buscar), y
+recuerdos redundantes — cinco turnos distintos sobre el mismo tema siguen siendo cinco
+resultados. La dedup funciona dentro de un turno, no entre turnos parecidos.
 
 ---
 
@@ -224,8 +250,12 @@ una lista que solo compara *hostnames*, así que nunca habría coincidido con na
 | 5.1–5.2 — Bot Telegram | 05–13/08 | 25–28/07 | Bot con dos puertas de seguridad (ADR-005) | — |
 | 5.3 — Cifrado + RAG | 05–13/08 | 28/07 | Fernet + ChromaDB + memoria compartida | — |
 | 5.5 — Herramientas | 05–13/08 | 28–31/07 | 7 herramientas + guardián + `/tools` (ADR-006) | — |
-| 5.6 — Comparación LangGraph | opcional | ⏳ | Extra | — |
-| 6 — Cierre y entrega | 13–14/08 | ⏳ | E4 + reflexión final | `nivel-experto` |
+| 5.5b — Voz | *no planeado* | 31/07 | Whisper (Groq) + Piper local, ambos apagados | — |
+| 5.5c — Cerrojo, `/condensar`, compactación | *no planeado* | 01–02/08 | Cierra tres límites declarados en E4 v1.0 | — |
+| 5.5d — Cuota y reserva de modelo | *no planeado* | 03–04/08 | ADR-001 revisado; cupo por modelo medido | — |
+| ~~5.6 — Comparación LangGraph~~ | opcional | ❌ **descartado 02/08** | Extra; el tiempo se fue en bugs reales y seguridad | — |
+| 5.6 — Auditoría y cierre | 13–14/08 | 04–07/08 | Dos auditorías, 5 hallazgos cerrados, baterías manuales | — |
+| 6 — Cierre y entrega | 13–14/08 | ⏳ | E4 + reflexión final + merge | `nivel-experto` |
 
 ### 7.1 Diagrama de ejecución real
 
@@ -284,15 +314,18 @@ propósito antes** de tocar Telegram. Endurecer antes de exponer, no después.
 
 | Tema | Estado | Nota |
 |---|---|---|
-| Voz (`/voz`) | Siguiente | Whisper por Groq para escuchar + **Piper local** para hablar. **La voz es dato biométrico**: identifica a la persona, no solo lo que dice |
+| ~~Voz (`/voz`)~~ | ✅ **Hecha 31/07** | Whisper por Groq + **Piper local**. **La voz es dato biométrico**: por eso escuchar arranca apagado y el audio ni se descarga con el interruptor en OFF |
 | Búsqueda web (Tavily) | Evaluado, no implementado | 1.000/mes sin tarjeta; al agotarse deja de responder, no cobra |
 | Obsidian (notas locales) | Evaluado, no implementado | Estrenaría `escribe_disco`: validar rutas por allowlist, como en `/borrar` |
 | Outlook (calendario) | Evaluado, no implementado | Refresh token de 90 días (Google caduca a los 7 → descartado). **Única que sacaría datos personales: matizaría RNF-06** |
-| Comparación con LangGraph | Pendiente (F5.6) | Reimplementar el router como grafo y comparar honestamente |
-| Indexar pares pregunta-respuesta | Pendiente | Cierra el límite del RAG (§5.3) |
-| Trocear documentos largos | Pendiente | 8.000 caracteres son el 10 % de unos apuntes de 75.000 |
+| ~~Comparación con LangGraph~~ | ❌ **Descartada 02/08** | Era extra desde el principio. Una comparación honesta exige reimplementar el router entero, y a medias no dice nada |
+| Indexar pares pregunta-respuesta | Parcial ✅ | **Resuelto al BUSCAR** el 02/08 (ventana de turno, §5.3). Indexarlos como pareja sería la solución completa |
+| ~~Trocear documentos largos~~ | ✅ **Hecho 01-02/08** | Troceo + búsqueda por relevancia, y `/condensar` para el documento entero por bloques |
 | Particionar el RAG por usuario | Pendiente | Hoy el bot **no arranca** con más de un `user_id`, a propósito |
-| Hosting 24/7 | Abierto | Si va a VPS, ChromaDB sigue **embebido**, nunca como servicio (CVE-2026-45829) |
+| Hosting 24/7 | **Abierto — lo único que bloquea** | Si va a VPS, ChromaDB sigue **embebido**, nunca como servicio (CVE-2026-45829) |
+| Mini eval harness | Pendiente (opcional) | Previsto desde F5.0/T6. Hoy la calidad se juzga a ojo; mediría entre modelos y entre cambios de prompt |
+| Conversor de formatos (F5.5 #9) | Pendiente | La única tool del catálogo sin construir. Estrenaría `escribe_disco` |
+| Pedir un fragmento **por número** | Pendiente | La búsqueda es por significado; un número no significa nada. Se pidió "el fragmento 51" y contestó que no existía teniéndolo |
 
 **Descartadas con motivo:** Wikipedia (redundante con Tavily; dos tools de "buscar" es la
 ambigüedad que peor precisión produce) · resumir/traducir como tool (el modelo ya sabe
