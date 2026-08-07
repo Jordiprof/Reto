@@ -15,5 +15,36 @@ logs/
 conversations/
 conversations.db
 
+# Los .md que genera /condensar: llevan el contenido de los documentos de
+# JIM (apuntes, PDFs suyos), asi que son datos personales igual que
+# conversations/ - con el agravante de que aqui van EN CLARO, porque el
+# fichero esta para abrirlo y leerlo.
+resumenes/
+
 # Cache de pytest (se regenera solo en cada ejecucion)
 .pytest_cache/
+
+# F5.3: indice vectorial de ChromaDB (datos DERIVADOS de las conversaciones
+# personales - NUNCA a git, RNF-06) y cache del modelo de embeddings (pesa
+# ~220MB, se descarga solo la primera vez).
+chroma_db/
+.modelos_cache/
+
+# F5.5 #8: la voz de Piper (.onnx de 63 MB). Binario descargado, no codigo
+# del proyecto - misma razon que .modelos_cache/. Se baja con:
+#   venv\Scripts\python.exe -m piper.download_voices es_ES-davefx-medium --data-dir voces
+voces/
+
+# Copias de seguridad al "empezar de cero" (contienen conversaciones
+# personales igual que los originales - nunca a git).
+*.bak
+*.bak/
+
+# Cerrojo entre procesos (01/08): centinela que impide CLI + bot a la vez.
+# Es estado LOCAL de la maquina, no codigo.
+.memoria.lock
+
+# Documentos con inyecciones de prompt, para probar el bot EN REAL (07/08).
+# Fuera del repo a proposito: son ficheros cuyo contenido esta escrito para
+# manipular a un modelo, y no tienen por que acabar en un clon de nadie.
+pruebas_inyeccion/

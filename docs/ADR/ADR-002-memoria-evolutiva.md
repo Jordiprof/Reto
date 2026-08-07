@@ -45,3 +45,35 @@ Memoria evolutiva en 4 escalones, uno por nivel:
 - No se ha implementado (ni lo pedía ningún nivel hasta ahora) recargar una
   conversación anterior al arrancar el programa; cada ejecución empieza con historial
   vacío. Queda como mejora candidata, no como requisito de este ADR.
+
+## Enmienda (24/07/2026) — el escalón 3 se salta, con motivo
+
+**Qué pasó.** La Fase 4 (Avanzado) se cerró sin hacer el escalón 3: `conversations.db`
+sigue siendo solo un índice, sin tabla `mensajes` normalizada. No fue un olvido que se
+descubriera tarde por casualidad, pero tampoco una decisión tomada en su momento: la
+fase se fue entera en tool calling y en el refactor a `Agente`, y nadie volvió a mirar
+este ADR. Se detecta ahora, al empezar F5.3, comparando el ADR con el código real.
+
+**Decisión: no se hace retroactivamente.** Se salta el escalón 3 y se pasa directo al 4.
+
+**Por qué:**
+
+- El escalón 3 existía para poder **consultar** las conversaciones pasadas con SQL. El
+  escalón 4 (búsqueda semántica) cubre ese mismo caso de uso, y mejor para lo que de
+  verdad se quiere ("¿qué le conté sobre X hace unos días?"): con SQL harían falta
+  `LIKE '%palabra%'` y coincidencia literal; con embeddings se busca por significado.
+- Normalizar `mensajes` ahora sería trabajo cuyo único consumidor previsto (el propio
+  RAG) va a leer igualmente de los JSON. Sería duplicar el contenido una tercera vez
+  (JSON + tabla SQL + vector store) sin que nadie lo pida.
+- El principio rector del ADR sigue intacto: *"usar en cada nivel la solución más
+  simple que cumpla el requisito de ese nivel"*. Hacer el escalón 3 hoy sería lo
+  contrario: trabajo de un nivel anterior, hecho tarde y ya sin requisito que lo pida.
+
+**Lo que sí se hace en el escalón 4 (F5.3):** el JSON sigue siendo la fuente completa
+(no cambia), `conversations.db` sigue siendo índice, y encima se añade el vector store
+local. Además se implementa por fin la **lectura** de conversaciones guardadas
+(`cargar_conversacion`), que hasta ahora no existía — `storage.py` solo escribía.
+
+**Lección para el diario:** un ADR no se cumple solo por estar escrito. Al cerrar un
+nivel hay que releer los ADR que lo mencionan y confirmar que se hizo, o enmendarlos
+en ese momento. Aquí se ha tardado una fase entera en detectarlo.

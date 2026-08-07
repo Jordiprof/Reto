@@ -1,99 +1,340 @@
-# E3 — Estado del arte y planificación
+# E3 — Estado del Arte, Investigación y Plan de Fases
+## JIMMY — Asistente personal con IA (CLI + Telegram)
 
-**Proyecto:** Agente de IA (terminal → Telegram en Fase 5)
-**Autor:** Jordi · **Fecha:** 15/07/2026 (v0.1) → 21/07/2026 (v0.3, cierre Nivel Avanzado + planificación Fase 5 con stack experto) · **Versión:** 0.3
+**Versión:** 1.1
+**Fecha:** 15/07/2026 (v0.1) → 21/07/2026 (v0.3) → 31/07/2026 (v1.0) → 07/08/2026 (**v1.1**)
+**Autor:** Jordi
+**Estado:** Vigente
 
-## 1. Estado del arte
+---
 
-_Todo dato cita su fuente oficial y fecha de consulta — lección del 15/07: los LLM citan
-modelos retirados; verificar siempre docs oficiales._
+## Índice
 
-- **Proveedores LLM con free tier** — cerrado en ADR-001 (16/07): Groq → Ollama Cloud →
-  Gemini → Anthropic. Verificado con smoke tests reales en los 4, no solo documentación.
-- **Qué es un agente de IA** (LLM + bucle + herramientas + memoria) — aprendido y construido
-  en Fase 4 (F4.1-F4.6), con evidencia real, no solo teoría:
-  - **Tool use / function calling**: el modelo no ejecuta código — decide que quiere llamar
-    a una función descrita por su nombre, descripción y JSON Schema de parámetros; el
-    programa la ejecuta de verdad y le devuelve el resultado para que continúe.
-  - **El bucle del agente** (LLM → tool → resultado → LLM) es el mismo patrón conceptual en
-    los 3 proveedores, pero **cada uno lo implementa distinto** — verificado con código real,
-    no solo con la doc: Groq manda los argumentos como JSON string y exige `tool_call_id`;
-    Ollama ya entrega los argumentos como dict y usa `tool_name` en vez de un id; Gemini
-    declara las tools sin el envoltorio `"type": "function"` y puede repartir la petición de
-    función en cualquier `part` de la respuesta, no siempre en la primera (bug real
-    encontrado y corregido en F4.6).
-  - **Validación de parámetros** (F4.4): nunca asumir que el modelo manda argumentos
-    correctos — un JSON mal formado o un parámetro inventado no debe tirar el programa.
-  - **Diseño de una tool**: la calidad de la `description` condiciona si el modelo la usa
-    bien — verificado indirectamente en las pruebas de F4.5/F4.6 (el modelo eligió usar la
-    calculadora de forma consistente cuando se le pidió explícitamente en el prompt que la
-    prefiriera sobre calcular de memoria).
-- **Frameworks (LangGraph, etc.) vs agente a mano** — decisión preliminar tomada en
-  brainstorming (21/07, ver diario y ADR-003 pendiente de formalizar en F5.1): agente a
-  mano con tools agrupadas por categoría; orquestador multi-agente queda como comparación
-  con LangGraph en F5.5 (Extra), no como base del bot real.
+1. [Criterio de selección: la privacidad decide](#1-criterio-de-selección-la-privacidad-decide)
+2. [Proveedores LLM](#2-proveedores-llm)
+3. [Qué es un agente, aprendido construyéndolo](#3-qué-es-un-agente-aprendido-construyéndolo)
+4. [Frameworks de agentes](#4-frameworks-de-agentes)
+5. [Memoria vectorial y embeddings](#5-memoria-vectorial-y-embeddings)
+6. [Seguridad en agentes LLM](#6-seguridad-en-agentes-llm)
+7. [Plan de fases y seguimiento real](#7-plan-de-fases-y-seguimiento-real)
+8. [Índice de ADR](#8-índice-de-adr)
+9. [Trabajo futuro](#9-trabajo-futuro-identificado)
 
-### 1.1. Stack "experto" — investigación 2026 y criterio de selección por privacidad
+---
 
-Al planificar Fase 5 (21/07) se investigó el estado actual de las tecnologías del ecosistema de
-agentes que Jordi quería valorar. **Criterio rector: privacidad** (RNF-06) — los datos del bot no
-deben salir de la máquina salvo la llamada al LLM. Ese criterio decide qué entra y qué se descarta.
-Fuentes consultadas (2026): comparativas de observabilidad LLM (Langfuse/Phoenix/LangSmith),
-comparativas de vector DBs (Chroma/Qdrant/FAISS), y guías de frameworks de agentes
-(LangGraph/CrewAI/AutoGen) — todas de 2026, verificadas, no de conocimiento previo.
+## 1. Criterio de selección: la privacidad decide
 
-| Categoría | Herramientas | Decisión | Motivo |
+Al planificar la Fase 5 investigué el estado del ecosistema de agentes (2026). El criterio
+rector fue **RNF-06**: los datos no salen de la máquina salvo la llamada al LLM.
+
+**La lección de fondo:** ese requisito no limitó el aprendizaje, lo dirigió. Obligó a
+entender qué hace cada herramienta por dentro y **dónde acaban los datos**, en vez de
+enchufar servicios en la nube a ciegas. Varias decisiones se toman solas al aplicarlo.
+
+| Categoría | Candidatos | Decisión | Motivo |
 |---|---|---|---|
-| Orquestación multi-agente | LangGraph, CrewAI, AutoGen | Solo LangGraph, y solo como comparación (F5.6) | El caso de uso es un agente único; multiagente es para coordinar objetivos distintos. AutoGen además está en mantenimiento (Microsoft movió el foco a otro producto) |
-| Framework LLM general | LangChain | Fuera del núcleo | Redundante con `llm_client.py`/`agent.py` ya construidos; ADR-003 = "a mano primero" |
-| Validación de datos | Pydantic | ✅ Entra (F5.4) | Librería local sin red; endurece la validación de parámetros de tools de F4.4 |
-| Framework de agentes ligero | PydanticAI | Solo comparación opcional (F5.6) | Alternativa a LangChain, pero el bot ya está construido a mano |
-| Observabilidad | LangSmith | ❌ Descartada | Cloud SaaS closed-source; manda todas las trazas (prompts/respuestas) a servidores de LangChain — incompatible con "confidencial". Alternativas locales/open-source (Phoenix, Langfuse) sí respetarían la privacidad, pero de momento basta `logs/agente.log` |
-| Vector DB (RAG) | Pinecone | ❌ Descartada | Nube, de pago; los embeddings de las conversaciones saldrían de la máquina |
-| Vector DB (RAG) | ChromaDB / Qdrant / FAISS | ✅ ChromaDB (F5.3) | Las tres corren locales y gratis; ChromaDB es la más simple para aprender |
-| Embeddings | API de pago (OpenAI, etc.) | ❌ Descartados | Enviarían el texto de las conversaciones a un tercero. Se usan embeddings LOCALES (`sentence-transformers`) |
+| Observabilidad | LangSmith | ❌ | SaaS cerrado: manda prompts y respuestas completas a servidores de terceros |
+| Observabilidad | Phoenix, Langfuse | ⏸️ | Locales, respetarían RNF-06, pero `logs/agente.log` basta hoy |
+| Vector DB | Pinecone | ❌ | Nube y de pago: los embeddings de mis conversaciones saldrían de la máquina |
+| Vector DB | ChromaDB · Qdrant · FAISS | ✅ **ChromaDB** | Las tres son locales; ChromaDB es la más simple para aprender |
+| Embeddings | API de pago (OpenAI…) | ❌ | Cada mensaje viajaría a un tercero solo para vectorizarse |
+| Embeddings | fastembed (ONNX, local) | ✅ | Corre en la máquina, sin red |
+| Validación | Pydantic | ✅ | Librería local; endurece la validación de argumentos de las tools |
+| Multi-agente | LangGraph · CrewAI · AutoGen | ❌ como base | El caso de uso es un agente único (§4.2). AutoGen además está en mantenimiento |
 
-**Lección transversal:** el requisito de privacidad no limita el aprendizaje — al contrario, obliga
-a entender qué hace cada herramienta por dentro y dónde van los datos, en vez de conectar servicios
-en la nube a ciegas. Varias decisiones "se toman solas" en cuanto se aplica el criterio.
+---
 
-## 2. Planificación (roadmap)
+## 2. Proveedores LLM
 
-| Fase | Fechas planeadas | Fechas reales | Entregable | Tag |
+### 2.1 La lección metodológica (15/07) — la que más ha valido
+
+Pregunté a varias IA (Kimi, ChatGPT, Gemini) por modelos gratuitos con tool calling. **Las
+tres citaron modelos ya retirados** ("Claude 3.5 Sonnet", "GPT-4o mini") como si estuvieran
+vigentes.
+
+**Conclusión, aplicada durante todo el proyecto:** los catálogos de modelos caducan en
+semanas. Todo dato de disponibilidad, cuota o capacidad se **verifica contra documentación
+oficial o probándolo**. Nunca contra lo que "sabe" un modelo.
+
+Esta lección volvió a aplicarse dos veces más: al catálogo de herramientas (ADR-006, donde
+descarté una tabla de riesgo generada por una IA externa) y a la auditoría de la lista
+blanca de dominios (donde verifiqué por DNS los 36 dominios uno a uno).
+
+### 2.2 Resultado de la comparativa
+
+| Proveedor | Coste real | Tool calling | Decisión |
+|---|---|---|---|
+| **Groq** | Gratis, sin tarjeta | ✅ verificado | **Primario** |
+| **Ollama Cloud** | Gratis con cuenta | ✅ verificado | **Fallback 1** |
+| **Gemini** | Gratis (nivel free) | ✅ verificado | **Fallback 2** |
+| Anthropic | De pago | ✅ | Contemplado, no implementado |
+| OpenRouter | Modelos free rotativos | ⚠️ variable | Descartado: catálogo inestable |
+
+Detalle y pruebas reales en [ADR-001](ADR/ADR-001-proveedor-llm.md).
+
+---
+
+## 3. Qué es un agente, aprendido construyéndolo
+
+Un agente = **LLM + bucle + herramientas + memoria**. Lo aprendí implementándolo, y estos
+son los hallazgos que solo aparecen escribiendo el código:
+
+- **El modelo NO ejecuta código.** Decide que quiere llamar a una función descrita por
+  nombre, descripción y JSON Schema. **El programa la ejecuta** y le devuelve el resultado.
+
+- **El bucle es el mismo patrón en los 3 proveedores, pero cada uno lo implementa
+  distinto** — verificado con código real, no con la documentación:
+
+  | Proveedor | Argumentos | Identificación | Peculiaridad |
+  |---|---|---|---|
+  | Groq | JSON en **texto** (hay que parsear) | exige `tool_call_id` | Manda `null` cuando la tool no tiene parámetros |
+  | Ollama | ya son **dict** | usa `tool_name` | — |
+  | Gemini | dict | — | Declara tools **sin** el envoltorio `"type": "function"`, y puede repartir la petición en **cualquier `part`**, no siempre la primera (bug real encontrado en F4.6) |
+
+- **La descripción de una tool es código, no comentario.** Condiciona si el modelo la elige
+  bien. Dos tools que suenan parecido son la causa nº 1 de que elija mal — de ahí que
+  `buscar_en_recuerdos` y `consultar_historial` **se nombren mutuamente** en su descripción
+  ("si quieres el contenido, usa la otra").
+
+- **Nunca asumir que los argumentos son correctos.** Un JSON mal formado o un parámetro
+  inventado no puede tirar el programa. De ahí la validación Pydantic con `extra="forbid"`.
+
+---
+
+## 4. Frameworks de agentes
+
+### 4.1 A mano vs framework
+
+| Opción | A favor | En contra | Decisión |
+|---|---|---|---|
+| **A mano** | Se entiende cada pieza; sin dependencias que envejezcan | Más código propio | ✅ **Elegido** |
+| LangChain | Ecosistema grande | Redundante con lo ya construido; esconde justo lo que quiero aprender | ❌ |
+| LangGraph | Control de flujo explícito, checkpoints | Pensado para grafos multi-agente; aquí no hay grafo | ⏸️ Comparación futura (F5.6) |
+| CrewAI | Prototipado rapidísimo | Abstracción alta: escondería el bucle de tools | ❌ |
+| PydanticAI | Type safety | El agente ya está construido a mano | ⏸️ |
+
+**Motivo real:** el objetivo es formativo. Un framework habría resuelto en 20 líneas
+exactamente lo que había que entender.
+
+### 4.2 ¿Un agente o varios?
+
+Consideré multi-agente (orquestador + sub-agentes). **Descartado por un motivo técnico, no
+por esfuerzo:** tener 30 herramientas es un problema de **organización de tools** (agrupar
+y filtrar), no de **coordinación entre objetivos distintos**. Multi-agente resuelve lo
+segundo; aplicado al primero solo añade complejidad, fragilidad y **más movimiento de datos
+entre componentes** — o sea, peor privacidad.
+
+La solución al problema real fue `/tools`: categorías activables bajo demanda (ADR-006).
+
+> No confundir con la **cadena de fallback de proveedores** (ADR-004): eso es resiliencia de
+> un agente único, no coordinación entre agentes distintos.
+
+---
+
+## 5. Memoria vectorial y embeddings
+
+### 5.1 Memoria evolutiva (ADR-002)
+
+```mermaid
+flowchart LR
+    B["Básico<br/>ninguna"] --> I["Intermedio<br/>historial + JSON"]
+    I --> A["Avanzado<br/>+ índice SQLite"]
+    A --> E["Experto<br/>+ RAG semántico"]
+    E -.condición.-> C["solo si se justifica"]
+```
+
+La condición de ADR-002 era *"memoria semántica solo si se justifica"*. Se justificó: quiero
+que recuerde lo hablado **días atrás**, buscando por significado en todo el histórico, no
+recargar la última conversación.
+
+### 5.2 Elección del modelo de embeddings
+
+| Modelo | Tamaño | Veredicto |
+|---|---|---|
+| `all-MiniLM-L6-v2` | ~90 MB | ❌ El más citado en tutoriales, pero entrenado sobre todo en **inglés** — peor recuperación en conversaciones en español (RF-12) |
+| `paraphrase-multilingual-MiniLM-L12-v2` | ~470 MB | ✅ Multilingüe, buen equilibrio para correr en local (o en una Raspberry Pi) |
+
+### 5.3 El límite del RAG — encontrado el 31/07, **cerrado el 02/08**
+
+**El problema.** Cada mensaje se indexaba **suelto**, así que la búsqueda emparejaba
+**pregunta con pregunta**. Buscar *"¿cómo te llamas?"* devolvía otras veces que hice esa
+misma pregunta, no la respuesta. El dato solo aparecía si buscabas el término que ya está
+en la respuesta — o sea, **solo lo encontrabas si ya sabías la respuesta**. Reproducido dos
+veces (01/08 y 02/08): `/recuerdo color favorito` devolvía 5 de 5 preguntas.
+
+**La solución elegida: ventana de turno, no reindexado.** Se sigue indexando mensaje a
+mensaje —vectores afilados, `chroma_db/` intacto, cero reindexado— y es `rag.buscar()` quien
+devuelve el **turno completo**: si el acierto es una pregunta, adjunta su respuesta, y al
+revés. Con dedup por turno y sobre-muestreo (`n*3`) cortado **antes** de descifrar, así que
+no cuesta ni un descifrado extra.
+
+**Descartado el "par en un solo vector"** que proponía el backlog original: las respuestas
+largas de este bot diluirían la pregunta dentro del vector y empeorarían justo lo que hoy
+sí acierta.
+
+**Lo que apareció después, y es más interesante que el problema original.** Al usarlo se vio
+que el ruido no venía solo del emparejamiento:
+
+1. **Las negativas ocupaban plaza.** De 5 resultados, dos eran el bot diciendo que no sabía.
+   Se filtran **al buscar** y no al indexar, a propósito: el índice no se toca, así que si
+   el criterio resulta malo se cambia una constante sin reindexar nada.
+2. **La lista de patrones envejece.** El filtro buscaba *"está apagado"* y el modelo escribió
+   *"sigue apagado"*. Se amplía cuando aparece un caso real, no adivinando.
+3. **El bot envenenaba su propia memoria.** Se inventó que su comida favorita era "pizza con
+   albahaca"; eso se guardó y se indexó como cualquier otra frase, y `/recuerdo tarta de
+   queso` empezó a devolverlo (casaba por "queso"). **La memoria no distingue lo que pasó de
+   lo que el modelo dijo que pasó.** Se cierra en el prompt, no en el filtro: prohibiéndole
+   inventarse preferencias propias.
+
+**Lo que sigue pendiente:** indexar los pares *de verdad* (hoy se resuelve al buscar), y
+recuerdos redundantes — cinco turnos distintos sobre el mismo tema siguen siendo cinco
+resultados. La dedup funciona dentro de un turno, no entre turnos parecidos.
+
+---
+
+## 6. Seguridad en agentes LLM
+
+Referencia: **OWASP Top 10 for LLM Applications**. Lo que aplica aquí y cómo se cierra:
+
+| Riesgo OWASP | Cómo se cierra en este proyecto | Estado |
+|---|---|---|
+| **LLM01 Prompt injection** | SEG-07: delimitar (`<fuente>`, `<recuerdo>`) + sanear + el prompt declara que lo citado es dato, nunca orden | ✅ |
+| **LLM02 Manejo inseguro de salidas** | Validación Pydantic; mensajes de error propios, nunca volcados de Python | ✅ |
+| **LLM04 Denegación de servicio** | Rate limit por usuario + presupuesto de 15 llamadas por turno + timeouts propios (8 s en tools) | ✅ |
+| **LLM05 Cadena de suministro** | `pip-audit` en CI **sin** `continue-on-error`; lockfile; CVE conocida ignorada con motivo escrito | ✅ |
+| **LLM06 Fuga de información** | Cifrado en reposo + logs de solo metadatos (**hubo incidencia real**, ver E1 §3.2) | ✅ |
+| **LLM07 Plugins inseguros** | Cada tool declara capacidades; el riesgo se **calcula**; activación por categorías | ✅ |
+| **LLM08 Agencia excesiva** | Ninguna tool con efectos externos todavía; la idempotencia por turno ya está lista para cuando la haya | ✅ |
+| **LLM09 Exceso de confianza** | Avisos anti-alucinación **dentro del resultado** de la tool, en forma de prohibición | ✅ |
+| **SSRF** (no está en el Top 10, pero es el riesgo real aquí) | Guardián propio: lista blanca + IPs internas + sin redirecciones | ✅ |
+
+### 6.1 Doctrina propia: validación por mutación
+
+Un test que **nunca has visto fallar** no demuestra nada: puede estar comprobando algo
+trivialmente cierto. Por eso todo control crítico se rompe a propósito y se comprueba que
+un test se pone rojo.
+
+| Mutación aplicada | Resultado |
+|---|---|
+| Mover la puerta de la lista blanca al grupo 0 | 🔴 detectada |
+| `block=False` en la puerta | 🔴 detectada — y salió que `handler.block` no es un `bool` sino un centinela `DefaultValue(True)` cuyo `repr` es `True` pero **no es** `True`: mi primer assert estaba mal escrito y el test lo destapó |
+| Lista blanca ilegible tratada como "permitir a todos" | 🔴 detectada |
+| `user_id` en claro en el log | 🔴 detectada |
+| Quitar las comillas del `.env` multilínea | 🔴 detectada (bug real: el guardián se quedaba con **cero** dominios, en silencio) |
+| Quitar el aviso de tamaño en el `.docx` | 🔴 detectada (bomba de descompresión real) |
+| `netloc` en vez de `hostname` en el guardián | 🟢 **sobrevivió** → destapó un test flojo, reescrito con puerto explícito |
+| Guarda de lista vacía | 🟢 **sobrevivió** → resultó ser solo un mensaje (`any()` sobre conjunto vacío ya es `False`) |
+
+**Dos mutaciones sobrevivieron, y ese es el mayor valor de la técnica:** no encontraron
+fallos en el código, encontraron **tests que no comprobaban lo que decían comprobar**.
+
+### 6.2 Segunda doctrina: no fiarse de un "audit" pegado
+
+Ni de una IA externa ni de otra sesión de trabajo. Todo informe de auditoría se verifica con
+**evidencia real**: DNS resuelto, código ejecutado, llamadas reales a la API. Salió de aquí:
+una propuesta de lista blanca "auditada" incluía `platform.openai.com/docs` — una **ruta** en
+una lista que solo compara *hostnames*, así que nunca habría coincidido con nada.
+
+---
+
+## 7. Plan de fases y seguimiento real
+
+| Fase | Planeado | Real | Entregable | Tag |
 |---|---|---|---|---|
-| 0 — Esqueleto del repo | 15/07 | 15/07 | Repo + docs base + ADR-001 (hipótesis) | — |
-| 1 — Validación proveedores | 15–17/07 | 15–16/07 | Smoke tests + ADR-001 (decisión) | — |
-| 2 — Nivel Básico | 17–21/07 | 17/07 | Chat en bucle con errores manejados y logging | `nivel-basico` |
-| 3 — Nivel Intermedio | 22–28/07 | 17–20/07 | Historial + system prompt + persistencia + pytest | `nivel-intermedio` |
-| 4 — Nivel Avanzado | 29/07–04/08 | 21/07 | Tool calling con bucle de agente a mano | `nivel-avanzado` |
-| 5 — Nivel Experto | 05–13/08 | _sin empezar_ | Proyecto final sobre la temática elegida (bot Telegram) | `nivel-experto` |
-| 6 — Cierre y entrega | 13–14/08 | _sin empezar_ | E4 + diario completo + reflexión final | — |
+| 0 — Esqueleto | 15/07 | 15/07 | Repo + docs base + ADR-001 (hipótesis) | — |
+| 1 — Validar proveedores | 15–17/07 | 15–16/07 | Smoke tests + ADR-001 (decisión) | — |
+| 2 — Básico | 17–21/07 | **17/07** | Chat en bucle, errores manejados, logging | `nivel-basico` |
+| 3 — Intermedio | 22–28/07 | **17–20/07** | Historial + prompt + persistencia + pytest | `nivel-intermedio` |
+| 4 — Avanzado | 29/07–04/08 | **21–22/07** | Tool calling con bucle propio | `nivel-avanzado` |
+| 5.0 — Endurecimiento | *no planeado* | 23/07 | Capa de proveedores + router (ADR-004) | — |
+| 5.1–5.2 — Bot Telegram | 05–13/08 | 25–28/07 | Bot con dos puertas de seguridad (ADR-005) | — |
+| 5.3 — Cifrado + RAG | 05–13/08 | 28/07 | Fernet + ChromaDB + memoria compartida | — |
+| 5.5 — Herramientas | 05–13/08 | 28–31/07 | 7 herramientas + guardián + `/tools` (ADR-006) | — |
+| 5.5b — Voz | *no planeado* | 31/07 | Whisper (Groq) + Piper local, ambos apagados | — |
+| 5.5c — Cerrojo, `/condensar`, compactación | *no planeado* | 01–02/08 | Cierra tres límites declarados en E4 v1.0 | — |
+| 5.5d — Cuota y reserva de modelo | *no planeado* | 03–04/08 | ADR-001 revisado; cupo por modelo medido | — |
+| ~~5.6 — Comparación LangGraph~~ | opcional | ❌ **descartado 02/08** | Extra; el tiempo se fue en bugs reales y seguridad | — |
+| 5.6 — Auditoría y cierre | 13–14/08 | 04–07/08 | Dos auditorías, 5 hallazgos cerrados, baterías manuales | — |
+| 6 — Cierre y entrega | 13–14/08 | ⏳ | E4 + reflexión final + merge | `nivel-experto` |
 
-**Hito transversal:** ~~decidir la temática del agente experto antes del 28/07~~ — **resuelto
-el 20/07** (bot de Telegram personal, ver E1 v1.2 y diario).
+### 7.1 Diagrama de ejecución real
 
-## 3. Ideas para revisar en Fase 5 (Nivel Experto)
+```mermaid
+gantt
+    title Ejecucion real (15/07 - 31/07/2026)
+    dateFormat YYYY-MM-DD
+    axisFormat %d/%m
 
-- **Orquestación multi-agente** (propuesta de Jordi, 16/07) — **resuelto (21/07): agente único**
-  (ver §1.1 y diario). NO se usa como base del bot. El patrón orquestador+sub-agentes queda como
-  comparación real con LangGraph en F5.6 (Extra), coherente con ADR-003 (a mano primero). Distinto
-  de la cadena de fallback de proveedores (ADR-001), que es resiliencia de un único agente.
-- **Memoria semántica (RAG local)** — **resuelto (21/07): sí, se implementa** (F5.3). Es lo que
-  Jordi pidió como "que se acuerde de días anteriores": ChromaDB local + embeddings locales. Cumple
-  la condición de ADR-002 ("solo si se justifica"). Ver RF-12.
-- **Correo (Gmail), solo lectura** (propuesta de Jordi, 21/07) — **aparcada tras investigar el
-  coste real.** En modo "Testing" de Google Cloud Console (gratis, sin verificación) el refresh
-  token de un scope restringido como `gmail.readonly` **caduca a los 7 días** y obliga a
-  reautorizar a mano; el modo "Production" exige verificación de Google (posible coste/fricción).
-  Ninguna opción encaja limpio con "gratis y sin sorpresas" — queda en el backlog, no en F5, con el
-  hallazgo documentado para retomarlo con la decisión ya informada.
+    section Base
+    F0 Esqueleto          :done, 2026-07-15, 1d
+    F1 Proveedores        :done, 2026-07-15, 2d
 
-## 4. Seguimiento
+    section Niveles
+    F2 Basico             :done, 2026-07-17, 1d
+    F3 Intermedio         :done, 2026-07-17, 4d
+    F4 Avanzado           :done, 2026-07-21, 2d
 
-- **Fases 2-4 completadas muy por delante del calendario planeado** (Fase 3 en 4 días en vez
-  de 7, Fase 4 en 1 día en vez de 7). No es trabajo superficial: cada fase tiene evidencia
-  real en el diario (llamadas reales a los 3 proveedores, bugs encontrados y corregidos con
-  reproducción, no solo teoría) — el ritmo real permitió dedicar el tiempo sobrante a
-  profundizar (F2.6b, brainstorming completo de temática y arquitectura) en vez de acumularlo
-  sin usar. Se mantiene igualmente el calendario original como referencia de ritmo razonable,
-  no como techo a alcanzar antes de tiempo en las fases que quedan.
+    section Experto
+    F5.0 Endurecimiento   :done, 2026-07-23, 1d
+    F5.1-2 Bot Telegram   :done, 2026-07-25, 4d
+    F5.3 Cifrado y RAG    :done, 2026-07-28, 1d
+    F5.5 Herramientas     :done, 2026-07-28, 4d
+    F5.6 LangGraph        :active, 2026-08-01, 3d
+    F6 Cierre             :active, 2026-08-01, 2d
+```
+
+### 7.2 Sobre el adelanto
+
+Las fases 2-4 se cerraron muy por delante del calendario (Fase 3 en 4 días de 7; Fase 4 en 2
+de 7). **No es trabajo superficial:** cada fase tiene evidencia en el diario — llamadas
+reales a los tres proveedores, bugs encontrados con reproducción, no solo teoría.
+
+El tiempo sobrante se dedicó a **profundizar**, no a acumular adelanto: de ahí salieron la
+auditoría de seguridad, F5.0 y la doctrina de validación por mutación.
+
+**F5.0 no estaba planificada.** Nació de una auditoría y una revisión de código hechas **a
+propósito antes** de tocar Telegram. Endurecer antes de exponer, no después.
+
+---
+
+## 8. Índice de ADR
+
+| ADR | Título | Estado | Decisión en una línea |
+|---|---|---|---|
+| [001](ADR/ADR-001-proveedor-llm.md) | Proveedor LLM | Aceptado 16/07 | Groq → Ollama → Gemini, verificado con pruebas reales |
+| [002](ADR/ADR-002-memoria-evolutiva.md) | Memoria evolutiva | Aceptado 20/07 | Escalar de JSON a RAG **solo cuando se justifique** |
+| [003](ADR/ADR-003-framework-agente.md) | Framework vs a mano | Aceptado 22/07 | A mano, y **un solo agente** |
+| [004](ADR/ADR-004-router-fallback.md) | Router de fallback | Aceptado 23/07 | Reintentos con backoff + degradación automática |
+| [005](ADR/ADR-005-seguridad-bot-telegram.md) | Seguridad del bot | Aceptado 27/07 | Dos puertas en grupo −1, antes de cualquier handler |
+| [006](ADR/ADR-006-catalogo-y-riesgo-de-herramientas.md) | Catálogo y riesgo de tools | Aceptado 28/07 | El riesgo se **calcula** desde capacidades declaradas |
+
+---
+
+## 9. Trabajo futuro identificado
+
+| Tema | Estado | Nota |
+|---|---|---|
+| ~~Voz (`/voz`)~~ | ✅ **Hecha 31/07** | Whisper por Groq + **Piper local**. **La voz es dato biométrico**: por eso escuchar arranca apagado y el audio ni se descarga con el interruptor en OFF |
+| Búsqueda web (Tavily) | Evaluado, no implementado | 1.000/mes sin tarjeta; al agotarse deja de responder, no cobra |
+| Obsidian (notas locales) | Evaluado, no implementado | Estrenaría `escribe_disco`: validar rutas por allowlist, como en `/borrar` |
+| Outlook (calendario) | Evaluado, no implementado | Refresh token de 90 días (Google caduca a los 7 → descartado). **Única que sacaría datos personales: matizaría RNF-06** |
+| ~~Comparación con LangGraph~~ | ❌ **Descartada 02/08** | Era extra desde el principio. Una comparación honesta exige reimplementar el router entero, y a medias no dice nada |
+| Indexar pares pregunta-respuesta | Parcial ✅ | **Resuelto al BUSCAR** el 02/08 (ventana de turno, §5.3). Indexarlos como pareja sería la solución completa |
+| ~~Trocear documentos largos~~ | ✅ **Hecho 01-02/08** | Troceo + búsqueda por relevancia, y `/condensar` para el documento entero por bloques |
+| Particionar el RAG por usuario | Pendiente | Hoy el bot **no arranca** con más de un `user_id`, a propósito |
+| Hosting 24/7 | **Abierto — lo único que bloquea** | Si va a VPS, ChromaDB sigue **embebido**, nunca como servicio (CVE-2026-45829) |
+| Mini eval harness | Pendiente (opcional) | Previsto desde F5.0/T6. Hoy la calidad se juzga a ojo; mediría entre modelos y entre cambios de prompt |
+| Conversor de formatos (F5.5 #9) | Pendiente | La única tool del catálogo sin construir. Estrenaría `escribe_disco` |
+| Pedir un fragmento **por número** | Pendiente | La búsqueda es por significado; un número no significa nada. Se pidió "el fragmento 51" y contestó que no existía teniéndolo |
+
+**Descartadas con motivo:** Wikipedia (redundante con Tavily; dos tools de "buscar" es la
+ambigüedad que peor precisión produce) · resumir/traducir como tool (el modelo ya sabe
+hacerlo sin salir a ningún sitio) · Google Calendar (token de 7 días en modo Testing) ·
+Brave (exige tarjeta) · Google Custom Search (cerrada a clientes nuevos) · DuckDuckGo (no
+existe API de búsqueda; `ddgs` es un scraper que en su propio README admite que puede violar
+los ToS) · SearXNG (exige un VPS que no existe; y con un solo usuario su ventaja de
+privacidad es débil — la IP del servidor eres tú) · AEMET (Open-Meteo ya lo cubre sin clave).
+
+---
+
+*E3 — Estado del Arte, Investigación y Plan de Fases v1.0 · 31/07/2026*

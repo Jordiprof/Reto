@@ -1,7 +1,8 @@
 # ADR-001 — Proveedor(es) LLM
 
-**Estado:** ✅ Decisión (16/07/2026)
-**Fecha:** 15/07/2026 (hipótesis) → 16/07/2026 (decisión) · **Decisor:** Jordi
+**Estado:** ✅ Decisión (16/07/2026) · **↻ Revisada el 03/08/2026** (ver §Revisión)
+**Fecha:** 15/07/2026 (hipótesis) → 16/07/2026 (decisión) → 03/08/2026 (revisión del orden)
+**Decisor:** Jordi
 
 ## Contexto
 
@@ -31,10 +32,10 @@ Diseño que la sostiene: `src/llm_client.py` abstrae el proveedor → cambiar = 
 - **07/2026 — Anthropic (pricing oficial):** sin free tier; `claude-haiku-4-5` $1/$5 MTok,
   `claude-sonnet-4-6` $3/$15. Válido como plan C de pago mínimo.
 - **Groq:** pendiente de verificar (F1.1) — modelos, límites del free tier y tool calling.
-  Hipótesis sin probar de Jordi (16/07): `llama-3.3-70b-versatile` podría funcionar bien
+  Mi hipótesis, sin probar todavía (16/07): `llama-3.3-70b-versatile` podría funcionar bien
   en Groq aunque en OpenRouter esté en cola — confirmar en F1.3, no dar por bueno todavía.
 
-## Pruebas reales — 16/07/2026 (Jordi, vía `ollama launch` / OpenCode)
+## Pruebas reales que hice — 16/07/2026 (vía `ollama launch` / OpenCode)
 
 **Ollama Cloud — ampliación de la prueba de F1.2 (adelantada):**
 
@@ -57,10 +58,10 @@ como hallazgos, la decisión de si entran en `llm_client.py` se toma en **F1.4**
 | Google AI Studio | `gemini-3.5-flash` | ⚠️ Parcial | Arrancó vía OpenCode, ejecutó tool calls (Glob, Read) — interrumpido antes de respuesta final, sin confirmación completa |
 | Google AI Studio | `gemini-2.5-pro` | ❌ Descartado | Cola por alta demanda del modelo |
 | OpenRouter | modelo de código Qwen (ID exacto pendiente) | ❌ Descartado | Cola / disponibilidad, igual que gemini-2.5-pro |
-| OpenRouter | `poolside/laguna-xs-2.1:free` | ✅ Funciona | Según prueba directa de Jordi |
-| OpenRouter | `poolside/laguna-m.1:free` | ✅ Funciona | Según prueba directa de Jordi |
-| OpenRouter | `tencent/hy3:free` | ✅ Funciona | Según prueba directa de Jordi |
-| OpenRouter | `nvidia/nemotron-3-ultra-550b-a55b:free` | ✅ Funciona | Según prueba directa de Jordi |
+| OpenRouter | `poolside/laguna-xs-2.1:free` | ✅ Funciona | Probado por mí directamente |
+| OpenRouter | `poolside/laguna-m.1:free` | ✅ Funciona | Probado por mí directamente |
+| OpenRouter | `tencent/hy3:free` | ✅ Funciona | Probado por mí directamente |
+| OpenRouter | `nvidia/nemotron-3-ultra-550b-a55b:free` | ✅ Funciona | Probado por mí directamente |
 | OpenRouter | "Llama 3.3 70B Instruct" | ❌ Descartado | Cola / disponibilidad, igual que Qwen y gemini-2.5-pro |
 
 **Riesgo anotado:** ampliar la cadena de proveedores en Fase 0 aumenta el alcance
@@ -73,21 +74,21 @@ todavía** — eso se decide con datos completos en F1.4.
 - Free tier con rate limits por modelo, ejemplo: `llama-3.3-70b-versatile` y los `gpt-oss` →
   **30 RPM, 6K–15K TPM**; `qwen/qwen3-32b` → 60 RPM. Límites a nivel de organización, no de usuario.
 - **Tool use confirmado para TODOS los modelos alojados**, cita textual: *"All models hosted
-  on Groq support tool use"*. Confirma la hipótesis de Jordi: `llama-3.3-70b-versatile` sí
+  on Groq support tool use"*. Confirma mi hipótesis: `llama-3.3-70b-versatile` sí
   soporta tools. ✅
 
 **Google AI Studio / Gemini API** (`ai.google.dev`):
 - Existe free tier, pero la doc no publica cifras exactas de RPM/RPD en la página de rate
   limits — remite al dashboard personal en `aistudio.google.com/rate-limit` (solo visible
-  con cuenta creada). **Pendiente:** mirar ese dashboard cuando Jordi tenga cuenta.
+  con cuenta creada). **Pendiente:** mirar ese dashboard cuando tenga cuenta.
 - Function calling confirmado en la serie **Gemini 3** (incluye `gemini-3.5-flash`, que
-  Jordi ya vio ejecutando tool calls en la prueba interrumpida).
+  ya vi ejecutando tool calls en la prueba interrumpida).
 
 **OpenRouter** (`openrouter.ai/docs`):
 - Modelos `:free` **sin compra previa de créditos**: **20 RPM / 50 RPD** (peticiones por día).
 - Con al menos **$10 en créditos comprados** (de por vida, no saldo actual): sube a **20 RPM
   / 1000 RPD**.
-- Esto explica en parte las "colas" que veía Jordi: 50 peticiones/día en el nivel más bajo
+- Esto explica en parte las "colas" que yo veía: 50 peticiones/día en el nivel más bajo
   se agotan muy rápido probando modelos a mano.
 
 **Anthropic** (`platform.claude.com/docs`, actualizado 16/07):
@@ -103,7 +104,7 @@ todavía** — eso se decide con datos completos en F1.4.
   modelo `gpt-oss:20b`. Respuesta real recibida de punta a punta.
 - **16/07/2026 — Groq ✅** — `scripts/prueba_test_groq.py`, SDK oficial `groq` v1.5.0,
   modelo `llama-3.3-70b-versatile`. Respuesta real recibida; confirma la hipótesis de
-  tool use de Jordi (y lo que decía la doc oficial de Groq).
+  tool use que hice yo (y lo que decía la doc oficial de Groq).
 - **16/07/2026 — Google AI Studio (Gemini) ✅** — `scripts/prueba_test_gemini.py`, SDK
   oficial `google-genai` v2.12.0, modelo `gemini-3.5-flash`. Respuesta real y completa
   (a diferencia de la prueba anterior vía OpenCode, que se interrumpió). Nota corregida:
@@ -160,7 +161,7 @@ Gemini no está disponible en la UE/España. Se verificó contra el texto legal 
 (`ai.google.dev/gemini-api/terms`) y es **falso**: en la UE se aplican las condiciones de
 privacidad de "Paid Services" también al nivel gratuito (los prompts no se usan para
 entrenar), pero el acceso gratuito sí funciona — confirmado además por el smoke test real
-de Jordi. Se descarta la fuente no oficial que afirmaba lo contrario.
+que hice yo. Se descarta la fuente no oficial que afirmaba lo contrario.
 
 ## Consecuencias
 
@@ -173,3 +174,78 @@ de Jordi. Se descarta la fuente no oficial que afirmaba lo contrario.
   Anthropic) — cada SDK tiene su propia firma, visto en los smoke tests de F1.2–F1.5.
 - Idea aparcada para Fase 4/5 (ver E3): una tool `consultar_otro_modelo` que delegue en
   otro proveedor de esta misma cadena — orquestación ligera sin romper la arquitectura.
+
+---
+
+## Revisión (03/08/2026) — el orden cambia: **Ollama → Groq → Gemini**
+
+> La decisión original **no se borra**: se deja escrita arriba tal y como se tomó, porque
+> era correcta con los datos y el uso que había en julio. Lo que cambió fue el uso.
+
+### Qué motivó revisarla
+
+Groq iba primero **por velocidad**, y en aquel momento eso era lo que importaba: un turno
+era un mensaje corto, sin herramientas ni documentos. Ese supuesto dejó de valer al llegar
+F5.5:
+
+- Groq (free) da **100.000 tokens/día** en `llama-3.3-70b-versatile`.
+- Con un documento cargado, el historial reenvía **~5.000 tokens en cada turno** (AUD-03),
+  porque el texto del documento se queda en el contexto.
+- **La cuota diaria se agota en ~18 mensajes.** Medido en una sesión real del 03/08: de
+  21:50 a 22:03, quince mensajes seguidos, Groq falló en **todos** sin recuperarse.
+- Ollama Cloud, en esa misma sesión: **cero fallos**, entre 1,1 y 6,0 s por respuesta.
+
+Y hay un segundo motivo, de **calidad** y no de cuota: `llama-3.3-70b` reescribió las
+fechas de una previsión meteorológica que la herramienta le había dado bien
+(`2026-08-03` → `2024-03-07`), copiando en cambio las 21 cifras de temperatura sin un
+error. Con el mismo dato, `gpt-oss:120b` y `nemotron-3-ultra` las escribieron bien.
+
+### La cadena hoy
+
+| Orden | Proveedor / modelo | Por qué ahí |
+|---|---|---|
+| 1 | **Ollama Cloud** `gpt-oss:120b` | Cuota holgada y cero fallos medidos |
+| 2 | **Groq** `llama-3.3-70b-versatile` | Sigue siendo el más rápido cuando tiene cuota |
+| 3 | **Groq** `openai/gpt-oss-120b` | **El DOBLE de cuota diaria** (200.000 tok/día) |
+| 4 | **Groq** `qwen/qwen3.6-27b` | Tercera reserva del mismo proveedor |
+| 5 | **Gemini** `gemini-3.5-flash` | Sin cambios respecto a la decisión original |
+
+### Hallazgo que lo hizo posible: **en Groq el cupo es POR MODELO**
+
+Idea de Jordi al ver que Groq se agotaba: *"¿da igual cambiarle de modelo, o se queda sin
+límite solo llama-3.3?"*. La documentación resumida decía **"rate limits apply at the
+organization level… shared across all models"**, lo cual chocaba con que la propia tabla
+diera límites distintos por modelo.
+
+Se verificó **contra la API real**, leyendo las cabeceras `x-ratelimit-*`. Cuatro llamadas
+gastadas **solo** en `llama-3.3`:
+
+| Modelo | Peticiones | Tokens |
+|---|---|---|
+| `llama-3.3-70b-versatile` | 993 ⬇ | 10.969 ⬇ |
+| `openai/gpt-oss-120b` | **997 (intacto)** | **7.920 (intacto)** |
+
+Cupos independientes. Por eso la cadena degrada ahora a **otro modelo del mismo
+proveedor** antes de cambiar de proveedor entero — y esa reserva **se salta si el fallo no
+es de cuota**, porque cambiar de modelo solo salva de una cuota agotada (con una clave
+mala el siguiente fallaría igual y sería una llamada tirada, justo lo que SEG-03 vino a
+evitar).
+
+**A Ollama y Gemini NO se les pone reserva de modelo**: no publican contadores de cuota
+(comprobado el 03/08), así que cualquier afirmación sobre si sus cupos son por modelo
+sería una suposición. Se amplía cuando haya números, no antes.
+
+### Lo que NO cambia
+
+- **La transcripción de voz** sigue yendo a Groq siempre y a dedo (`whisper-large-v3-turbo`
+  en `voz.py`, con su propio cliente y su propio cupo: 20 RPM / 2.000 RPD).
+- **`/condensar`** sigue eligiendo `gemini-2.5-flash` a dedo, por cuota de tokens por
+  minuto (250.000 frente a los 12.000 de Groq).
+- Son **tres decisiones independientes**: el orden del chat no las toca.
+
+### Consecuencia de arquitectura
+
+El orden pasa a derivarse de **una sola fuente**: el orden del diccionario
+`config.PROVEEDORES`. Antes "Groq primero" estaba escrito a mano en **tres** sitios (el
+menú de la CLI, el arranque del bot y la cadena del router), y cambiar la decisión obligaba
+a acordarse de los tres. Hay un test que exige que no vuelvan a separarse.
