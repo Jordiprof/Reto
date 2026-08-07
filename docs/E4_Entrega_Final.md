@@ -23,6 +23,21 @@ Está escrito **a mano, sin frameworks de agentes**: el bucle de tool calling, e
 entre proveedores y la memoria semántica son código propio, porque el objetivo del reto era
 entender esas piezas, no consumirlas.
 
+### 1.0 Veredicto honesto: seguro sí, privado a medias, confidencial no
+
+Se pone aquí, lo primero y no escondido al final, porque es la pregunta que de verdad
+importa en un asistente que maneja datos personales:
+
+| | Veredicto | Por qué |
+|---|---|---|
+| **Seguro** | ✅ **Sí** | Frente a terceros aguanta: acceso por lista blanca y solo chat privado, que **falla cerrado** y está validado por mutación; cero secretos en 81 commits; guardián anti-SSRF; las cuatro inyecciones del documento de prueba rebotaron |
+| **Privado** | 🟡 **A medias, por diseño** | El texto de cada turno **viaja al proveedor del LLM**, y con `memoria` encendida viajan recuerdos descifrados. El cifrado protege el disco, no la conversación. Telegram no es E2E. Los **títulos** de las conversaciones salen. La voz es un dato biométrico |
+| **Confidencial** | ❌ **No** | La clave de cifrado vive **en la misma carpeta** que los datos que cifra. Protege contra el descuido, no contra alguien con acceso a la máquina |
+
+**Esto no es una disculpa, es el resultado.** Un asistente que usa un LLM en la nube no
+puede ser confidencial, y decirlo con precisión vale más que prometer una seguridad que
+no se sostiene. Las limitaciones completas están en §6, sin esconder ninguna.
+
 ### 1.1 Cifras de la entrega
 
 | Métrica | Valor |
@@ -260,6 +275,7 @@ python -m src.telegram_bot
 | Limitación | Por qué está así | Cómo se cerraría |
 |---|---|---|
 | El texto del turno **sí** viaja al proveedor LLM | Inevitable sin modelo local | Ollama local |
+| **La clave de cifrado vive junto a los datos que cifra** | `CONVERSATIONS_KEY` está en el `.env`, en la misma carpeta que `conversations/`. Protege contra el descuido (copiar la carpeta, un backup a la nube), **no contra alguien con acceso a la máquina**: tendría la caja fuerte y la llave encima | Contraseña maestra al arrancar, o un gestor de secretos del sistema. Se descartó por usabilidad en un asistente de uso diario |
 | **La voz sale de la máquina al transcribir** | Whisper corre en Groq. Es un dato **biométrico** | Whisper local (descartado: decenas de segundos en CPU). Mitigado: apagado por defecto, con el aviso en el propio menú |
 | **Telegram no cifra de extremo a extremo** | Los mensajes pasan por sus servidores | Ninguna: es el precio del canal. Declarado, no disimulado |
 | Un solo usuario: el bot **no arranca** con más de uno | El índice del RAG no está particionado | Particionar por `user_id` |
