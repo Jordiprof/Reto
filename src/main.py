@@ -258,6 +258,7 @@ COMANDOS = {
     "/borrar": "Borrar una conversación guardada (del disco y de la memoria)",
     "/resumen": "Pedir un resumen de la conversación",
     "/condensar": "Resumir el documento adjunto ENTERO en un .md (tarda)",
+    "/noticias": "Informe en español de lo último en IA, tecnología y ciberseguridad",
     "/limpiar": "Borrar esta conversación y empezar de cero",
     "/guardar": "Guardar la conversación ahora, sin salir",
     "/salir": "Terminar (te preguntaré si guardar)",
@@ -921,6 +922,49 @@ def _sesion():
                 else:
                     ruta = guardar(markdown, adjunto.nombre)
                     print(f"✅ Listo: {ruta}  ({datos['llamadas']} llamadas al modelo)")
+                continue
+
+            # 08/08: informe de noticias. COMANDO por lo mismo que
+            # /condensar (ver el cabecero de src/noticias.py), y ademas NO
+            # depende de /tools ni de la lista blanca: las fuentes son fijas
+            # y el modelo no elige a donde se va.
+            if comando == "/noticias":
+                from src.noticias import (
+                    DIAS_POR_DEFECTO,
+                    NOTICIAS_POR_DEFECTO,
+                    SinNoticias,
+                    descargar_titulares,
+                    redactar,
+                )
+                from src.noticias import guardar as guardar_noticias
+                from src.resumen_largo import preparar_resumidor
+
+                try:
+                    titulares, caidas = descargar_titulares(
+                        avisar=lambda t: print(f"  {t}")
+                    )
+                    llamar, _, quien = preparar_resumidor(
+                        agente.proveedor, agente.api_key, agente.modelo
+                    )
+                    print(f"Redactando con {quien}…")
+                    markdown, datos = redactar(
+                        titulares, llamar,
+                        cuantos=NOTICIAS_POR_DEFECTO, dias=DIAS_POR_DEFECTO,
+                        fuentes_caidas=caidas, avisar=lambda t: print(f"  {t}"),
+                    )
+                except SinNoticias as error:
+                    print(f"⚠️ {error}")
+                    continue
+                except Exception as error:
+                    logging.error("CLI: fallo el informe de noticias (%s)",
+                                  type(error).__name__)
+                    print("⚠️ No he podido montar el informe de noticias.")
+                    continue
+
+                ruta = guardar_noticias(markdown)
+                print(f"✅ Listo: {ruta}")
+                print(f"   {datos['elegidas']} noticias de {datos['candidatas']} "
+                      f"candidatas, {datos['llamadas']} llamadas al modelo.")
                 continue
 
             # Un turno completo (historial, tools, guardado del turno) lo

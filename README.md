@@ -73,10 +73,40 @@ sin salir de la conversación):
 | `/tools` | Activa o desactiva categorías de herramientas para esta sesión (ver el default más abajo) |
 | `/documento <ruta>` | Le da un PDF o un Word para que pueda leerlo y responder sobre él |
 | `/condensar` | Resume el documento **entero** por bloques: completo (un `.md` con secciones) o rápido (unas líneas en pantalla) |
+| `/noticias` | Informe en español de lo último en IA, tecnología y ciberseguridad, en un `.md` (ver más abajo) |
 | `/salir` (o `salir`) | Termina; pregunta si quieres guardar (también se guarda si cortas con `Ctrl+C`) |
 
 Todo menú de flechas (`/proveedor`→modelo, `/comandos`, `/historial`, `/tools`) tiene una
 opción "⬅ Volver"/"Cancelar" para no perder el paso anterior sin cerrar el menú entero.
+
+### `/noticias`: qué hace y qué NO hace
+
+Lee los RSS de ocho medios en inglés (Ars Technica, MIT Technology Review, The Verge,
+TechCrunch, WIRED, VentureBeat, BleepingComputer y The Record), se queda con lo publicado
+en los últimos días, elige lo de más impacto, abre esos artículos y escribe un informe en
+español en `resumenes/`. Prueba real del 08/08: **118 candidatas → 10 noticias, 2 llamadas
+al modelo, 73 segundos.**
+
+Dos cosas que conviene tener claras, y por eso están escritas también dentro de cada
+informe que genera:
+
+- **No cubre una semana, cubre unos 2 días.** Un RSS no guarda historia: guarda sus
+  últimas 10-50 publicaciones. Medido el 08/08, eso va de medio día (The Verge) a 4,9
+  días (MIT Technology Review). Pedirle "los últimos 7 días" sería prometer algo que no
+  hay al otro lado.
+- **No investiga: lee una lista fija.** Si algo importante sale en un medio que no está
+  en la lista, no se entera.
+
+**No depende de `/tools` ni de la lista blanca de dominios**, y eso es deliberado. Las
+fuentes son una constante de `src/noticias.py`, no una variable del `.env`: el modelo
+nunca elige a dónde ir, solo recibe texto ya descargado. Así `resumir_url` **sigue sin
+poder visitar una web de noticias por su cuenta** — que es justo lo que se decidió al
+dejarlas fuera de la lista blanca por ser el contenido más manipulable que puede leer el
+bot. Hay un test que se pone rojo si alguien las añade.
+
+El cuerpo de cada artículo va envuelto en `<fuente>`, igual que `resumir_url` y
+`leer_documento`; los metadatos (medio, fecha, enlace) van **fuera** de la cita, porque
+son nuestros y no del artículo.
 
 **Herramientas disponibles** (activables por categoría con `/tools`, catálogo completo y
 criterio de riesgo en [ADR-006](docs/ADR/ADR-006-catalogo-y-riesgo-de-herramientas.md)):
@@ -172,6 +202,7 @@ no que lo expliquen):
 | `/voz` | Escucharte y/o contestarte hablando — **los dos empiezan apagados** |
 | `/tools` | Activar o desactivar categorías de herramientas |
 | `/condensar` | Resume el documento adjunto entero: completo (`.md` que te llega como fichero) o rápido |
+| `/noticias` | Informe de lo último en IA, tecnología y ciberseguridad; te llega como `.md` |
 | `/documento` | No hace falta escribirlo: **mándale el PDF o el Word como adjunto** y ya está |
 | `/modelo`, `/proveedor` | Con botones inline en vez de menús de flechas |
 

@@ -1092,6 +1092,7 @@ _CATALOGO: list[tuple[str, str, str]] = [
     ("modelo", "cambiar el modelo (mismo proveedor)", "directo"),
     ("proveedor", "cambiar de proveedor (y modelo)", "directo"),
     ("condensar", "resumir el documento adjunto ENTERO y mandártelo en un .md", "directo"),
+    ("noticias", "informe en español de lo último en IA, tecnología y ciberseguridad", "directo"),
     ("documento", "mándame un PDF o un Word como adjunto — no hace falta escribirlo", "info"),
 ]
 
@@ -1360,6 +1361,77 @@ async def _condensar_con_formato(update: Update, formato: str) -> None:
             caption=(
                 f"✅ Listo: {datos['bloques_procesados']} bloque(s), "
                 f"{datos['llamadas']} llamadas al modelo."
+            ),
+        )
+
+
+async def cmd_noticias(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Informe de noticias en un .md (08/08).
+
+    COMANDO y no tool, por lo mismo que /condensar: son N descargas y 2
+    llamadas al LLM (ver el cabecero de src/noticias.py).
+
+    NO depende de /tools ni de la lista blanca de dominios: las fuentes son
+    una constante del codigo y el modelo no elige a donde se va. Por eso
+    `resumir_url` sigue sin poder visitar una web de noticias por su cuenta.
+
+    Va en .md y no al chat porque el informe son varias decenas de miles de
+    caracteres: en Telegram serian diez mensajes seguidos.
+    """
+    usuario = update.effective_user
+    mensaje = update.effective_message
+    if usuario is None or mensaje is None:
+        return
+
+    from src.noticias import (
+        DIAS_POR_DEFECTO,
+        NOTICIAS_POR_DEFECTO,
+        SinNoticias,
+        descargar_titulares,
+        redactar,
+    )
+    from src.noticias import guardar as guardar_noticias
+    from src.resumen_largo import preparar_resumidor
+
+    async with _cerrojo_de(usuario.id):
+        agente = _agente_de(usuario.id)
+        await mensaje.reply_text(
+            "📰 Voy a leer las fuentes y montar el informe. Tarda un par de "
+            "minutos; te aviso al acabar."
+        )
+        try:
+            # Los avisos van a una lista y se mandan DESPUES: esto corre en
+            # otro hilo y no puede hacer await. Misma frontera que
+            # /condensar.
+            avisos: list[str] = []
+            titulares, caidas = await asyncio.to_thread(
+                descargar_titulares, DIAS_POR_DEFECTO, None, avisos.append
+            )
+            llamar, _, quien = preparar_resumidor(
+                agente.proveedor, agente.api_key, agente.modelo
+            )
+            markdown, datos = await asyncio.to_thread(
+                redactar, titulares, llamar,
+                NOTICIAS_POR_DEFECTO, DIAS_POR_DEFECTO, caidas, avisos.append,
+            )
+        except SinNoticias as error:
+            await mensaje.reply_text(f"⚠️ {error}")
+            return
+        except Exception as error:
+            logging.error("Telegram: fallo el informe de noticias (%s)",
+                          type(error).__name__)
+            await mensaje.reply_text("⚠️ No he podido montar el informe de noticias.")
+            return
+
+        ruta = await asyncio.to_thread(guardar_noticias, markdown)
+
+    with ruta.open("rb") as fichero:
+        await mensaje.reply_document(
+            fichero,
+            filename=ruta.name,
+            caption=(
+                f"✅ {datos['elegidas']} noticias de {datos['candidatas']} "
+                f"candidatas (últimos {DIAS_POR_DEFECTO} días), redactado con {quien}."
             ),
         )
 
@@ -2317,6 +2389,7 @@ _ACCIONES_DIRECTAS = {
     "limpiar": cmd_limpiar,
     "cerrar": cmd_salir,
     "condensar": cmd_condensar,
+    "noticias": cmd_noticias,
     "voz": cmd_voz,
     "tools": cmd_tools,
     "modelo": cmd_modelo,
@@ -2439,6 +2512,7 @@ def construir_aplicacion() -> Application:
     aplicacion.add_handler(CommandHandler("tools", cmd_tools))
     aplicacion.add_handler(CommandHandler("voz", cmd_voz))
     aplicacion.add_handler(CommandHandler("condensar", cmd_condensar))
+    aplicacion.add_handler(CommandHandler("noticias", cmd_noticias))
     # Los botones de /modelo y /proveedor vuelven como CallbackQuery. Pasan
     # por la allowlist igual que todo lo demas (TypeHandler del grupo -1).
     aplicacion.add_handler(CallbackQueryHandler(manejar_boton))
