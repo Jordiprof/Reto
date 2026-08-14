@@ -18,6 +18,7 @@
 #
 # Nada de esto lo habria encontrado un test: los tres "funcionaban".
 import asyncio
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -521,20 +522,57 @@ def test_publicar_comandos_no_tumba_el_arranque(caplog):
     assert "RuntimeError" in caplog.text
 
 
-def test_ningun_texto_del_menu_usa_markdown_invalido():
+def _sin_escapes(texto: str) -> str:
+    """Quita cada caracter que va precedido de "\\": un "\\_" no cuenta
+    para el balance de cursivas, porque Telegram lo lee como un guion bajo
+    LITERAL (es la escapada que documenta su propia API para "_", "*",
+    "`" y "["), no como delimitador. Sin esto el contador de parejas
+    marcaba como roto un texto que en realidad estaba bien escapado."""
+    return re.sub(r"\\.", "", texto)
+
+
+def test_ningun_texto_del_menu_usa_markdown_invalido(monkeypatch):
     """En el Markdown "legacy" de Telegram la negrita es *asi*, nunca
     **asi** (eso es MarkdownV2). Un `**` o un * desparejado hace que
     Telegram RECHACE EL MENSAJE ENTERO - es el fallo real del 30/07 con los
-    titulos de los dominios, aqui blindado para los textos nuevos."""
+    titulos de los dominios, aqui blindado para los textos nuevos.
+
+    BUG REAL, ENCONTRADO POR EL CI (14/08), en DOS capas a la vez:
+
+    1. El contador estaba MAL: contaba TODOS los "_", tambien los que ya
+       iban escapados como "\\_" (que son seguros: Telegram los lee tal
+       cual, no como cursiva). _texto_voz() escapa el mensaje de
+       motivo_no_disponible() con _escapar_markdown, y ese mensaje real
+       ("...download_voices es_ES-davefx-medium...") tiene TRES guiones
+       bajos - impar, y aun asi el texto final era valido porque los tres
+       estaban escapados. El test lo marcaba roto sin estarlo.
+
+    2. Y aun con el contador bien, el texto que se comprobaba dependia de
+       si la maquina que ejecuta el test tiene la voz de Piper descargada:
+       en la de Jordi si, asi que motivo_no_disponible() devuelve None y
+       esa rama JAMAS se ejercitaba en local - solo en una maquina limpia
+       como el runner de GitHub. Se fuerza aqui a proposito, para que el
+       caso que de verdad rompio se compruebe siempre, en cualquier
+       maquina."""
+    monkeypatch.setattr(
+        "src.voz.motivo_no_disponible",
+        lambda: (
+            "falta la voz de Piper (es_ES-davefx-medium.onnx). Descárgala con:\n"
+            "venv\\Scripts\\python.exe -m piper.download_voices "
+            "es_ES-davefx-medium --data-dir voces"
+        ),
+    )
+
     textos = {"_INFO_DOCUMENTO": telegram_bot._INFO_DOCUMENTO}
     textos.update(telegram_bot._PETICIONES_TEXTO)
     textos["voz"] = telegram_bot._texto_voz(111)
     textos["comandos"] = telegram_bot._texto_comandos()
 
     for nombre, texto in textos.items():
+        limpio = _sin_escapes(texto)
         assert "**" not in texto, f"{nombre} usa ** (no existe en Markdown legacy)"
-        assert texto.count("*") % 2 == 0, f"{nombre} tiene un * desparejado"
-        assert texto.count("_") % 2 == 0, f"{nombre} tiene un _ desparejado"
+        assert limpio.count("*") % 2 == 0, f"{nombre} tiene un * desparejado"
+        assert limpio.count("_") % 2 == 0, f"{nombre} tiene un _ SIN ESCAPAR desparejado"
 
 
 # --- Regresion: el estado pendiente y las DOS puertas de entrada -----------

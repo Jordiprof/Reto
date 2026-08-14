@@ -13,7 +13,7 @@ validar_url() ENTERO - lista blanca Y bloqueo de IPs internas.
 """
 
 
-from src import tools
+from src import config, tools
 
 
 class _RespuestaFalsa:
@@ -56,7 +56,14 @@ def _httpx_falso(monkeypatch, respuestas: dict):
 
 def test_una_redireccion_a_www_del_MISMO_dominio_se_sigue(monkeypatch):
     """El caso real de Jordi: anthropic.com -> www.anthropic.com. La lista
-    blanca ya acepta subdominios, asi que el destino es igual de legitimo."""
+    blanca ya acepta subdominios, asi que el destino es igual de legitimo.
+
+    BUG DEL TEST (14/08, encontrado por el CI): faltaba este monkeypatch,
+    asi que el destino de la redireccion (www.anthropic.com) solo pasaba el
+    guardian si el .env REAL de quien ejecuta el test tenia anthropic.com
+    en su lista blanca - cierto en la maquina de Jordi, falso en el runner
+    de GitHub (sin .env). Reproducido en local moviendo el .env aparte."""
+    monkeypatch.setenv(config.DOMINIOS_WEB_ENV, "anthropic.com")
     pedidas = _httpx_falso(monkeypatch, {
         "https://anthropic.com/": _RespuestaFalsa(location="https://www.anthropic.com/"),
         "https://www.anthropic.com/": _RespuestaFalsa(cuerpo=b"<p>hola desde www</p>"),
@@ -71,7 +78,12 @@ def test_una_redireccion_a_www_del_MISMO_dominio_se_sigue(monkeypatch):
 def test_una_redireccion_RELATIVA_se_resuelve(monkeypatch):
     """learn.microsoft.com devuelve `/en-us/` a secas, sin dominio. Sin
     resolverlo contra el origen, tres de los once casos reales seguirian
-    sin funcionar."""
+    sin funcionar.
+
+    Mismo bug de test que el de arriba (14/08): el destino resuelto
+    necesita learn.microsoft.com en la lista blanca, y dependia del .env
+    real en vez de fijarlo aqui."""
+    monkeypatch.setenv(config.DOMINIOS_WEB_ENV, "learn.microsoft.com")
     pedidas = _httpx_falso(monkeypatch, {
         "https://learn.microsoft.com/": _RespuestaFalsa(location="/en-us/"),
         "https://learn.microsoft.com/en-us/": _RespuestaFalsa(cuerpo=b"<p>docs</p>"),
@@ -113,7 +125,14 @@ def test_una_redireccion_a_OTRO_dominio_no_autorizado_se_para(monkeypatch):
 
 def test_un_bucle_de_redirecciones_se_corta(monkeypatch):
     """Sin tope, dos paginas apuntandose la una a la otra tienen a la tool
-    dando vueltas hasta el timeout."""
+    dando vueltas hasta el timeout.
+
+    Mismo bug de test que los dos de arriba (14/08): cada vuelta del bucle
+    pasa por validar_url(), asi que sin anthropic.com fijado aqui el
+    primer salto ya se paraba por "no autorizado" y el test comprobaba
+    el mensaje equivocado sin que nadie se enterase, porque en local
+    coincidia con el .env real."""
+    monkeypatch.setenv(config.DOMINIOS_WEB_ENV, "anthropic.com")
     pedidas = _httpx_falso(monkeypatch, {
         "https://anthropic.com/": _RespuestaFalsa(location="https://www.anthropic.com/"),
         "https://www.anthropic.com/": _RespuestaFalsa(location="https://anthropic.com/"),

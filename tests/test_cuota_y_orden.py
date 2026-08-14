@@ -178,13 +178,23 @@ def test_el_orden_del_router_SALE_de_config_PROVEEDORES():
     assert _ORDEN_ADR001 == list(PROVEEDORES)
 
 
-def test_el_bot_arranca_con_el_MISMO_proveedor_que_la_CLI():
+def test_el_bot_arranca_con_el_MISMO_proveedor_que_la_CLI(monkeypatch):
     """La divergencia silenciosa que este arreglo cierra: si el bot se
     quedara con el proveedor viejo, los dos canales usarian modelos
-    distintos sin que nada lo dijera. Misma familia que la de /salir."""
+    distintos sin que nada lo dijera. Misma familia que la de /salir.
+
+    BUG DEL TEST, no del codigo (14/08, encontrado por el CI): faltaba este
+    monkeypatch, asi que el test solo pasaba si el .env REAL de quien lo
+    ejecuta tenia OLLAMA_API_KEY puesta - en la maquina de Jordi, siempre;
+    en el runner de GitHub, que no tiene .env, nunca. El CI llevaba dias sin
+    poder instalar (ver requirements-lock.txt) y este fallo estaba
+    escondido detras de aquel: en cuanto se arreglo la instalacion, salio
+    este. Reproducido en local moviendo el .env aparte antes del arreglo."""
     from src.telegram_bot import _configuracion_por_defecto
 
     primero_de_la_cadena = _ORDEN_ADR001[0]
+    monkeypatch.setenv(PROVEEDORES[primero_de_la_cadena], "clave-de-prueba")
+
     assert _configuracion_por_defecto()[0] == primero_de_la_cadena
 
 
