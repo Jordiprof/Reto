@@ -267,10 +267,13 @@ de los datos que cifra repetiría el problema que ya tiene el servidor. Sin ella
 es basura cifrada para siempre: Fernet no tiene recuperación.
 
 **Aviso cuando se cae:** [`scripts/avisar-telegram.sh`](scripts/avisar-telegram.sh) manda
-un mensaje con las últimas líneas del log cuando systemd se rinde de reintentar
-(`OnFailure=`), y [`scripts/vigilar-bots.timer`](scripts/vigilar-bots.timer) vuelve a
-comprobarlo cada día por si el primer aviso se perdió. El aviso lo manda `curl` contra la
-API de Telegram, **no el bot** — por eso puede avisar de que el bot está muerto.
+un mensaje con las últimas líneas del log cuando el servicio falla (`OnFailure=`), y
+[`scripts/vigilar-bots.timer`](scripts/vigilar-bots.timer) vuelve a comprobarlo cada día
+por si el primer aviso se perdió. El aviso lo manda `curl` contra la API de Telegram,
+**no el bot** — por eso puede avisar de que el bot está muerto. Lleva un **limitador de un
+aviso cada 15 minutos** por unidad, y no es comodidad: probándolo en real se vio que
+`OnFailure=` salta en **cada intento fallido**, no una sola vez, así que sin limitador
+llegan cinco mensajes seguidos por incidente — y un aviso que satura se acaba silenciando.
 **Lo que NO detecta**, y conviene saberlo: un bot vivo pero inútil (cuota agotada, token
 caducado, disco lleno) sigue apareciendo como `active (running)` y no dispara nada. Para
 eso haría falta un chequeo de salud del propio bot, que es otra cosa.

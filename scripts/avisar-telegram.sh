@@ -12,13 +12,25 @@
 # credencial de API; funciona igual con el bot parado.
 #
 # LO QUE ESTO **NO** DETECTA, y conviene saberlo: solo se dispara cuando el
-# proceso MUERE o systemd se rinde. Un bot vivo pero inutil -cuota de Groq
-# agotada, token caducado, disco lleno- sigue apareciendo como
-# `active (running)` y esto no dira ni mu. Para eso haria falta que el propio
-# bot respondiera a un chequeo de salud, que es otra cosa y toca codigo.
+# proceso MUERE. Un bot vivo pero inutil -cuota de Groq agotada, token
+# caducado, disco lleno- sigue apareciendo como `active (running)` y esto no
+# dira ni mu. Para eso haria falta que el propio bot respondiera a un chequeo
+# de salud, que es otra cosa y toca codigo.
+#
+# POR QUE HAY UN LIMITADOR (probado en real el 21/08/2026). La primera version
+# no lo tenia, porque yo daba por hecho que `OnFailure=` salta UNA vez, cuando
+# systemd se rinde de reintentar. **Es falso: salta en CADA intento fallido.**
+# Al romper el servicio a proposito llegaron cinco mensajes seguidos, uno cada
+# 10 segundos -exactamente el RestartSec de la unidad-. Cinco por incidente es
+# ruido; y si el bot entra en un ciclo de caerse y levantarse a lo largo de
+# horas, son muchisimos mas. Un aviso que satura se acaba silenciando, y
+# entonces ya no avisa de nada: el limitador no es comodidad, es lo que hace
+# que el aviso siga sirviendo.
 #
 # Uso:
 #   avisar-telegram.sh <unidad-systemd> [motivo]
+#
+#   AVISAR_FORZAR=1 avisar-telegram.sh ...   <- salta el limitador (pruebas)
 #
 set -euo pipefail
 
@@ -26,6 +38,23 @@ UNIDAD="${1:?Falta el nombre de la unidad (ej: jimmy.service)}"
 MOTIVO="${2:-ha fallado}"
 
 ENV_FILE="/home/bot-jimmy/python-agentes-ia-dq/.env"
+
+# Un solo aviso por unidad cada 15 minutos.
+VENTANA_SEGUNDOS=900
+
+# En /run, que es tmpfs: se vacia al reiniciar. Es lo que se quiere - tras un
+# reinicio de la maquina, la primera caida vuelve a avisar aunque hubiera
+# avisado justo antes de apagarse.
+STAMP_DIR="/run/avisar-telegram"
+STAMP="${STAMP_DIR}/${UNIDAD//\//_}.stamp"
+
+if [[ "${AVISAR_FORZAR:-0}" != "1" && -f "$STAMP" ]]; then
+    transcurrido=$(( $(date +%s) - $(stat -c %Y "$STAMP") ))
+    if (( transcurrido < VENTANA_SEGUNDOS )); then
+        echo "Ya se aviso de ${UNIDAD} hace ${transcurrido}s. No repito hasta los ${VENTANA_SEGUNDOS}s."
+        exit 0
+    fi
+fi
 
 if [[ ! -r "$ENV_FILE" ]]; then
     echo "No puedo leer $ENV_FILE (¿se ejecuta como root?)" >&2
@@ -76,5 +105,11 @@ curl -sS -X POST \
     --data-urlencode "text=${MENSAJE}" \
     --max-time 20 \
     -o /dev/null
+
+# La marca se pone DESPUES de que el curl haya ido bien. Si se pusiera antes y
+# el envio fallara (sin red, por ejemplo), el limitador se tragaria los 15
+# minutos siguientes de avisos por uno que nunca llego a salir.
+mkdir -p "$STAMP_DIR"
+touch "$STAMP"
 
 echo "Aviso enviado sobre ${UNIDAD}."

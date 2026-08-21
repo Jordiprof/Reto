@@ -28,10 +28,14 @@ Wants=network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
-# Cuando systemd se rinde (los 5 intentos de arriba agotados), manda un aviso
-# por Telegram. El aviso NO depende del bot: lo manda un curl contra la API de
-# Telegram, asi que funciona precisamente cuando el bot esta muerto, que es
-# cuando hace falta. El `%n` es el nombre de esta unidad.
+# Manda un aviso por Telegram cuando el bot falla. El aviso NO depende del bot:
+# lo manda un curl contra la API de Telegram, asi que funciona precisamente
+# cuando el bot esta muerto, que es cuando hace falta. El `%n` es el nombre de
+# esta unidad.
+#
+# OJO: esto salta en CADA intento fallido, no una vez al final (comprobado en
+# real el 21/08). Quien evita los cinco mensajes seguidos es el limitador de
+# avisar-telegram.sh, no esta linea.
 OnFailure=avisar-caida@%n.service
 
 [Service]

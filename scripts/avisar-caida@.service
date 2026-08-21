@@ -6,10 +6,14 @@
 # El `%n` de alli llega aqui como `%i`: el nombre del servicio que fallo. Con
 # una sola plantilla quedan cubiertos todos los bots presentes y futuros.
 #
-# CUANDO SE DISPARA EXACTAMENTE: systemd marca una unidad como `failed` cuando
-# se rinde de reintentarla, o sea tras los 5 intentos en 60 s que fija
-# StartLimitBurst en jimmy.service. No salta en cada reinicio suelto -eso seria
-# ruido-, salta cuando el bot esta caido DE VERDAD.
+# CUANDO SE DISPARA EXACTAMENTE, corregido tras probarlo en real el
+# 21/08/2026: `OnFailure=` salta en **CADA intento fallido**, no una sola vez
+# cuando systemd se rinde. Al romper el servicio a proposito llegaron cinco
+# mensajes seguidos, uno cada 10 segundos -el RestartSec de la unidad-.
+#
+# Por eso el ruido NO se controla aqui, sino dentro de avisar-telegram.sh, que
+# lleva un limitador de un aviso por unidad cada 15 minutos. Si algun dia
+# alguien quita ese limitador creyendo que sobra, vuelve el spam.
 #
 # Instalacion:
 #   sudo cp scripts/avisar-caida@.service /etc/systemd/system/
