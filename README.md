@@ -224,6 +224,45 @@ extremo a extremo** — pasan por los servidores de Telegram. Es una consecuenci
 ese canal, no del código, pero conviene saberlo: matiza el requisito RNF-06 del proyecto
 (ver [E1 §4.1](docs/E1_Especificacion_Requisitos.md)).
 
+## Corriendo 24/7 en una VPS
+
+Desde el **21/08/2026** el bot no depende de que haya un ordenador encendido: vive en una
+VPS (Hetzner CX23 · 2 vCPU · 4 GB · Ubuntu 26.04 · Núremberg · 7,25 €/mes sin permanencia)
+como servicio de systemd — [`scripts/jimmy.service`](scripts/jimmy.service), que lleva
+dentro el porqué de cada línea.
+
+**Sin Docker, y no por pereza.** Cada bot corre con **su propio usuario de Linux**, su
+carpeta a `700` y su tope de memoria. Eso es lo que impide que un bot lea el `.env` de
+otro cuando convivan varios en la misma máquina: un venv aísla librerías de Python, **no
+la máquina**.
+
+**El tope de memoria no es cosmético.** Sin él, cuando el sistema se queda sin RAM el
+kernel no mata al culpable — mata al proceso que más ocupa, que puede ser el bot de al
+lado. Con `MemoryMax` cada uno responde de lo suyo.
+
+**Lo que se midió** (con PSS, no a ojo — nadie lo había medido antes):
+
+| | RAM |
+|---|---|
+| Sin límite, con el RAG **vacío** | 2.515 MB |
+| Con `MemoryHigh=1000M` / `MemoryMax=1200M`, usándolo de verdad | **1.000 MB** de pico + 92 MB de swap |
+| En reposo, esperando mensajes | 172 MB |
+
+El 60 % de esos 2,5 GB era `onnxruntime` reservando de más «por si acaso»: con un techo
+puesto se aprieta y funciona igual, sin un solo OOM y arrancando solo tras reiniciar.
+
+**Lo que hay que saber si lo repites:** Ubuntu 26.04 trae **Python 3.14** y este proyecto
+necesita **3.13** (el lockfile está clavado a ruedas `cp313`); el 3.13 se instala **al
+lado** con `uv`, sin tocar el del sistema. El `.env` del servidor lleva una
+`CONVERSATIONS_KEY` **nueva**, generada allí: la del portátil nunca sale de casa. Y el
+cortafuegos solo abre el **puerto 22**, porque el bot habla por *polling* y no necesita
+que nadie entre.
+
+**Los límites siguen siendo los mismos** que declara [E4 §6](docs/E4_Entrega_Final.md):
+un solo `user_id`, sin cifrado E2E en Telegram, y la clave de cifrado conviviendo con los
+datos que cifra — con el matiz de que ahora esa clave vive en una máquina alquilada, así
+que protege del descuido, **no de quien administra el hierro**.
+
 ## Documentación
 
 | Documento | Qué contiene |

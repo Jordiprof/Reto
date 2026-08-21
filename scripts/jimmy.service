@@ -1,0 +1,93 @@
+# Unidad systemd que mantiene el bot de Telegram vivo 24/7.
+#
+# DESPLEGADO Y PROBADO EN REAL el 21/08/2026 en una VPS Hetzner CX23
+# (Ubuntu 26.04, Nuremberg). Sobrevivio a dos reinicios arrancando solo.
+#
+# ANTES DE USARLA EN OTRA MAQUINA, AJUSTA LAS CUATRO RUTAS de abajo. Aqui
+# pone `bot-jimmy` porque cada bot corre con SU PROPIO usuario de Linux:
+# ese usuario, mas su carpeta a 700, es lo que impide que un bot lea el
+# `.env` de otro cuando convivan varios en la misma maquina.
+#
+# Instalacion (en la maquina Linux, no en Windows):
+#   sudo cp scripts/jimmy.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now jimmy
+
+[Unit]
+Description=Jimmy - bot de Telegram
+After=network-online.target
+Wants=network-online.target
+
+# OJO: StartLimit* va en [Unit], NO en [Service]. Desde systemd v230 estas
+# dos claves viven aqui; puestas en [Service] systemd las ignora con un
+# warning y te quedas sin limite de reintentos creyendo que lo tienes.
+#
+# Que hacen: si el bot muere 5 veces en 60 s, systemd deja de reintentar.
+# Sin esto, un fallo permanente (token invalido, .env mal) seria un bucle
+# de reinicios cada 10 s machacando la API de Telegram para siempre.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=bot-jimmy
+Group=bot-jimmy
+WorkingDirectory=/home/bot-jimmy/python-agentes-ia-dq
+ExecStart=/home/bot-jimmy/python-agentes-ia-dq/venv/bin/python -m src.telegram_bot
+
+# SIN ESTO NO SE VE NADA EN journalctl. El bot informa con print() (cerrojo
+# tomado, cifrado apagado, memoria indexada...). Fuera de una terminal,
+# Python bufferiza la salida en bloques de 8 KB, asi que los mensajes se
+# quedan en el buffer y no aparecen hasta que el proceso muere - justo
+# cuando mas falta hacen.
+Environment=PYTHONUNBUFFERED=1
+
+# El bot imprime emoji en los avisos de arranque. Si la VM arranca con
+# locale C/POSIX, ese print() lanza UnicodeEncodeError y el proceso se cae
+# ANTES de conectarse - un fallo de codificacion disfrazado de fallo del
+# bot. Se fija la codificacion en vez de confiar en el locale.
+Environment=PYTHONIOENCODING=utf-8
+
+# Reinicio SOLO si el proceso murio con error. Es deliberado que no sea
+# `always`: main_bot() sale con codigo 0 y a proposito en dos casos - el
+# cerrojo ya esta cogido (hay otro proceso vivo) y la clave de cifrado es
+# invalida. Los dos piden que venga una persona; reintentarlos en bucle
+# solo taparia el problema.
+Restart=on-failure
+RestartSec=10
+
+# Margen para que python-telegram-bot cierre el polling ordenadamente.
+TimeoutStopSec=30
+
+# --- Techo de memoria (MEDIDO el 21/08/2026, no estimado) ---
+# Suelto, el proceso se estabiliza en 2.515 MB (PSS) con el RAG VACIO: es
+# solo cargar el modelo de embeddings. Con este techo puesto, el pico real
+# usando el bot de verdad fue de 1.000 MB + 92 MB de swap, sin un solo OOM.
+# O sea que el 60 % de esos 2,5 GB era `onnxruntime` reservando de mas
+# "por si acaso": con un cinturon puesto se aprieta y funciona igual.
+#
+# MemoryHigh frena y recicla (aviso); MemoryMax mata (limite duro). Los dos
+# separados a proposito, para que el kernel tenga margen de apretar antes
+# de tener que matar nada.
+#
+# Esto es tambien lo que impide que un bot se lleve por delante a los
+# demas: sin tope, cuando la maquina se queda sin RAM el kernel no mata al
+# culpable, mata al proceso que MAS ocupa - que puede ser el bot inocente
+# de al lado.
+MemoryHigh=1000M
+MemoryMax=1200M
+CPUQuota=80%
+
+# --- Endurecimiento ---
+# Conjunto moderado a proposito. NO se usa ProtectHome=true: el proyecto
+# vive en /home/bot-jimmy y fastembed guarda el modelo de embeddings en la
+# cache del usuario, asi que aislar /home rompe el arranque.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
