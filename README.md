@@ -258,6 +258,14 @@ lado** con `uv`, sin tocar el del sistema. El `.env` del servidor lleva una
 cortafuegos solo abre el **puerto 22**, porque el bot habla por *polling* y no necesita
 que nadie entre.
 
+**Copia de seguridad:** [`scripts/backup-vps.ps1`](scripts/backup-vps.ps1) se trae las
+conversaciones al portátil. Copia **solo `conversations/`**, que es el único dato
+irreemplazable: `chroma_db/` es un índice derivado que el bot reconstruye solo al arrancar,
+y `conversations.db` guarda metadatos que ya viven en los `.json`. La `CONVERSATIONS_KEY`
+**no viaja con la copia** — va una vez a un gestor de contraseñas, porque guardarla al lado
+de los datos que cifra repetiría el problema que ya tiene el servidor. Sin ella, la copia
+es basura cifrada para siempre: Fernet no tiene recuperación.
+
 **Los límites siguen siendo los mismos** que declara [E4 §6](docs/E4_Entrega_Final.md):
 un solo `user_id`, sin cifrado E2E en Telegram, y la clave de cifrado conviviendo con los
 datos que cifra — con el matiz de que ahora esa clave vive en una máquina alquilada, así
