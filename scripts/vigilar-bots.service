@@ -1,0 +1,15 @@
+# Ejecuta la comprobacion diaria. No se activa sola: la dispara
+# vigilar-bots.timer.
+#
+# Instalacion:
+#   sudo cp scripts/vigilar-bots.service scripts/vigilar-bots.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vigilar-bots.timer
+
+[Unit]
+Description=Comprobar que los bots siguen corriendo
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/vigilar-bots.sh

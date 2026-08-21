@@ -266,6 +266,15 @@ y `conversations.db` guarda metadatos que ya viven en los `.json`. La `CONVERSAT
 de los datos que cifra repetiría el problema que ya tiene el servidor. Sin ella, la copia
 es basura cifrada para siempre: Fernet no tiene recuperación.
 
+**Aviso cuando se cae:** [`scripts/avisar-telegram.sh`](scripts/avisar-telegram.sh) manda
+un mensaje con las últimas líneas del log cuando systemd se rinde de reintentar
+(`OnFailure=`), y [`scripts/vigilar-bots.timer`](scripts/vigilar-bots.timer) vuelve a
+comprobarlo cada día por si el primer aviso se perdió. El aviso lo manda `curl` contra la
+API de Telegram, **no el bot** — por eso puede avisar de que el bot está muerto.
+**Lo que NO detecta**, y conviene saberlo: un bot vivo pero inútil (cuota agotada, token
+caducado, disco lleno) sigue apareciendo como `active (running)` y no dispara nada. Para
+eso haría falta un chequeo de salud del propio bot, que es otra cosa.
+
 **Los límites siguen siendo los mismos** que declara [E4 §6](docs/E4_Entrega_Final.md):
 un solo `user_id`, sin cifrado E2E en Telegram, y la clave de cifrado conviviendo con los
 datos que cifra — con el matiz de que ahora esa clave vive en una máquina alquilada, así

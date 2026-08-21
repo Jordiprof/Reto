@@ -1,0 +1,25 @@
+# Unidad PLANTILLA (la @ del nombre) que manda un aviso por Telegram cuando
+# otro servicio se cae. La invoca `OnFailure=` desde la unidad del bot:
+#
+#   OnFailure=avisar-caida@%n.service
+#
+# El `%n` de alli llega aqui como `%i`: el nombre del servicio que fallo. Con
+# una sola plantilla quedan cubiertos todos los bots presentes y futuros.
+#
+# CUANDO SE DISPARA EXACTAMENTE: systemd marca una unidad como `failed` cuando
+# se rinde de reintentarla, o sea tras los 5 intentos en 60 s que fija
+# StartLimitBurst en jimmy.service. No salta en cada reinicio suelto -eso seria
+# ruido-, salta cuando el bot esta caido DE VERDAD.
+#
+# Instalacion:
+#   sudo cp scripts/avisar-caida@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=Aviso por Telegram de la caida de %i
+
+[Service]
+Type=oneshot
+# Como root: tiene que leer el .env, que vive en /home/bot-jimmy (a 700).
+User=root
+ExecStart=/usr/local/bin/avisar-telegram.sh %i "se ha caido y systemd se ha rendido de reintentarla"

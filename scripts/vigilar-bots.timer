@@ -1,0 +1,19 @@
+# Dispara la comprobacion todos los dias a las 10:00.
+#
+# Persistent=true es la clave: si a las 10:00 la maquina estaba apagada o
+# reiniciandose, la comprobacion se ejecuta en cuanto vuelva, en vez de
+# perderse hasta el dia siguiente. Justo el rato en que mas probable es que
+# algo este mal.
+
+[Unit]
+Description=Comprobacion diaria de los bots
+
+[Timer]
+OnCalendar=*-*-* 10:00:00
+Persistent=true
+# Reparte la ejecucion en una ventana de 5 min. Irrelevante con un servidor,
+# pero es la buena costumbre: evita que todo se dispare en el mismo segundo.
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
