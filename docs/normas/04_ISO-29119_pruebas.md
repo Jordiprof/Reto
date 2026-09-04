@@ -94,23 +94,27 @@ que `test_cerrojo.py` pruebe exclusión mutua real con un subproceso.
 
 ## 3. Resultados de la última ejecución (29119-3, informe de pruebas)
 
-Ejecución del **04/09/2026**, commit `35f3445`:
+Ejecución del **04/09/2026**, commit `35f3445`, en la plataforma objetivo
+(**Windows, Python 3.13.15**):
 
 | Resultado | Casos |
 |---|---|
-| Pasan | **808** |
-| Se saltan | 2 |
-| No ejecutables en el entorno de medición | 5 |
+| Pasan | **815** |
+| Fallan | **0** |
 | **Total recolectado** | **815** |
 
-Los 5 no ejecutables son de `test_documentos.py` y fallan con
-`httpx.ProxyError: 403 Forbidden`: descargan el modelo de embeddings y el entorno
-de medición no tenía salida a internet. **No son defectos del producto**, y se
-dejan escritos en vez de omitirlos porque un informe de pruebas que esconde lo que
-no pudo ejecutar no sirve de nada.
-
-Cobertura resultante: **78 % de rama**. Desglose por módulo en
+En 54,70 s. Cobertura resultante: **78 % de rama**. Desglose por módulo en
 `03_ISO-25010_calidad.md` §5.
+
+**Medición previa y por qué se conserva.** Una primera pasada, en un entorno con
+Python 3.11 y sin salida a internet, dio *808 pasan · 2 se saltan · 5 no
+ejecutables*. Los 5 son de `test_documentos.py` y fallaban con
+`httpx.ProxyError: 403 Forbidden` al descargar el modelo de embeddings. El
+informe los declaró **no ejecutables por el entorno, no defectos del producto**, y
+repetir la medición en la plataforma real lo confirmó: pasan los 815. Se deja
+constancia de las dos ejecuciones porque un informe de pruebas que esconde lo que
+no pudo ejecutar no sirve de nada — y porque la afirmación de que aquello no era
+un defecto no valía hasta que alguien la comprobó.
 
 ## 4. Distribución
 

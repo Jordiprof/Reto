@@ -21,23 +21,24 @@ exactamente el "audit pegado" del que `E3 §6.2` dice desconfiar.
 ## 2. Condiciones de la medición
 
 Todas las cifras salen de la ejecución del **04/09/2026** sobre el commit
-`35f3445`, con este comando:
+`35f3445`, en la **plataforma objetivo del proyecto** (Windows, Python 3.13.15),
+con este comando:
 
 ```bash
 python -m pytest -q --cov=src --cov-report=term
 ```
 
-Con dos salvedades que hay que decir antes de dar ningún número:
+Resultado: **815 de 815 en verde**, en 54,70 s, con **78 % de cobertura de rama**.
 
-1. **Se midió sobre Python 3.11**, y el proyecto apunta a 3.13
-   (`pyproject.toml`). La cifra autoritativa es la que produce el CI, que sí
-   corre en 3.13.
-2. **Cinco tests de `test_documentos.py` no pudieron ejecutarse** porque
-   descargan el modelo de embeddings y el entorno de medición no tenía salida a
-   internet (`httpx.ProxyError: 403`). No son fallos del proyecto: son cinco
-   casos que no llegaron a correr, lo que **infravalora** ligeramente la
-   cobertura de `documentos.py` y `rag.py`. Resultado exacto de la ejecución:
-   **808 pasan · 2 se saltan · 5 bloqueados por red**, de 815.
+*Nota metodológica, porque el camino importa.* Una primera medición se hizo en un
+entorno con Python 3.11 y sin salida a internet, donde 5 casos de
+`test_documentos.py` no pudieron ejecutarse: descargan el modelo de embeddings y
+fallaban con `httpx.ProxyError: 403`. Aquella medición daba 78,01 % con 675
+sentencias sin cubrir, y el informe declaró esos 5 como **no ejecutables por el
+entorno, no como defectos**. Repetir la medición en 3.13 con red lo confirma:
+pasan los 815, y la cobertura sube ligeramente (668 sin cubrir). Se deja escrito
+porque una afirmación así solo vale cuando alguien la comprueba, y aquí se
+comprobó.
 
 ## 3. Resumen por característica
 
@@ -71,7 +72,7 @@ probada; lo que no está es demostrado que lo probado sea lo que se pidió.
 
 ## 5. Cobertura medida, por módulo
 
-La cifra global es **78 % de cobertura de rama**: 3.251 sentencias con 675 sin
+La cifra global es **78 % de cobertura de rama**: 3.251 sentencias con 668 sin
 cubrir, y 924 ramas con 83 parcialmente cubiertas.
 
 | Módulo | Cobertura | Lectura |
@@ -79,17 +80,17 @@ cubrir, y 924 ramas con 83 parcialmente cubiertas.
 | `storage.py` | **100 %** | Cifrado en reposo, completo |
 | `llm_errors.py` | **100 %** | Clasificación de errores, completa |
 | `resumen_largo.py` | 98 % | |
-| `documentos.py` | 97 % | Infravalorada: 5 tests no pudieron correr |
-| `llm_router.py` | 95 % | |
+| `documentos.py` | 97 % | PDF/Word, bomba de descompresión |
+| `llm_router.py` | 96 % | |
 | `rag.py` | 95 % | |
 | `llm_types.py` | 95 % | |
 | `config.py` | 94 % | |
 | `red_segura.py` | 94 % | El guardián anti-SSRF |
-| `tools.py` | 93 % | |
+| `tools.py` | 94 % | |
 | `agent.py` | 88 % | |
 | `noticias.py` | 84 % | El módulo más nuevo |
+| `cerrojo.py` | 82 % | Las ramas sin cubrir son de error del SO |
 | `llm_client.py` | 78 % | |
-| `cerrojo.py` | 78 % | Las ramas sin cubrir son de error del SO |
 | `telegram_bot.py` | 77 % | 927 sentencias, el módulo más grande |
 | `voz.py` | 77 % | |
 | **`main.py`** | **17 %** | **El agujero: 273 de 339 sentencias sin cubrir** (`NC-06`) |
@@ -146,7 +147,7 @@ El detalle control a control está en `05_ISO-27001_declaracion_aplicabilidad.md
 | Proporción test:código | **1,08 : 1** | — |
 | Incidencias de lint | **0** | `ruff check src tests scripts` |
 | Decisiones de arquitectura registradas | 6 ADR | `docs/ADR/` |
-| Decisiones fechadas en el diario | 165 | `docs/diario_decisiones.md` |
+| Decisiones fechadas en el diario | 170 | `docs/diario_decisiones.md` |
 | Dependencias fijadas con hash | 111 de 111 | `requirements-lock.txt` |
 
 La proporción 1,08:1 sustituye al 1,10:1 que declaraba `E4 §1.1`: la diferencia
@@ -155,7 +156,7 @@ calidad — 12.000 líneas de test pueden ejercitar el 30 % del código. Por eso
 dato que manda es el 78 % de §5 y no esta proporción.
 
 Lo que sí es un activo de mantenibilidad poco común y conviene decirlo: el diario
-de decisiones con 165 entradas fechadas explica **por qué** está cada cosa como
+de decisiones con 170 entradas fechadas explica **por qué** está cada cosa como
 está. Eso es lo que ISO 12207 llama gestión de la configuración y de la decisión,
 y aquí existe desde antes de que nadie lo pidiera.
 

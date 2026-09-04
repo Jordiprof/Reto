@@ -35,7 +35,7 @@ Los que sí se ejecutan, y con qué evidencia.
 | **Transición (despliegue)** | ✅ | `scripts/jimmy.service`, desplegado y probado en real el 21/08 en una VPS Hetzner; sobrevivió a dos reinicios arrancando solo |
 | **Validación** | 🟡 | Pruebas manuales contra APIs reales (`E4 §3.4`, 15 fallos hallados), no repetibles automáticamente |
 | **Operación** | ✅ | `vigilar-bots.timer` + avisos por Telegram independientes del bot |
-| **Mantenimiento** | ✅ | El diario de decisiones con 165 entradas fechadas es el registro de mantenimiento |
+| **Mantenimiento** | ✅ | El diario de decisiones con 170 entradas fechadas es el registro de mantenimiento |
 | **Retirada** | ⬜ | No aplica: el sistema está en operación |
 
 ## 2. Procesos de gestión técnica (12207 §6.3)
@@ -44,7 +44,7 @@ Los que sí se ejecutan, y con qué evidencia.
 |---|---|---|
 | **Planificación** | ✅ | `E3 §7`: plan de fases con diagrama de ejecución **planeado contra real**, incluida la explicación del adelanto (§7.2). Poca gente documenta la desviación cuando va a favor |
 | **Evaluación y control** | ✅ | Tres auditorías de seguridad y esta evaluación |
-| **Gestión de decisiones** | ✅ | 6 ADR + 165 decisiones fechadas con alternativas y motivo. **Es el proceso mejor ejecutado del proyecto** |
+| **Gestión de decisiones** | ✅ | 6 ADR + 170 decisiones fechadas con alternativas y motivo. **Es el proceso mejor ejecutado del proyecto** |
 | **Gestión de riesgos** | 🟡 | Existía como tabla de 9 filas sin ID ni severidad (`E1 §5`). Sustituida por `08_registro_riesgos.md` |
 | **Gestión de la configuración** | ✅ | Git con ramas por nivel y tags por entrega; lockfile con 111 hashes; `.env.example` versionado |
 | **Gestión de la información** | ✅ | `docs/` con E1-E4, ADR y diario |
@@ -70,7 +70,7 @@ bien no es una evaluación.
 
 A pesar de la advertencia inicial, el recorrido deja tres cosas útiles:
 
-1. **La gestión de decisiones está por encima de lo esperable.** 165 decisiones
+1. **La gestión de decisiones está por encima de lo esperable.** 170 decisiones
    fechadas con alternativas consideradas y motivo es más de lo que documentan
    muchos equipos con proceso formal. En términos de 12207 es el proceso de
    Gestión de Decisiones (§6.3.3) ejecutado en serio, y existía antes de que

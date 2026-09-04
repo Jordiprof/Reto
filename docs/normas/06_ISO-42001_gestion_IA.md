@@ -178,7 +178,7 @@ Sustituye a la de `E3:199-209`, que dejaba dos filas sin declarar.
 | 4 · Contexto y papel en el ciclo de vida de la IA | ✅ §1 y `00_alcance.md` |
 | 5 · Liderazgo y política de IA | 🟡 Hay criterio explícito ("la privacidad decide", `E3 §1`), no un documento de política |
 | 6 · Planificación y tratamiento del riesgo | ✅ §2 y `08_registro_riesgos.md` |
-| 7 · Recursos, competencia y documentación | ✅ 6 ADR y 165 decisiones fechadas |
+| 7 · Recursos, competencia y documentación | ✅ 6 ADR y 170 decisiones fechadas |
 | 8 · Operación | ✅ Controles implantados y probados |
 | 9 · Evaluación del desempeño | 🟡 Sin métricas de calidad de respuesta. Ver §5 |
 | 10 · Mejora continua | ✅ Diario, auditorías, este kit |

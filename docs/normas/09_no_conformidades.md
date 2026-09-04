@@ -71,8 +71,8 @@ medida de **volumen**, no de cobertura: 12.000 líneas de test pueden ejercitar 
 30 % del código.
 
 **Corrección aplicada**: medida por primera vez. **78 % de cobertura de rama**
-(3.251 sentencias, 675 sin cubrir; 924 ramas, 83 parciales). Detalle por módulo
-en `03_ISO-25010_calidad.md` §5.
+(3.251 sentencias, 668 sin cubrir; 924 ramas, 83 parciales), sobre Python 3.13 y
+con los 815 casos en verde. Detalle por módulo en `03_ISO-25010_calidad.md` §5.
 
 ### NC-04 · Observación · La matriz de E1 §6 no estaba desfasada
 **CERRADA — sin acción**
@@ -120,7 +120,7 @@ verificables por inspección y decirlo, en vez de fingir cobertura.
 | `src/telegram_bot.py` | 77 % | 199 de 927 |
 | `src/voz.py` | 77 % | 25 de 107 |
 | `src/llm_client.py` | 78 % | 78 de 329 |
-| `src/cerrojo.py` | 78 % | 11 de 51 |
+| `src/cerrojo.py` | 82 % | 9 de 51 |
 
 `main.py` es el menú de la CLI: 339 sentencias de las que 273 no se ejecutan
 nunca en pruebas. No es crítico para la seguridad —la superficie expuesta es el
