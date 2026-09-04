@@ -107,7 +107,8 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_red_segura.py` | 38 | Guardián anti-SSRF |
 | `test_resumen_largo.py` | 36 | `/condensar` por bloques |
 | `test_rag.py` | 29 | Memoria semántica, privacidad del índice |
-| `test_readme.py` | 26 | **Que el README no mienta** |
+| `test_readme.py` | 28 | **Que el README no mienta** |
+| `test_noticias.py` | 27 | `/noticias`: RSS, fechas RFC-822/ISO, lista blanca |
 | `test_llm_loop.py` | 25 | Bucle de tools, presupuesto, idempotencia |
 | `test_llm_router.py` | 24 | Reintentos, degradación, reservas de modelo |
 | `test_voz.py` | 21 | Whisper + Piper, límites de duración |
@@ -117,7 +118,7 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_config.py` | 19 | Configuración, lista blanca de dominios |
 | `test_avisos_caida.py` | 19 | Avisos de caída distinguiendo tokens/peticiones/día |
 | `test_condensar_lectura.py` | 17 | Caché de lectura, una llamada por bloque |
-| `test_recuerdo_y_limpiar.py` | 16 | Ruido del RAG, `/limpiar`, reglas del prompt |
+| `test_recuerdo_y_limpiar.py` | 18 | Ruido del RAG, `/limpiar`, reglas del prompt |
 | `test_config_logging.py` | 16 | Modo depuración opt-in |
 | `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
 | `test_logging.py` | 14 | Política de solo metadatos |
@@ -133,7 +134,7 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_clave_cifrado.py` | 9 | Validación de la clave Fernet |
 | `test_redirecciones.py` | 7 | Que una redirección no salte el guardián |
 | `test_llm_client.py` | 5 | Despacho de tools |
-| **TOTAL** | **784** | |
+| **TOTAL** | **815** | |
 
 ### 3.2 Cómo se ejecutan
 

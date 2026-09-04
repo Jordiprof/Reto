@@ -92,6 +92,7 @@ CONV_PYTHON = [
 ]
 
 
+@pytest.mark.requisito("RF-12", "CU-04")
 def test_indexar_y_buscar_por_significado(rag_aislado):
     """El round-trip completo: guardo conversaciones, las indexo, y una
     busqueda encuentra la relevante por encima de la irrelevante."""
@@ -114,6 +115,7 @@ def test_reindexar_no_duplica(rag_aislado):
     assert rag.indexar_conversaciones() == 0       # segunda vez: nada nuevo
 
 
+@pytest.mark.requisito("RF-12")
 def test_el_system_prompt_no_se_indexa(rag_aislado):
     """El system prompt es fijo, no es 'memoria' - no debe entrar al indice."""
     _guardar(CONV_MEDICO)
@@ -123,6 +125,8 @@ def test_el_system_prompt_no_se_indexa(rag_aislado):
     assert rag._coleccion().count() == 2
 
 
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-REPOSO")
 def test_chromadb_no_guarda_el_texto_en_claro(rag_aislado):
     """EL TEST DE PRIVACIDAD (comite 24/07): en el indice solo debe haber
     vectores y punteros (fichero + indice + rol + fecha), NUNCA el texto de
@@ -208,6 +212,7 @@ def test_conversacion_reescrita_solo_indexa_lo_nuevo(rag_aislado):
     assert rag._coleccion().count() == 4        # 2 + 2, sin duplicados
 
 
+@pytest.mark.requisito("RF-18")
 def test_lo_guardado_por_una_via_lo_encuentra_la_otra(rag_aislado):
     """La razon de ser de todo esto (memoria compartida CLI <-> Telegram):
     una conversacion escrita por un lado tiene que ser recuperable por el
@@ -231,6 +236,7 @@ def test_indexar_conversacion_inexistente_no_revienta(rag_aislado):
     assert rag.indexar_conversacion(fantasma) == 0
 
 
+@pytest.mark.requisito("RF-19")
 def test_olvidar_conversacion_la_saca_del_indice(rag_aislado):
     """La otra mitad de borrar: sin esto quedarian vectores huerfanos en
     ChromaDB, saliendo como resultados que luego se descartan al no poder

@@ -54,6 +54,7 @@ def sin_clave(monkeypatch):
 # --- Round-trip: lo que se guarda es lo que se lee --------------------
 
 
+@pytest.mark.requisito("RF-06", "RF-17")
 def test_round_trip_cifrado(entorno_aislado, con_clave):
     """La prueba que el comite pidio ANTES de tocar el formato: guardar
     cifrado y volver a leer debe devolver EXACTAMENTE el mismo historial.
@@ -76,6 +77,8 @@ def test_round_trip_sin_cifrar(entorno_aislado, sin_clave):
 # --- Que el cifrado cifra de verdad -----------------------------------
 
 
+@pytest.mark.requisito("RF-17", "RNF-06")
+@pytest.mark.control("E2-REPOSO")
 def test_el_contenido_no_aparece_en_claro_en_el_fichero(entorno_aislado, con_clave):
     """El test que de verdad demuestra que sirve de algo: el texto de los
     mensajes NO debe poder leerse abriendo el fichero."""
@@ -139,6 +142,7 @@ def test_sin_clave_al_leer_algo_cifrado_avisa_claro(entorno_aislado, con_clave, 
         cargar_conversacion(ruta)
 
 
+@pytest.mark.requisito("RF-17")
 def test_clave_equivocada_avisa_claro(entorno_aislado, con_clave, monkeypatch):
     """Otra clave valida pero distinta (ej. regeneraste la clave sin
     re-cifrar: la limitacion de 'Fernet no rota claves' en accion)."""
@@ -149,6 +153,8 @@ def test_clave_equivocada_avisa_claro(entorno_aislado, con_clave, monkeypatch):
         cargar_conversacion(ruta)
 
 
+@pytest.mark.requisito("RF-17")
+@pytest.mark.control("E2-REPOSO")
 def test_fichero_cifrado_manipulado_no_pasa_desapercibido(entorno_aislado, con_clave):
     """Fernet es cifrado AUTENTICADO: si alguien edita el bloque cifrado a
     mano, al descifrar salta un error en vez de devolver datos alterados
@@ -217,6 +223,7 @@ def test_nombre_vacio_si_no_se_pone(entorno_aislado, sin_clave):
     assert leer_metadatos(ruta)["nombre"] == ""
 
 
+@pytest.mark.requisito("RF-19")
 def test_listar_conversaciones_ordena_cronologicamente(entorno_aislado, sin_clave):
     """El nombre lleva la marca de tiempo, asi que ordenar por nombre es
     ordenar por fecha - sin depender de los metadatos del sistema de
@@ -292,6 +299,7 @@ def test_al_reescribir_se_actualiza_el_numero_de_mensajes(entorno_aislado, sin_c
     assert num == 4
 
 
+@pytest.mark.requisito("RF-19")
 def test_borrar_conversacion_quita_json_y_fila(entorno_aislado, sin_clave):
     """F5.2+: con el guardado automatico de Telegram TODO acaba en memoria,
     asi que hace falta poder tirar lo que no vale."""

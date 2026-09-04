@@ -52,6 +52,8 @@ def test_division_entre_cero_lanza_error_controlado():
         calcular("5 / 0")
 
 
+@pytest.mark.requisito("RF-08")
+@pytest.mark.control("E2-ARGUMENTOS")
 @pytest.mark.parametrize("expresion_peligrosa", [
     "__import__('os').system('dir')",  # intento de ejecutar un comando
     "2 ** 3",                          # potencia, operador no permitido
@@ -94,6 +96,7 @@ def test_expresion_demasiado_larga_se_rechaza():
         calcular(expresion_gigante)
 
 
+@pytest.mark.requisito("RF-08")
 def test_ejecutar_tool_con_parametro_faltante():
     """F4.4, caso limite real: el modelo llama a 'calcular' sin mandar
     'expresion'. _ejecutar_tool no debe reventar - debe devolver un
@@ -137,6 +140,7 @@ def test_una_tool_SIN_parametros_acepta_las_formas_de_decir_nada(nada):
     assert "argumentos no validos" not in resultado
 
 
+@pytest.mark.requisito("RF-08")
 @pytest.mark.parametrize("basura", [[], 42, ["a"]])
 def test_pero_unos_argumentos_de_verdad_MALOS_se_siguen_rechazando(basura):
     """Caso de control: normalizar "nada" no puede convertirse en tragarse
@@ -147,6 +151,8 @@ def test_pero_unos_argumentos_de_verdad_MALOS_se_siguen_rechazando(basura):
     assert "no validos" in resultado
 
 
+@pytest.mark.requisito("RF-08")
+@pytest.mark.control("E2-ARGUMENTOS")
 def test_el_error_de_argumentos_no_filtra_el_volcado_de_python():
     """El TypeError crudo decía "src.tools.ArgsLeerDocumento() argument
     after ** must be a mapping" — el nombre de una clase interna nuestra y
@@ -158,6 +164,7 @@ def test_el_error_de_argumentos_no_filtra_el_volcado_de_python():
     assert "must be a mapping" not in resultado
 
 
+@pytest.mark.requisito("RF-07")
 def test_ejecutar_tool_con_nombre_inventado():
     """F4.4, caso limite real: el modelo "alucina" el nombre de una
     tool que no existe. Debe rechazarse con un mensaje claro, sin
@@ -173,6 +180,7 @@ def test_ejecutar_tool_con_nombre_inventado():
 # funcionar. Los de aqui si distinguen.
 
 
+@pytest.mark.requisito("RF-08")
 def test_argumento_que_sobra_se_rechaza():
     """El agujero que abre F5.4: hasta ahora, si el modelo alucinaba un
     argumento de mas, la llamada llegaba a Python y reventaba con un
@@ -199,6 +207,7 @@ def test_mensajes_de_error_no_filtran_detalles_internos():
     assert "calcular()" not in resultado
 
 
+@pytest.mark.requisito("RF-08")
 @pytest.mark.parametrize("argumentos, texto_esperado", [
     ({}, "Field required"),                              # falta
     ({"expresion": 42}, "valid string"),                 # tipo incorrecto
@@ -213,6 +222,7 @@ def test_argumentos_invalidos_dan_mensaje_util(argumentos, texto_esperado):
     assert texto_esperado in resultado
 
 
+@pytest.mark.requisito("RF-07", "RF-09")
 def test_ficha_de_tool_se_deriva_del_modelo_pydantic():
     """El motivo de fondo de F5.4: TOOLS ya no se escribe a mano, se
     genera del modelo. Este test es la red de seguridad contra el
@@ -282,6 +292,7 @@ def _buscar_falso(monkeypatch, resultados):
     monkeypatch.setattr("src.rag.buscar", lambda consulta, n=3: resultados)
 
 
+@pytest.mark.control("E2-CONTENIDO")
 def test_cada_recuerdo_va_envuelto_en_su_etiqueta(monkeypatch):
     """El resultado que ve el LLM debe marcar DONDE empieza y acaba cada
     cita. Sin la etiqueta, el texto recordado se funde con las
@@ -296,6 +307,7 @@ def test_cada_recuerdo_va_envuelto_en_su_etiqueta(monkeypatch):
     assert "me llamo Jordi</recuerdo>" in resultado
 
 
+@pytest.mark.control("E2-CONTENIDO")
 def test_texto_recordado_no_puede_cerrar_la_cita(monkeypatch):
     """EL control de verdad. Si un recuerdo contiene "</recuerdo>", sin
     sanear cerraria la cita antes de tiempo y todo lo que viniera detras
@@ -316,6 +328,7 @@ def test_texto_recordado_no_puede_cerrar_la_cita(monkeypatch):
     assert "(etiqueta eliminada)" in resultado
 
 
+@pytest.mark.control("E2-CONTENIDO")
 @pytest.mark.parametrize("variante", [
     "</RECUERDO>",       # mayusculas
     "< / recuerdo >",    # espacios

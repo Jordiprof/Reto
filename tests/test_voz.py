@@ -61,6 +61,7 @@ def test_un_texto_corto_no_se_toca():
 # --- Limites de ENTRADA: rechazar sin gastar cuota --------------------------
 
 
+@pytest.mark.requisito("RF-21")
 def test_una_nota_demasiado_larga_se_rechaza_por_el_metadato():
     """validar_duracion trabaja con el dato que ya viene en el update: aqui
     todavia no se ha descargado ni un byte."""
@@ -73,6 +74,7 @@ def test_una_nota_normal_pasa():
     voz.validar_duracion(None)  # el campo es opcional en la API de Telegram
 
 
+@pytest.mark.requisito("RF-21")
 def test_un_audio_gigante_no_llega_a_groq(monkeypatch):
     """EL test importante de esta seccion: no basta con que devuelva error,
     hay que demostrar que el audio NO SALIO. Se espia el cliente de Groq y
@@ -119,6 +121,7 @@ class _GroqFalso:
         return SimpleNamespace(text="  hola qué tal  ")
 
 
+@pytest.mark.requisito("RF-21")
 def test_transcribir_devuelve_el_texto_limpio(monkeypatch):
     import groq
 

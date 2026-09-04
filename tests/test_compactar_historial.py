@@ -57,6 +57,7 @@ def test_cuando_se_pasa_se_tiran_los_MAS_VIEJOS():
     assert agente.historial[-1]["content"].startswith("m39")
 
 
+@pytest.mark.requisito("RF-05", "RF-26")
 def test_el_SYSTEM_PROMPT_nunca_se_tira():
     """Es quien ES el agente, no memoria de nada. Mismo criterio que
     /limpiar, que tambien lo conserva."""
@@ -69,6 +70,7 @@ def test_el_SYSTEM_PROMPT_nunca_se_tira():
     assert agente.historial[0]["content"] == "system prompt"
 
 
+@pytest.mark.requisito("RF-26")
 def test_el_historial_compactado_baja_del_tope():
     """Lo que de verdad importa: que la peticion siguiente quepa en la
     cuota. Si tras compactar sigue pasandose, no hemos arreglado nada."""
@@ -80,6 +82,7 @@ def test_el_historial_compactado_baja_del_tope():
     assert agente._tamaño_historial() <= _MAX_CARACTERES_HISTORIAL
 
 
+@pytest.mark.requisito("RF-26", "RF-06")
 def test_ANTES_de_tirar_nada_se_guarda():
     """LO QUE HACE SEGURA LA VENTANA. En Telegram el turno ya se persiste
     solo, pero la CLI guarda AL SALIR: sin esto, lo compactado a mitad de
@@ -131,6 +134,7 @@ def test_un_UNICO_mensaje_gigante_no_deja_la_conversacion_vacia():
     assert len(agente.historial) == 2
 
 
+@pytest.mark.requisito("RF-26")
 @pytest.mark.parametrize("mensajes", [12, 20, 40, 100])
 def test_da_igual_lo_larga_que_sea_la_charla_el_contexto_queda_acotado(mensajes):
     """La propiedad de fondo: el coste por turno deja de depender de cuanto

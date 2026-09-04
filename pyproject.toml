@@ -4,3 +4,49 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+# ---------------------------------------------------------------------------
+# Kit de normas ISO. Anadido para dar a la trazabilidad un ancla EJECUTABLE.
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+# ISO/IEC/IEEE 29148: un requisito solo es un requisito si es verificable, y
+# la verificacion tiene que poder SENALARSE, no contarse de memoria. Hasta
+# ahora ningun test decia a que requisito responde ("grep -rn RF- src tests"
+# devolvia CERO), asi que la tabla de trazabilidad de E1 §6 se mantenia a
+# mano - y por eso esta incompleta y con los conteos desfasados.
+#
+# El marcador es el ancla, y vive en el TEST, no en un documento: es lo unico
+# que se mueve a la vez que el codigo. scripts/trazabilidad.py lo lee para
+# generar la matriz y, sobre todo, para PONERSE ROJO cuando la trazabilidad
+# miente. Mismo criterio que las dos fixtures autouse de conftest.py: un
+# control que hay que acordarse de aplicar no es un control.
+#
+# --strict-markers: sin esto, un marcador mal escrito (@pytest.mark.requsito)
+# lo ignora pytest EN SILENCIO y el requisito figura como no cubierto sin que
+# nadie se entere. Con strict es un error duro. Los tests actuales solo usan
+# "parametrize", que es de serie, asi que activarlo no rompe nada.
+addopts = "--strict-markers"
+markers = [
+    "requisito(id): requisito de E1 que este test verifica (OBJ-nn, RF-nn, RNF-nn, CU-nn)",
+    "control(id): control de seguridad de E2 §8 o de ADR-005 que este test verifica",
+    "mutacion(descripcion): test validado rompiendo a proposito el control (RNF-08)",
+]
+
+[tool.coverage.run]
+# branch=True porque la cobertura de LINEA miente en este proyecto: casi todos
+# los controles son un "if" que rechaza (lista blanca, IP interna, extension
+# de fichero). Con cobertura de linea basta con pasar por el if una vez; la de
+# rama exige haber probado tambien el camino que NO rechaza, que es justo
+# donde se cuelan los fallos de "falla abierto".
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

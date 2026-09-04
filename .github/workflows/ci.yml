@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
     branches: [main]
+  # Para lanzar a mano el job de mutacion desde la pestaña Actions. Sin esta
+  # linea, su "if: github.event_name == 'workflow_dispatch'" no se cumple nunca
+  # y el job no se ejecutaria jamas.
+  workflow_dispatch:
 
 # DEP-06: sin esto, el GITHUB_TOKEN del workflow nace con permisos de
 # ESCRITURA sobre el repositorio. Este CI solo necesita leer el codigo:
@@ -55,7 +59,12 @@ jobs:
         run: pip install --require-hashes -r requirements-lock.txt
 
       - name: Lint with ruff
-        run: ruff check src tests
+        # NC-09: antes decia "ruff check src tests", pero E4 §5.1 afirma "lint
+        # limpio en TODO el repo (ruff check ., incluido scripts/)". La carpeta
+        # scripts/ -14 ficheros, incluido el trazabilidad.py nuevo- no la
+        # miraba nadie automaticamente. Estaba limpia, pero por casualidad:
+        # nada lo sostenia. Ahora si.
+        run: ruff check src tests scripts
 
       - name: Test with pytest
         # "python -m pytest" (NO "pytest" a secas): con -m, Python añade la
@@ -77,6 +86,111 @@ jobs:
         # PersistentClient (modo embebido) sin abrir ningun puerto -
         # verificado, no supuesto (ver Tareas_Pendientes.md, DEP-01). Sin
         # parche todavia: si alguna vez lo publican, quitar esta linea.
+        #
+        # NC-10 (auditoria ISO del 04/09): "pip install pip-audit" a secas se
+        # saltaba el --require-hashes de arriba. Es decir, la herramienta que
+        # audita la cadena de suministro entraba SIN auditar: version y
+        # contenido resueltos en el momento, desde una cuenta de PyPI que
+        # podria estar comprometida - el mismo ataque del que protege DEP-04.
+        # Ahora la version queda fijada en requirements-dev.txt. Falta todavia
+        # fijar el CONTENIDO por hash: hay que generar requirements-dev-lock.txt
+        # desde una maquina con Python 3.13 (instrucciones en ese fichero).
         run: |
-          pip install pip-audit
+          pip install -r requirements-dev.txt
           pip-audit -r requirements-lock.txt --ignore-vuln CVE-2026-45829
+
+  # ---------------------------------------------------------------------------
+  # Kit de normas ISO (docs/normas/). Job SEPARADO del de arriba a proposito:
+  # "test" es la puerta de siempre y conserva su semantica exacta, para que un
+  # fallo de las medidas nuevas no se confunda con un fallo del producto.
+  # ---------------------------------------------------------------------------
+  normas:
+    runs-on: ubuntu-latest
+    steps:
+      # Mismos SHA fijados que el job de arriba (DEP-05). Al actualizar hay que
+      # cambiar los dos sitios, y tambien el comentario "# v4" de al lado.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # El lock de produccion con hashes, mas las herramientas de medicion.
+        # requirements-dev.txt va aparte para que NADA de esto acabe instalado
+        # en la VPS, que instala solo requirements-lock.txt (jimmy.service).
+        run: |
+          pip install --require-hashes -r requirements-lock.txt
+          pip install -r requirements-dev.txt
+
+      - name: Cobertura
+        # El umbral es el valor REALMENTE medido el 04/09 (78,01 % de rama), no
+        # un numero redondo elegido a ojo. Su unico trabajo es que la cobertura
+        # no BAJE sin que nadie se entere. Se mide rama y no linea porque casi
+        # todos los controles de este proyecto son un "if" que rechaza: con
+        # cobertura de linea basta con pasar por el if una vez, y los fallos de
+        # "falla abierto" se cuelan justo por el camino que no se prueba.
+        #
+        # Aviso para la primera ejecucion: la cifra se midio en un entorno sin
+        # salida a internet, donde 5 tests de test_documentos.py no pudieron
+        # correr (descargan el modelo de embeddings). Aqui SI hay red, asi que
+        # el porcentaje real deberia salir algo mas alto. Conviene subir el
+        # umbral a lo que salga de verdad. Ver docs/normas/03_ISO-25010_calidad.md
+        run: python -m pytest -q --cov=src --cov-report=term --cov-fail-under=78
+
+      - name: Trazabilidad
+        # Se pone rojo si un test apunta a un requisito que no existe, si un
+        # requisito de prioridad Critica se queda sin verificacion trazada, o si
+        # un conteo de tests declarado en la documentacion deja de cuadrar con
+        # la realidad. Este ultimo es el que caza que la documentacion envejezca
+        # sola, que es como se encontro NC-01 (E4 declaraba 784 casos, habia 815).
+        run: python scripts/trazabilidad.py --check
+
+      - name: SBOM
+        # Inventario de activos en formato estandar (ISO/IEC 27001 A.5.9). En una
+        # aplicacion Python el activo de verdad son las 111 dependencias del
+        # lockfile, no el codigo propio.
+        run: cyclonedx-py requirements requirements-lock.txt -o sbom.json
+
+  # ---------------------------------------------------------------------------
+  # Mutacion (RNF-08). Va en su propio workflow_dispatch y NO en cada push, por
+  # dos motivos:
+  #
+  #   1. Cada mutante exige una pasada entera de la bateria. Acotado a los 4
+  #      modulos criticos (1.213 lineas) sigue siendo caro para un push.
+  #   2. Esta invocacion NO se ha podido probar todavia: se preparo en un
+  #      entorno con Python 3.11 y sin red, donde la bateria no pasa entera.
+  #      Meterla en la puerta de cada push sin haberla visto correr una vez
+  #      seria justo lo que E3 §6.2 llama fiarse de un audit pegado.
+  #
+  # La PRIMERA ejecucion hay que lanzarla a mano y mirarla. Cuando se sepa
+  # cuanto tarda y que score da, se decide si pasa a ser una puerta de verdad.
+  # Mientras tanto, RNF-08 sigue verificandose a mano: ver NC-07.
+  # ---------------------------------------------------------------------------
+  mutacion:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          pip install --require-hashes -r requirements-lock.txt
+          pip install -r requirements-dev.txt
+
+      - name: Mutar los cuatro modulos criticos
+        # red_segura.py (252 lineas) - guardian anti-SSRF
+        # cerrojo.py    (140) - exclusion mutua entre procesos
+        # storage.py    (342) - cifrado en reposo
+        # documentos.py (479) - extension, tamaño, bomba de descompresion
+        #
+        # El 11 % del codigo, y el 100 % de los controles que fallarian
+        # ABRIENDOSE. Sobre las 11.205 lineas de src/ seria inviable.
+        run: |
+          mutmut run --paths-to-mutate \
+            src/red_segura.py,src/cerrojo.py,src/storage.py,src/documentos.py
+          mutmut results

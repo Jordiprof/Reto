@@ -86,6 +86,8 @@ def _context():
 # --- AUD-A1: la lista blanca -----------------------------------------------
 
 
+@pytest.mark.requisito("RF-11", "RNF-05")
+@pytest.mark.control("E2-ACCESO")
 def test_un_user_id_no_autorizado_nunca_llega_al_agente(monkeypatch):
     """El test que pedia AUD-A1 al pie de la letra. No basta con comprobar
     que salta la excepcion: se espia _agente_de y se afirma que NO se le
@@ -107,12 +109,15 @@ def test_un_update_sin_usuario_identificable_se_rechaza():
         asyncio.run(telegram_bot.puerta_allowlist(_update(user_id=None), _context()))
 
 
+@pytest.mark.requisito("RF-11", "CU-01")
 def test_el_usuario_autorizado_pasa():
     """Caso de control: sin esto, 'rechazarlo todo' pasaria los dos tests
     anteriores y el bot no funcionaria para nadie."""
     asyncio.run(telegram_bot.puerta_allowlist(_update(user_id=111), _context()))
 
 
+@pytest.mark.requisito("RF-23")
+@pytest.mark.control("E2-ACCESO")
 @pytest.mark.parametrize("tipo", [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL])
 def test_AUT01_el_usuario_autorizado_NO_pasa_desde_un_grupo(tipo):
     """Auditoria del 04/08 (AUT-01): la allowlist protegia QUIEN puede
@@ -131,6 +136,7 @@ def test_AUT01_el_usuario_autorizado_NO_pasa_desde_un_grupo(tipo):
         asyncio.run(telegram_bot.puerta_allowlist(update, _context()))
 
 
+@pytest.mark.requisito("RF-23")
 def test_AUT01_sin_chat_tampoco_pasa():
     """effective_chat puede ser None de verdad (canal, poll...), igual que
     effective_user. Mismo criterio: sin dato que autorizar, fuera."""
@@ -140,6 +146,7 @@ def test_AUT01_sin_chat_tampoco_pasa():
         asyncio.run(telegram_bot.puerta_allowlist(update, _context()))
 
 
+@pytest.mark.requisito("RF-23")
 def test_AUT01_el_rechazo_por_grupo_es_SILENCIOSO():
     """Mismo criterio que el rechazo por user_id desconocido: no se
     responde nada. Confirmar que el bot existe (aunque sea con un "esto es
@@ -154,6 +161,7 @@ def test_AUT01_el_rechazo_por_grupo_es_SILENCIOSO():
     assert enviados == []
 
 
+@pytest.mark.requisito("RF-11")
 def test_al_desconocido_no_se_le_responde_nada():
     """Silencio deliberado: responder confirmaria que el bot existe (util
     para quien sondea) y gastaria cuota de salida a peticion suya."""
@@ -166,6 +174,9 @@ def test_al_desconocido_no_se_le_responde_nada():
     assert enviados == []
 
 
+@pytest.mark.requisito("RF-11")
+@pytest.mark.control("E2-ACCESO")
+@pytest.mark.mutacion("Lista blanca ilegible tratada como permitir a todos")
 @pytest.mark.parametrize("valor", ["", "   ", "no-es-un-numero", "111,abc"])
 def test_una_lista_blanca_rota_cierra_el_bot_no_lo_abre(monkeypatch, valor):
     """FALLA CERRADO. El modo de fallo peligroso seria interpretar una
@@ -177,6 +188,7 @@ def test_una_lista_blanca_rota_cierra_el_bot_no_lo_abre(monkeypatch, valor):
         asyncio.run(telegram_bot.puerta_allowlist(_update(user_id=111), _context()))
 
 
+@pytest.mark.requisito("RF-11")
 def test_sin_variable_de_lista_blanca_tambien_cierra(monkeypatch):
     monkeypatch.delenv(config.TELEGRAM_PERMITIDOS_ENV, raising=False)
 
@@ -187,6 +199,9 @@ def test_sin_variable_de_lista_blanca_tambien_cierra(monkeypatch):
 # --- La invariante estructural: la que sobrevive a F5.5 --------------------
 
 
+@pytest.mark.requisito("RF-11")
+@pytest.mark.control("E2-ACCESO")
+@pytest.mark.mutacion("Mover la puerta de la lista blanca al grupo 0")
 def test_la_puerta_corre_antes_que_cualquier_otro_handler():
     """LA INVARIANTE QUE IMPORTA A FUTURO. Aunque en F5.5 se añadan
     handlers nuevos, la allowlist sigue en el grupo mas bajo y por tanto
@@ -202,6 +217,8 @@ def test_la_puerta_corre_antes_que_cualquier_otro_handler():
     assert callbacks[0] is telegram_bot.puerta_allowlist
 
 
+@pytest.mark.requisito("RF-11")
+@pytest.mark.mutacion("block=False en la puerta")
 def test_ningun_handler_de_las_puertas_es_no_bloqueante():
     """ApplicationHandlerStop "has no effect, if the handler is run in a
     non-blocking way" (doc de PTB, verificada en el paquete instalado).
@@ -222,6 +239,7 @@ def test_ningun_handler_de_las_puertas_es_no_bloqueante():
 # --- Rate limiting ---------------------------------------------------------
 
 
+@pytest.mark.control("E2-ABUSO")
 def test_el_limite_por_usuario_corta_la_rafaga(monkeypatch):
     """Sin esto, un dedo pegado al boton de enviar agota la cuota del free
     tier de Groq (~30 RPM) y deja el bot inutil."""
@@ -236,6 +254,7 @@ def test_el_limite_por_usuario_corta_la_rafaga(monkeypatch):
         asyncio.run(telegram_bot.puerta_rate_limit(update, _context()))
 
 
+@pytest.mark.control("E2-ABUSO")
 def test_la_ventana_se_libera_con_el_tiempo(monkeypatch):
     """Un limitador que no libera no es un limitador, es un baneo
     permanente tras la primera rafaga."""
@@ -272,6 +291,7 @@ def test_cada_usuario_tiene_su_propio_agente(monkeypatch):
 # --- Limites de tamaño -----------------------------------------------------
 
 
+@pytest.mark.control("E2-ENTRADA")
 def test_un_mensaje_demasiado_largo_no_llega_al_llm(monkeypatch):
     """AUD-03 (la mitad aplazada a F5.2). Se comprueba ANTES de llamar al
     LLM: un mensaje gigante no debe consumir cuota siquiera."""
@@ -290,6 +310,7 @@ def test_un_mensaje_demasiado_largo_no_llega_al_llm(monkeypatch):
     assert "largo" in " ".join(enviados)
 
 
+@pytest.mark.control("E2-ENTRADA")
 def test_un_mensaje_normal_si_llega_al_llm(monkeypatch):
     """Caso de control del test anterior."""
     monkeypatch.setattr(

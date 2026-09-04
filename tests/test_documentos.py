@@ -72,6 +72,8 @@ def _docx_con_texto(*parrafos: str) -> bytes:
 # --- Extension y tamaño --------------------------------------------------
 
 
+@pytest.mark.requisito("RF-20")
+@pytest.mark.control("E2-FICHEROS")
 def test_una_extension_no_pdf_ni_docx_se_rechaza():
     with pytest.raises(DocumentoNoValido, match="\\.pdf o \\.docx"):
         validar_adjunto(b"lo que sea", "notas.txt")
@@ -88,6 +90,8 @@ def test_un_pdf_dentro_del_tamaño_se_acepta():
     assert adjunto.nombre == "informe.pdf"
 
 
+@pytest.mark.requisito("RF-20")
+@pytest.mark.control("E2-FICHEROS")
 def test_un_fichero_demasiado_grande_se_rechaza(monkeypatch):
     import src.documentos as documentos
 
@@ -120,6 +124,8 @@ def _docx_con_entrada_gigante(tamaño_descomprimido: int) -> bytes:
     return buffer.getvalue()
 
 
+@pytest.mark.requisito("RF-20")
+@pytest.mark.control("E2-FICHEROS")
 def test_un_docx_con_una_parte_gigante_se_rechaza():
     grande = _docx_con_entrada_gigante(60_000_000)
     with pytest.raises(DocumentoNoValido, match="sospechosamente grande"):
@@ -133,6 +139,8 @@ def test_un_docx_normal_no_activa_la_comprobacion_de_bomba():
     validar_adjunto(normal, "normal.docx")  # no lanza
 
 
+@pytest.mark.requisito("RF-20", "RNF-08")
+@pytest.mark.mutacion("Quitar el aviso de tamaño en el docx")
 def test_MUTACION_sin_la_comprobacion_de_bomba_el_docx_pasaria(monkeypatch):
     """Prueba de mutacion (doctrina del proyecto, 27/07): se rompe el
     control a proposito -subiendo el tope muy por encima del ataque- y se
@@ -210,11 +218,13 @@ def test_LOG02_no_se_fia_del_campo_file_size_de_la_cabecera(monkeypatch):
 # --- Extraccion de texto --------------------------------------------------
 
 
+@pytest.mark.requisito("RF-20", "CU-05")
 def test_extrae_texto_de_un_pdf():
     adjunto = validar_adjunto(_pdf_con_texto("Contenido del PDF"), "x.pdf")
     assert "Contenido del PDF" in extraer_texto(adjunto)
 
 
+@pytest.mark.requisito("RF-20")
 def test_extrae_texto_de_un_docx():
     adjunto = validar_adjunto(_docx_con_texto("Primer párrafo.", "Segundo párrafo."), "x.docx")
     texto = extraer_texto(adjunto)

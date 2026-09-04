@@ -29,6 +29,7 @@ def test_exito_a_la_primera():
     assert router.ultimo_proveedor == "groq"
 
 
+@pytest.mark.requisito("RF-15", "RF-03")
 def test_reintenta_mismo_proveedor_y_luego_acierta():
     """Fallo transitorio (rate limit) -> espera y reintenta el MISMO
     proveedor; al segundo intento acierta."""
@@ -67,6 +68,7 @@ def test_backoff_exponencial():
     assert esperas == [1.0, 2.0, 4.0]
 
 
+@pytest.mark.requisito("RF-15", "RNF-02")
 def test_degrada_al_siguiente_tras_agotar_reintentos():
     """Si el primario agota reintentos, responde el siguiente de la cadena."""
     def llamar(eslabon, historial, tools, presupuesto):
@@ -102,6 +104,7 @@ def test_error_no_reintentable_degrada_sin_backoff():
     assert esperas == []  # ni un backoff: auth no se reintenta
 
 
+@pytest.mark.requisito("RF-03", "RNF-02")
 def test_si_todos_fallan_relanza_el_ultimo_error():
     """Si ningun proveedor responde, se relanza el ultimo ErrorLLM (nada se
     traga en silencio) para que el Agente lo convierta en mensaje_usuario."""
@@ -145,6 +148,8 @@ def test_presupuesto_se_crea_nuevo_en_cada_turno():
     assert vistos == [3, 3]
 
 
+@pytest.mark.requisito("RF-16")
+@pytest.mark.control("E2-COSTE")
 def test_presupuesto_agotado_detiene_reintentos_y_fallback():
     """El presupuesto es del TURNO completo (proveedores + reintentos), no
     de un proveedor: si se agota a mitad de un reintento, el router NO
@@ -307,6 +312,7 @@ def test_un_error_sin_codigo_no_revienta_la_clasificacion():
 # ErrorLLM ya trae su `plantilla_usuario` redactada para humanos.
 
 
+@pytest.mark.requisito("RNF-02")
 def test_el_aviso_de_fallback_explica_el_motivo_EN_CASTELLANO():
     def llamar(eslabon, historial, tools, presupuesto):
         if eslabon.proveedor == "groq":

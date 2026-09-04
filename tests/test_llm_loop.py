@@ -173,6 +173,8 @@ def tool_con_efectos(monkeypatch):
     HERRAMIENTAS.pop("enviar_email", None)
 
 
+@pytest.mark.requisito("RF-22")
+@pytest.mark.control("E2-IDEMPOTENCIA")
 def test_un_reintento_no_repite_el_efecto(tool_con_efectos):
     """EL TEST DE LOG-07. Se simula lo que hace el router: ejecutar el bucle
     DOS veces con el MISMO Turno (primer intento + reintento). El modelo
@@ -273,6 +275,7 @@ def test_una_tool_repetible_si_se_vuelve_a_ejecutar(monkeypatch):
         HERRAMIENTAS.pop("tirar_dado", None)
 
 
+@pytest.mark.control("E2-IDEMPOTENCIA")
 def test_el_default_de_repetible_es_el_seguro():
     """LA DECISION IMPORTANTE de LOG-07. Si alguien añade una tool en F5.5 y
     se olvida de declarar nada, el default tiene que ser el que NO duplica
@@ -303,6 +306,7 @@ _REPETIBLES_JUSTIFICADAS = {
 }
 
 
+@pytest.mark.control("E2-IDEMPOTENCIA")
 def test_solo_son_repetibles_las_tools_justificadas():
     """El default de LOG-07 (repetible=False) existe para que un olvido al
     declarar una tool nueva signifique "reutiliza el resultado" y nunca

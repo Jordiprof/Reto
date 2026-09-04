@@ -15,6 +15,7 @@ from src.config import (
 )
 
 
+@pytest.mark.requisito("RF-02")
 def test_clave_ausente_lanza_error_controlado(monkeypatch):
     """Si la variable de entorno de la API key no esta puesta, debe
     lanzarse ClaveApiNoConfigurada (con un mensaje claro) - NUNCA un
@@ -29,6 +30,7 @@ def test_clave_ausente_lanza_error_controlado(monkeypatch):
     assert PROVEEDORES["groq"] in str(excinfo.value)
 
 
+@pytest.mark.requisito("RF-02")
 def test_clave_presente_se_devuelve_tal_cual(monkeypatch):
     """Caso de control: si la variable SI esta, se devuelve su valor."""
     monkeypatch.setenv(PROVEEDORES["groq"], "clave-de-prueba")
@@ -36,6 +38,7 @@ def test_clave_presente_se_devuelve_tal_cual(monkeypatch):
     assert obtener_api_key("groq") == "clave-de-prueba"
 
 
+@pytest.mark.requisito("RF-02", "RF-14")
 def test_modelo_por_defecto_lee_del_env(monkeypatch):
     """F5.0/T5: el modelo por defecto sale de la variable *_MODEL del .env."""
     monkeypatch.setenv(MODELOS_ENV["gemini"], "models/gemini-2.5-flash")
@@ -110,6 +113,7 @@ def test_sin_variable_la_lista_esta_vacia(monkeypatch):
     assert config.obtener_dominios_permitidos() == frozenset()
 
 
+@pytest.mark.requisito("RNF-06")
 def test_el_env_REAL_del_proyecto_carga_dominios():
     """RED DE SEGURIDAD contra el bug del 30/07.
 

@@ -122,6 +122,7 @@ def _script(ruta_lock, accion):
     """)
 
 
+@pytest.mark.requisito("RF-24")
 def test_dos_procesos_de_verdad_no_pueden_a_la_vez(ruta_lock):
     """EL test de esta funcionalidad. Los de arriba comprueban la API; este
     comprueba lo unico que de verdad se prometio: que un SEGUNDO PROCESO no
@@ -138,6 +139,7 @@ def test_dos_procesos_de_verdad_no_pueden_a_la_vez(ruta_lock):
         padre.soltar()
 
 
+@pytest.mark.requisito("RF-24")
 def test_un_proceso_muerto_NO_deja_el_cerrojo_colgado(ruta_lock):
     """La razon de usar un cerrojo del SO y no un fichero con el PID.
 
@@ -160,6 +162,7 @@ def test_un_proceso_muerto_NO_deja_el_cerrojo_colgado(ruta_lock):
 # --- Que el bot y la CLI lo usen de verdad ---------------------------------
 
 
+@pytest.mark.requisito("RF-24")
 def test_el_bot_no_arranca_si_la_memoria_esta_ocupada(monkeypatch, capsys):
     """Que exista el cerrojo no sirve de nada si main_bot() no lo coge.
 
@@ -190,6 +193,7 @@ def test_el_bot_no_arranca_si_la_memoria_esta_ocupada(monkeypatch, capsys):
     assert "⛔" in capsys.readouterr().out
 
 
+@pytest.mark.requisito("RF-24")
 def test_la_cli_no_arranca_si_la_memoria_esta_ocupada(monkeypatch, capsys):
     """La otra mitad: el 31/07 Jordi ejecuto la CLI con el bot arrancado."""
     from src import main as cli

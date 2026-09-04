@@ -48,3 +48,13 @@ voces/
 # Fuera del repo a proposito: son ficheros cuyo contenido esta escrito para
 # manipular a un modelo, y no tienen por que acabar en un clon de nadie.
 pruebas_inyeccion/
+
+# Artefactos de medicion del kit de normas ISO (cobertura y mutacion). Son
+# resultados de UNA ejecucion en UNA maquina: lo que vale es la cifra
+# publicada en docs/normas/, no el fichero binario que la produjo.
+.coverage
+coverage.json
+htmlcov/
+.mutmut-cache
+mutants/
+sbom.json

@@ -32,6 +32,8 @@ def _texto_de(caplog) -> str:
 FRASE_PERSONAL = "la cita del medico del jueves con el doctor Ramirez"
 
 
+@pytest.mark.requisito("RNF-07")
+@pytest.mark.control("E2-TRAZAS")
 def test_el_log_no_guarda_el_contenido_que_devuelve_una_tool(caplog, monkeypatch):
     """EL TEST DE PRIVACIDAD DE LOGS (F5.2), hermano de
     test_chromadb_no_guarda_el_texto_en_claro. Se registra una tool falsa
@@ -58,6 +60,7 @@ def test_el_log_no_guarda_el_contenido_que_devuelve_una_tool(caplog, monkeypatch
     assert "lo del medico" not in registros  # ni el VALOR del argumento
 
 
+@pytest.mark.requisito("RNF-07")
 def test_el_log_si_registra_que_tool_se_llamo_y_con_que_campos(caplog):
     """Contrapeso del test anterior: 'no loguear nada' seria trivialmente
     seguro e inutil. El objetivo de T8 se conserva entero. Numeros
@@ -117,6 +120,8 @@ _NOMBRE_MALICIOSO = (
 )
 
 
+@pytest.mark.requisito("RNF-07")
+@pytest.mark.control("E2-TRAZAS")
 def test_un_nombre_de_tool_con_salto_de_linea_no_parte_el_log(caplog):
     """El log es una linea por evento: si el nombre colara un '\\n', una
     sola llamada escribiria DOS lineas y la segunda podria hacerse pasar
@@ -129,6 +134,7 @@ def test_un_nombre_de_tool_con_salto_de_linea_no_parte_el_log(caplog):
     assert "\n" not in caplog.records[0].getMessage()
 
 
+@pytest.mark.control("E2-TRAZAS")
 def test_las_claves_de_argumentos_tambien_se_sanean(caplog):
     """Mismo agujero por la otra puerta: las CLAVES del dict de argumentos
     las elige el LLM igual que el nombre."""

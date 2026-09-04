@@ -62,6 +62,8 @@ def test_http_y_https_valen_los_dos():
 # --- SSRF: el ataque que este guardian existe para parar ----------------
 
 
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-RED")
 @pytest.mark.parametrize("url, motivo", [
     ("http://127.0.0.1:8080/admin", "el propio PC"),
     ("http://localhost/panel", "el propio PC por nombre"),
@@ -78,6 +80,8 @@ def test_las_direcciones_internas_se_rechazan(url, motivo):
         validar_url(url)
 
 
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-RED")
 def test_un_dominio_permitido_que_apunta_dentro_tambien_se_rechaza(monkeypatch):
     """LA RAZON DE TENER DOS CONTROLES Y NO UNO. 'interno.ejemplo.com' SI
     esta en la lista blanca (es subdominio de ejemplo.com), pero resuelve a
@@ -93,6 +97,7 @@ def test_si_UNA_de_varias_ips_es_interna_se_rechaza():
         validar_url("https://varias.ejemplo.com/")
 
 
+@pytest.mark.control("E2-RED")
 def test_el_truco_del_arroba_no_cuela():
     """El clasico: 'http://sitio-bueno.com@127.0.0.1/' parece apuntar al
     sitio bueno, pero httpx va a 127.0.0.1 - lo de antes del @ es el
@@ -122,6 +127,8 @@ def test_un_puerto_explicito_no_rompe_la_lista_blanca():
 # --- Lista blanca -------------------------------------------------------
 
 
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-RED")
 def test_un_dominio_que_no_esta_en_la_lista_se_rechaza():
     with pytest.raises(UrlNoPermitida, match="autorizados"):
         validar_url("https://sitio-cualquiera.com/")
@@ -139,6 +146,8 @@ def test_un_dominio_parecido_NO_cuela():
             validar_url(tramposo)
 
 
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-RED")
 def test_sin_lista_blanca_no_se_visita_NADA(monkeypatch):
     """FALLA CERRADO, igual que la lista blanca del bot: una lista de
     permitidos que al estar vacia permitiera todo seria un control al
@@ -223,6 +232,7 @@ def test_el_mensaje_de_error_no_revela_a_que_ip_resolvio():
 # --- IP interna: bloquear NO basta, el mensaje importa (02/08) ------------
 
 
+@pytest.mark.requisito("RNF-06")
 @pytest.mark.parametrize("url,host", [
     ("https://192.168.1.1/", "192.168.1.1"),      # el router de Jordi
     ("http://127.0.0.1:8080/admin", "127.0.0.1"),

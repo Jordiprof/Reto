@@ -1,0 +1,53 @@
+# Herramientas de DESARROLLO y de auditoria. Dependencias directas.
+#
+# POR QUE UN FICHERO APARTE Y NO DENTRO DE requirements.txt:
+# el bot corre 24/7 en la VPS desde un venv que se instala con
+# requirements-lock.txt (ver scripts/jimmy.service). Cada paquete que entre
+# ahi acaba instalado en produccion: mas superficie de ataque, mas CVEs que
+# vigilar con pip-audit y mas cosas que pueden romper un despliegue que
+# funciona. Estas herramientas solo hacen falta en el CI y en local, asi que
+# viven en su propio fichero y en su propio lock.
+#
+# pytest y ruff NO se repiten aqui: ya estan en requirements.txt desde antes.
+# Sacarlos de ahi seria lo correcto, pero cambiaria lo que instala la VPS y
+# eso no toca en este trabajo (queda anotado como no conformidad menor en
+# docs/normas/09_no_conformidades.md).
+#
+# PENDIENTE: generar el lock con hashes (DEP-04, mismo criterio que el otro).
+# NO se incluye ya hecho a proposito. pip-compile resuelve con el interprete
+# que lo ejecuta, y este fichero se preparo bajo Python 3.11 mientras el
+# proyecto y el CI van en 3.13 (pyproject.toml). Un lock resuelto en 3.11
+# puede pinchar en 3.13 con --require-hashes: si 3.13 necesita un paquete que
+# 3.11 no resolvio, pip se para en seco. Enviar un lock que rompe el CI seria
+# peor que no enviarlo.
+#
+# Hay que generarlo UNA VEZ desde una maquina con Python 3.13:
+#   pip install pip-tools
+#   pip-compile --generate-hashes --strip-extras \
+#               --output-file=requirements-dev-lock.txt requirements-dev.txt
+#
+# Mientras tanto el CI instala este fichero con las versiones exactas de
+# abajo. Eso ya cierra lo peor del hallazgo (pip-audit entraba SIN version
+# fijada siquiera); lo que falta es fijar el CONTENIDO por hash. Ver NC-10.
+
+# Cobertura de codigo, con medicion de RAMA (ver [tool.coverage.run] en
+# pyproject.toml: la cobertura de linea miente cuando casi todo control es
+# un "if" que rechaza).
+pytest-cov==7.1.0
+
+# Pruebas de mutacion. RNF-08 eleva la mutacion a requisito -"los controles
+# criticos se validan por mutacion, no solo con tests en verde"- pero hasta
+# ahora se hacia A MANO, ocho mutaciones documentadas en prosa en E3 §6.1.
+# Un requisito verificado a mano no se vuelve a verificar nunca.
+mutmut==3.7.0
+
+# SBOM (inventario de materiales de software). ISO/IEC 27001 A.5.9 pide
+# inventario de activos; en una aplicacion Python el activo real son las 111
+# dependencias del lockfile, no el codigo propio.
+cyclonedx-bom==7.3.1
+
+# Auditoria de vulnerabilidades. Ya se usa en el CI, pero se instalaba suelto
+# con "pip install pip-audit" (ci.yml), lo que se salta el --require-hashes de
+# la linea de arriba: la herramienta que audita la cadena de suministro
+# entraba SIN auditar. Al fijarla aqui, entra con hash como todo lo demas.
+pip-audit==2.10.1
