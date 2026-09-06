@@ -241,6 +241,6 @@ test automático. Esa es la parte que sí se repite.
 | Criterios de entrada y salida | ✅ §2.3 |
 | Entorno y dobles documentados | ✅ §2.4 |
 | Informe de resultados | ✅ §3 |
-| Trazabilidad requisito → prueba | 🟡 29 de 46 (`NC-05`) |
+| Trazabilidad requisito → prueba | 🟡 31 de 46 (`NC-05`) |
 | Gestión de incidencias de prueba | 🟡 En el diario y en los ADR, sin registro formal |
 | Medición y mejora del proceso | 🟡 Mutación existe, sin automatizar (`NC-07`) |

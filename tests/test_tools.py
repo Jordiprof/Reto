@@ -1230,6 +1230,7 @@ def test_una_pagina_sin_texto_lo_dice(web_permitida, monkeypatch):
 # --- ADR-006: /tools, activación por categorías ------------------------
 
 
+@pytest.mark.requisito("RF-13")
 def test_cada_tool_declara_su_categoria():
     """Sin categoría, una tool nueva quedaría fuera de /tools sin que nadie
     se diera cuenta."""
@@ -1320,6 +1321,7 @@ def test_las_que_no_exponen_nada_arrancan_ENCENDIDAS():
     assert {"calculadora", "tiempo", "foto_astronomica", "documentos"} <= agente.categorias_activas
 
 
+@pytest.mark.requisito("RF-13")
 def test_una_categoria_NUEVA_entra_encendida_y_hay_que_apagarla_a_proposito():
     """El default se calcula RESTANDO las apagadas al catálogo real, no con
     una lista blanca escrita a mano. La diferencia importa: con lista

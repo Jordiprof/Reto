@@ -17,10 +17,15 @@ Auditoría del **04/09/2026** sobre el commit `35f3445`. Auditor: el propio auto
 
 | Estado | Mayores | Menores | Observaciones | Total |
 |---|---|---|---|---|
-| Cerradas en esta auditoría | 0 | 4 | 1 | **5** |
-| Parcialmente corregidas | 0 | 1 | 0 | **1** |
-| Abiertas | 1 | 5 | 3 | **9** |
+| Cerradas | 0 | 5 | 3 | **8** |
+| Parcialmente corregidas | 1 | 1 | 0 | **2** |
+| Abiertas | 0 | 4 | 1 | **5** |
 | **Total** | **1** | **10** | **4** | **15** |
+
+**Segunda pasada, 06/09/2026.** Se cierran NC-08, NC-13 y NC-14, y NC-05 baja de
+abierta a parcial. Lo que queda abierto son cinco: NC-06, NC-07, NC-10, NC-12 y
+NC-15 — y dos de ellas (NC-10 y NC-15) no son cerrables desde el entorno donde se
+hizo este trabajo, por motivos que se explican en cada una.
 
 ---
 
@@ -90,27 +95,38 @@ los catorce** con la realidad. El problema de esa tabla es que está incompleta
 > auditoría y llevan su estado marcado. Se dejan aquí, en su orden, para que la
 > numeración no baile entre versiones del informe.
 
-### NC-05 · Mayor · 17 de los 46 identificadores no tienen verificación trazada
+### NC-05 · Mayor · Identificadores sin verificación trazada
+**PARCIALMENTE CORREGIDA**
 
-Tras el trabajo de NC-02, **29 de 46** identificadores de `E1` tienen al menos un
-test que los nombra. Siguen sin traza:
+Empezó en 0 de 46, pasó a 29 con NC-02 y está en **31 de 46** tras anclar RF-13
+y RF-25, cuyos tests ya existían. **103 tests llevan ancla.** Siguen sin traza 15:
 
-| Familia | Sin traza | Por qué importa |
+| Familia | Sin traza | Tratamiento |
 |---|---|---|
-| Objetivos | OBJ-01 … OBJ-05 (5 de 5) | Ningún objetivo del proyecto tiene verificación asociada |
-| Requisitos funcionales | RF-01, RF-04, RF-10, RF-13, RF-25 | RF-13 (categorías de tools) y RF-25 (`/condensar`) sí tienen tests, solo les falta el ancla |
-| No funcionales | RNF-01, RNF-03, RNF-04 | Credenciales, mantenibilidad y portabilidad |
-| Casos de uso | CU-02, CU-03, CU-06, CU-07 (4 de 7) | Ningún caso de uso se verifica de extremo a extremo |
+| Objetivos | OBJ-01 … OBJ-05 (5 de 5) | **Verificables por inspección**, no por prueba. Un objetivo como "documentar el porqué de cada decisión" no tiene test posible, y fingir uno sería peor que declararlo. 29148 admite inspección y demostración como métodos |
+| Funcionales | RF-01, RF-04, RF-10 | RF-10 no es un requisito sino un objetivo disfrazado (ver `01` §5). RF-01 y RF-04 se ejercen de hecho en `test_llm_loop.py`, pero sin ancla explícita |
+| No funcionales | **RNF-01**, RNF-03, RNF-04 | **RNF-01 es el único que preocupa** — ver abajo. RNF-03 y RNF-04 son propiedades de diseño verificables por inspección: cuatro proveedores tras la misma interfaz, y `pyproject.toml` + lockfile con hashes |
+| Casos de uso | CU-02, CU-03, CU-06, CU-07 | Necesitan pruebas de extremo a extremo que hoy no existen |
+
+*Corrección a la primera versión de esta NC*: decía que RNF-04 "ya tiene tests" y
+**era falso**. RF-13 y RF-25 sí los tenían y ya están anclados; RNF-04 no tiene
+ninguno, y se declara verificable por inspección en vez de inventarle uno.
 
 **Por qué es Mayor y no Menor**: `RNF-01` (ninguna clave en el código ni en el
 historial de git) es un requisito de seguridad que hoy se verifica ejecutando
 `gitleaks` **a mano**, según `E4 §5.1`. Un control manual que se ejecutó una vez
 en agosto no protege el commit de mañana.
 
-**Acción propuesta**: anclar los tests que ya existen (RF-13, RF-25, RNF-04) —
-trabajo de una tarde. Para RNF-01, meter `gitleaks` en el CI. Los OBJ y los CU
-necesitan tests de extremo a extremo que hoy no existen; se propone declararlos
-verificables por inspección y decirlo, en vez de fingir cobertura.
+**Lo único que queda de verdad: `RNF-01`.** "Ninguna clave en el código ni en el
+historial de git" se comprueba con `gitleaks` **a mano**, según `E4 §5.1`. Un
+control manual ejecutado una vez en agosto no protege el commit de mañana.
+
+**Por qué no se ha metido `gitleaks` en el CI en esta pasada**: `DEP-05` obliga a
+fijar las acciones **por SHA y no por etiqueta**, y desde el entorno donde se
+hizo este trabajo no se pudo resolver el SHA de `gitleaks/gitleaks-action`
+(la API de GitHub devolvió 403). Inventarse un hash habría roto el CI y la propia
+norma que se intenta cumplir. Es un paso de dos minutos desde una máquina con
+acceso, y está descrito en la lista de acciones de este documento.
 
 ### NC-06 · Menor · `src/main.py` está al 17 % de cobertura
 
@@ -161,6 +177,7 @@ entonces decidir si pasa a ser puerta. Hasta entonces `RNF-08` sigue
 verificándose a mano y esta NC sigue abierta.
 
 ### NC-08 · Menor · LLM03 y LLM10 no se declaran en la tabla OWASP
+**CERRADA**
 
 `E3:199-209` recorre el OWASP Top 10 for LLM Applications y cierra ocho riesgos
 más SSRF, todos con ✅. Faltan **LLM03 (envenenamiento de datos de
@@ -172,8 +189,10 @@ entrena ni aloja modelos propios. Con el matiz de que el índice ChromaDB sí es
 un almacén que el usuario alimenta, así que el envenenamiento de la memoria
 merece dos líneas propias.
 
-**Acción propuesta**: completar la tabla con las dos filas y su motivo. Hecho ya
-en `06_ISO-42001_gestion_IA.md` §4; queda arrastrarlo a `E3`.
+**Corrección aplicada**: las dos filas están ya en `E3 §6`, con su motivo. LLM03
+no aplica porque no se entrena ningún modelo, pero se declara su equivalente real
+—envenenar el índice ChromaDB— y cómo lo cierra `SEG-07`. LLM10 no aplica porque
+no hay modelo propio que robar. La tabla de `E3` ya no tiene huecos sin explicar.
 
 ### NC-09 · Menor · `scripts/` no se lintea en el CI
 **CERRADA**
@@ -248,6 +267,7 @@ Por eso las herramientas nuevas del kit van en `requirements-dev.txt` aparte, y
 esto queda anotado en vez de arreglado.
 
 ### NC-13 · Observación · Faltan los ficheros de gobernanza del repositorio
+**CERRADA**
 
 No existen `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md` ni `CODEOWNERS`.
 `.github/` contiene únicamente `workflows/ci.yml`.
@@ -257,10 +277,20 @@ qué puede hacer con él. `SECURITY.md` es el que pide ISO 27001 A.6.8 (canal pa
 reportar eventos de seguridad); en un proyecto personal basta con una línea
 diciendo dónde escribir.
 
-Las "Normas del proyecto" de `README.md:297-302` ya hacen de facto de
-`CONTRIBUTING.md` y son buenas; solo les falta el sitio canónico.
+Las "Normas del proyecto" de `README.md:297-302` ya hacían de facto de
+`CONTRIBUTING.md` y son buenas; solo les faltaba el sitio canónico.
+
+**Corrección aplicada**: se crean los cuatro.
+
+| Fichero | Qué resuelve |
+|---|---|
+| `LICENSE` | MIT. **Decisión legal del autor: conviene confirmarla antes de publicar**, porque una vez publicada la gente puede fiarse de ella |
+| `SECURITY.md` | A.6.8: canal de reporte, alcance, y las cuatro CVE aceptadas con su motivo |
+| `CONTRIBUTING.md` | Recoge las 4 normas del proyecto y las 2 doctrinas de verificación, que estaban repartidas |
+| `.github/CODEOWNERS` | A.5.2: quién responde de qué. Con un autor, es una línea |
 
 ### NC-14 · Observación · Documentos citados que no están en el repositorio
+**CERRADA**
 
 | Referencia | Desde | Situación |
 |---|---|---|
@@ -268,9 +298,16 @@ Las "Normas del proyecto" de `README.md:297-302` ya hacen de facto de
 | `Tareas_Pendientes.md` | `ci.yml:78` | Citado desde el propio CI como justificación de por qué se ignora `CVE-2026-45829`. **Este es el que importa**: la justificación de una excepción de seguridad apunta a un documento que no está |
 | Tres informes de auditoría (23/07, 27/07, 04-07/08) | `E4 §5.3`, marcados `[x]` | Sus hallazgos sí están en el diario y en el código (familias `AUD-`, `SEG-`), pero los informes como tales no |
 
-**Acción propuesta**: mover la justificación de `CVE-2026-45829` al propio
-`ci.yml` o a `05_ISO-27001_declaracion_aplicabilidad.md`, para que la excepción
-se sostenga sola. Para el resto, una nota diciendo que son externos.
+**Corrección aplicada**: la justificación de `CVE-2026-45829` está ahora escrita
+**entera dentro de `ci.yml`**, junto a la línea que la materializa, y ya no
+remite a ningún documento ausente. Se aprovechó para hacer lo mismo con las tres
+CVE nuevas del 06/09.
+
+`AGENTS.md` es el enunciado del ejercicio, externo al repositorio por naturaleza,
+y los tres informes de auditoría dejaron sus hallazgos en el diario y en el
+código (familias `AUD-`, `SEG-`, inventariadas en `10_indice_de_identificadores.md`).
+Ninguno de esos dos casos sostiene un control de seguridad, que era lo que hacía
+grave a este hallazgo.
 
 ### NC-15 · Menor · No hay revisión independiente de la seguridad
 

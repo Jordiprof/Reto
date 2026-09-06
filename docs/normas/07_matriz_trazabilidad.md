@@ -9,7 +9,7 @@ Norma de referencia: **ISO/IEC/IEEE 29148**, §5.2.8 (trazabilidad) y §5.2.5
 (verificabilidad). La traza es **bidireccional**: de requisito a test en la tabla
 de abajo, y de test a requisito en el propio codigo, que es donde vive el ancla.
 
-**Cobertura de la traza: 29 de 46 identificadores** tienen al menos
+**Cobertura de la traza: 31 de 46 identificadores** tienen al menos
 un test que los nombra.
 
 ## Estado: conforme
@@ -44,7 +44,7 @@ tests declarados en la documentacion coinciden con los reales.
 | **RF-10** | El agente resuelve el caso de uso completo: asistente personal por Telegram | Alta | — *sin test que lo marque* |
 | **RF-11** | El bot **solo** responde a `user_id` en lista blanca; el resto se ignora **antes** de llamar al LLM | Crítica | `test_telegram_seguridad.py` (7) |
 | **RF-12** | El agente recupera **por significado** fragmentos de conversaciones de días anteriores | Alta | `test_rag.py` (2) |
-| **RF-13** | Las herramientas se agrupan por categoría y se activan bajo demanda (`/tools`) | Alta | — *sin test que lo marque* |
+| **RF-13** | Las herramientas se agrupan por categoría y se activan bajo demanda (`/tools`) | Alta | `test_tools.py` (2) · `test_tools_apagadas.py` (3) |
 | **RF-14** | Se cambia de proveedor y de modelo en caliente, sin perder la conversación | Media | `test_config.py` (1) |
 | **RF-15** | Si el proveedor primario falla, el sistema **reintenta y degrada** al siguiente solo | Alta | `test_llm_router.py` (2) |
 | **RF-16** | Un turno tiene **presupuesto máximo de llamadas** al LLM (tope 15) | Alta | `test_llm_router.py` (1) |
@@ -56,7 +56,7 @@ tests declarados en la documentacion coinciden con los reales.
 | **RF-22** | Un reintento **no vuelve a ejecutar** las herramientas ya ejecutadas en el turno | Alta | `test_llm_loop.py` (1) |
 | **RF-23** | El bot **solo responde en chat privado**, nunca dentro de un grupo | Crítica | `test_telegram_seguridad.py` (3) |
 | **RF-24** | CLI y bot **no pueden correr a la vez** sobre el mismo almacén | Alta | `test_cerrojo.py` (4) |
-| **RF-25** | Un documento largo se resume **entero por bloques** (`/condensar`) | Media | — *sin test que lo marque* |
+| **RF-25** | Un documento largo se resume **entero por bloques** (`/condensar`) | Media | `test_resumen_largo.py` (3) |
 | **RF-26** | El historial **no crece sin freno**: se compacta y se avisa | Alta | `test_compactar_historial.py` (4) |
 
 ## Requisitos no funcionales

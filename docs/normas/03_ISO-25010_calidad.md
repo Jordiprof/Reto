@@ -44,7 +44,7 @@ comprobó.
 
 | # | Característica (25010:2023) | Veredicto | Evidencia |
 |---|---|---|---|
-| 1 | Idoneidad funcional | 🟡 Evidencia parcial | 815 casos verdes; 29 de 46 requisitos trazados (§4) |
+| 1 | Idoneidad funcional | 🟡 Evidencia parcial | 815 casos verdes; 31 de 46 requisitos trazados (§4) |
 | 2 | Eficiencia de desempeño | ⬜ No medido | Sin instrumentación de latencia ni de memoria (§9) |
 | 3 | Compatibilidad | 🟡 Evidencia parcial | CLI y bot comparten memoria, con test de invariante |
 | 4 | Interacción (usabilidad) | 🟡 Evidencia parcial | 15 fallos de UX hallados probando en real (`E4 §3.4`) |
@@ -62,7 +62,7 @@ del proyecto, no una nota.
 | Métrica | Valor | Cómo se reproduce |
 |---|---|---|
 | Casos de prueba | **815** en 34 ficheros | `python -m pytest --collect-only -q` |
-| Requisitos con verificación trazada | **29 de 46** (63 %) | `python scripts/trazabilidad.py` |
+| Requisitos con verificación trazada | **31 de 46** (67 %) | `python scripts/trazabilidad.py` |
 | Requisitos críticos trazados | **5 de 5** (100 %) | ídem; el script falla si baja de ahí |
 | Casos de uso trazados | **3 de 7** | ídem |
 
@@ -147,7 +147,7 @@ El detalle control a control está en `05_ISO-27001_declaracion_aplicabilidad.md
 | Proporción test:código | **1,08 : 1** | — |
 | Incidencias de lint | **0** | `ruff check src tests scripts` |
 | Decisiones de arquitectura registradas | 6 ADR | `docs/ADR/` |
-| Decisiones fechadas en el diario | 170 | `docs/diario_decisiones.md` |
+| Decisiones fechadas en el diario | 173 | `docs/diario_decisiones.md` |
 | Dependencias fijadas con hash | 111 de 111 | `requirements-lock.txt` |
 
 La proporción 1,08:1 sustituye al 1,10:1 que declaraba `E4 §1.1`: la diferencia
@@ -156,7 +156,7 @@ calidad — 12.000 líneas de test pueden ejercitar el 30 % del código. Por eso
 dato que manda es el 78 % de §5 y no esta proporción.
 
 Lo que sí es un activo de mantenibilidad poco común y conviene decirlo: el diario
-de decisiones con 170 entradas fechadas explica **por qué** está cada cosa como
+de decisiones con 173 entradas fechadas explica **por qué** está cada cosa como
 está. Eso es lo que ISO 12207 llama gestión de la configuración y de la decisión,
 y aquí existe desde antes de que nadie lo pidiera.
 

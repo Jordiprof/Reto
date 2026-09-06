@@ -44,6 +44,7 @@ def test_un_texto_vacio_no_da_bloques():
     assert partir_en_bloques("   \n  ", 100) == []
 
 
+@pytest.mark.requisito("RF-25")
 def test_se_corta_por_parrafo_y_no_a_mitad_de_frase():
     """Partir una explicacion por la mitad deja las dos mitades sin sentido
     y el modelo resume mal las dos."""
@@ -65,6 +66,7 @@ def test_un_parrafo_mas_largo_que_el_bloque_se_corta_a_pelo():
     assert "".join(bloques) == texto
 
 
+@pytest.mark.requisito("RF-25")
 def test_ningun_bloque_pasa_del_tamaño_pedido():
     """El tamaño no es estetico: si un bloque se pasa, la peticion se sale
     de la cuota por minuto y el proveedor la rechaza entera."""
@@ -74,6 +76,7 @@ def test_ningun_bloque_pasa_del_tamaño_pedido():
         assert len(bloque) <= 500
 
 
+@pytest.mark.requisito("RF-25")
 def test_no_se_pierde_texto_al_trocear():
     """Lo que importa es que no falte NADA: los saltos y espacios de los
     bordes se normalizan al cortar (por eso se comparan sin blancos), pero

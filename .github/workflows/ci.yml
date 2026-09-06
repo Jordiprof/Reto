@@ -84,8 +84,48 @@ jobs:
         # esta evaluada: es una inyeccion de codigo pre-autenticacion en el
         # endpoint HTTP del SERVIDOR de Chroma, y este proyecto usa
         # PersistentClient (modo embebido) sin abrir ningun puerto -
-        # verificado, no supuesto (ver Tareas_Pendientes.md, DEP-01). Sin
-        # parche todavia: si alguna vez lo publican, quitar esta linea.
+        # verificado, no supuesto. Sin parche todavia: si alguna vez lo
+        # publican, quitar esta linea.
+        #
+        # NC-14 (06/09): la justificacion de arriba remitia a
+        # Tareas_Pendientes.md, que NO ESTA en el repositorio. Una excepcion de
+        # seguridad cuyo motivo apunta a un documento ausente no se sostiene
+        # sola, asi que a partir de aqui el motivo se escribe ENTERO donde vive
+        # la excepcion. Copia larga en docs/normas/05_ISO-27001_*.md §3.
+        #
+        # 06/09: pip-audit vuelve a tumbar el CI con SEIS CVEs nuevas. Es
+        # SEG-10 haciendo su trabajo por segunda vez, y el mismo procedimiento
+        # del 14/08: analizadas UNA A UNA antes de tocar nada.
+        #
+        # LAS TRES DE pypdf SI NOS TOCAN, y se arreglan subiendo la version
+        # (6.15.0 -> 6.17.0), no ignorandolas:
+        #   CVE-2026-84309  bucle infinito en TreeObject.insert_child
+        #   CVE-2026-84310  tiempos largos / memoria al recuperar esquemas
+        #   CVE-2026-84311  tiempos largos / memoria al extraer objetos XForm
+        # Las tres son de la misma clase que CVE-2026-71870/71852 del 14/08: un
+        # PDF fabricado dispara consumo de memoria o tiempo AL EXTRAER TEXTO, y
+        # eso es exactamente lo que hace extraer_texto() en documentos.py con
+        # los PDF que llegan por Telegram, o sea contenido de terceros. En una
+        # VPS pequeña eso es una caida, no una molestia.
+        #
+        # LAS TRES DE chromadb NO NOS TOCAN, y no hay parche que aplicar: la
+        # 1.5.9 (05/05/2026) sigue siendo la ultima publicada, y las tres dicen
+        # "Patched versions: None". Afectan a >=0.4.17,<=1.5.9. Verificado en el
+        # codigo, no supuesto: src/rag.py:118 instancia PersistentClient, y un
+        # grep sobre src/ no encuentra NI UN HttpClient, ni servidor, ni
+        # trust_remote_code. Las tres exigen el modo servidor:
+        #   CVE-2026-45833 (Critica, CVSS 9.4, GHSA-36p7-vc44-83pf) - inyeccion
+        #     de codigo por el endpoint /api/v2/.../collections/{id}; requiere
+        #     atacante AUTENTICADO y trust_remote_code=true. No hay endpoint
+        #     que atacar sin servidor, y no se usa trust_remote_code.
+        #   CVE-2026-45830 (Alta, GHSA-2wm9-hf6c-p5cr) - un usuario AUTENTICADO
+        #     lee o escribe en colecciones de otro tenant. Sin servidor no hay
+        #     autenticacion ni multi-tenant.
+        #   CVE-2026-45831 (Alta, GHSA-xph7-9rjv-w5fr) - el
+        #     SimpleRBACAuthorizationProvider no comprueba a que tenant aplica
+        #     un permiso. Ese proveedor solo existe en modo servidor.
+        # Si algun dia se levantara un servidor de Chroma, las cuatro lineas de
+        # --ignore-vuln dejan de ser validas de golpe.
         #
         # NC-10 (auditoria ISO del 04/09): "pip install pip-audit" a secas se
         # saltaba el --require-hashes de arriba. Es decir, la herramienta que
@@ -97,7 +137,11 @@ jobs:
         # desde una maquina con Python 3.13 (instrucciones en ese fichero).
         run: |
           pip install -r requirements-dev.txt
-          pip-audit -r requirements-lock.txt --ignore-vuln CVE-2026-45829
+          pip-audit -r requirements-lock.txt \
+            --ignore-vuln CVE-2026-45829 \
+            --ignore-vuln CVE-2026-45830 \
+            --ignore-vuln CVE-2026-45831 \
+            --ignore-vuln CVE-2026-45833
 
   # ---------------------------------------------------------------------------
   # Kit de normas ISO (docs/normas/). Job SEPARADO del de arriba a proposito:

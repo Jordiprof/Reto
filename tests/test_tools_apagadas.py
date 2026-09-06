@@ -56,6 +56,7 @@ def _nombre_de(categoria: str) -> str:
 # --- Lo que ve el modelo (tools_de) ---------------------------------------
 
 
+@pytest.mark.requisito("RF-13")
 def test_la_tool_apagada_sigue_declarada():
     """El fallo original: al omitirla, el modelo no percibia ninguna
     ausencia y contestaba como si hubiera mirado."""
@@ -64,6 +65,7 @@ def test_la_tool_apagada_sigue_declarada():
     assert _nombre_de("memoria") in nombres
 
 
+@pytest.mark.requisito("RF-13")
 def test_la_ficha_apagada_va_marcada_y_sin_parametros():
     """Marcada, para que el modelo pueda leerlo sin llamarla; y sin
     parametros, porque su ficha viaja en CADA peticion igual que las demas."""
@@ -101,6 +103,7 @@ def test_categoria_activa_no_avisa(categorias):
     assert aviso_si_apagada(_nombre_de("memoria")) is None
 
 
+@pytest.mark.requisito("RF-13")
 def test_categoria_apagada_avisa_y_nombra_el_grupo(categorias):
     categorias({"calculadora"})
     aviso = aviso_si_apagada(_nombre_de("memoria"))

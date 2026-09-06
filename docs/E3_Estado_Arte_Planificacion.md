@@ -206,6 +206,8 @@ Referencia: **OWASP Top 10 for LLM Applications**. Lo que aplica aquí y cómo s
 | **LLM07 Plugins inseguros** | Cada tool declara capacidades; el riesgo se **calcula**; activación por categorías | ✅ |
 | **LLM08 Agencia excesiva** | Ninguna tool con efectos externos todavía; la idempotencia por turno ya está lista para cuando la haya | ✅ |
 | **LLM09 Exceso de confianza** | Avisos anti-alucinación **dentro del resultado** de la tool, en forma de prohibición | ✅ |
+| **LLM03 Envenenamiento de datos** | **No aplica**: no se entrena ni se afina ningún modelo. Su equivalente sí existe —el índice ChromaDB es un almacén que el usuario alimenta y del que salen fragmentos al contexto— y se cierra con el mismo SEG-07: todo recuerdo va delimitado y saneado, y la categoría `memoria` arranca apagada | ✅ |
+| **LLM10 Robo del modelo** | **No aplica**: no hay modelo propio que robar. Los modelos son de terceros por API con clave; Ollama corre en local con modelos públicos | ✅ |
 | **SSRF** (no está en el Top 10, pero es el riesgo real aquí) | Guardián propio: lista blanca + IPs internas + sin redirecciones | ✅ |
 
 ### 6.1 Doctrina propia: validación por mutación

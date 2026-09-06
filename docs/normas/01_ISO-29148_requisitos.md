@@ -31,7 +31,7 @@ en el código**. La segunda se ha corregido en parte durante esta auditoría.
 | **Verificable** | 🟡 | El punto flojo. Detalle en §3 |
 | **Correcto** | ✅ | Los requisitos describen lo que el sistema hace de verdad — comprobado por muestreo contra el código |
 | **Conforme** (formato consistente) | ✅ | Mismo formato de tabla en las cinco secciones |
-| **Trazable** | 🟡 | 29 de 46. Detalle en §4 |
+| **Trazable** | 🟡 | 31 de 46. Detalle en §4 |
 
 ## 3. Verificabilidad de los criterios de aceptación
 
@@ -85,37 +85,36 @@ problema era que estaba incompleta y que nada impedía que empezara a mentir.
 ### 4.2 Qué se ha hecho
 
 Marcador `@pytest.mark.requisito(...)` declarado en `pyproject.toml` con
-`--strict-markers`, aplicado a **78 tests**. El resultado se genera en
+`--strict-markers`, aplicado a **103 tests**. El resultado se genera en
 `07_matriz_trazabilidad.md` y lo verifica `scripts/trazabilidad.py` en cada CI.
 
 | | Antes | Ahora |
 |---|---|---|
-| Identificadores con verificación trazada | 0 de 46 | **29 de 46** (63 %) |
+| Identificadores con verificación trazada | 0 de 46 | **31 de 46** (67 %) |
 | Requisitos críticos trazados | 0 de 5 | **5 de 5** (100 %) |
 | Controles de `E2 §8` anclados | 0 de 12 | **11 de 12** |
 | Traza inversa (test → requisito) | No existía | En el código |
 
 ### 4.3 Lo que sigue sin traza (`NC-05`)
 
-| Familia | Sin traza |
-|---|---|
-| Objetivos | OBJ-01, OBJ-02, OBJ-03, OBJ-04, OBJ-05 |
-| Funcionales | RF-01, RF-04, RF-10, RF-13, RF-25 |
-| No funcionales | RNF-01, RNF-03, RNF-04 |
-| Casos de uso | CU-02, CU-03, CU-06, CU-07 |
+Quedan 15, y no todos significan lo mismo:
 
-Tres grupos, con tratamiento distinto:
+| Familia | Sin traza | Qué se hace con ellos |
+|---|---|---|
+| Objetivos | OBJ-01 … OBJ-05 | **Verificables por inspección.** "Documentar el porqué de cada decisión" no tiene test posible, y fingir uno sería peor que declararlo |
+| Funcionales | RF-01, RF-04, RF-10 | RF-10 es un objetivo disfrazado (§5). RF-01 y RF-04 se ejercen de hecho en `test_llm_loop.py`, sin ancla explícita |
+| No funcionales | **RNF-01**, RNF-03, RNF-04 | RNF-03 y RNF-04 son propiedades de diseño, verificables por inspección. **RNF-01 es el único que preocupa** |
+| Casos de uso | CU-02, CU-03, CU-06, CU-07 | Necesitan pruebas de extremo a extremo que no existen |
 
-- **RF-13, RF-25 y RNF-04 ya tienen tests**; solo les falta el marcador. Es
-  trabajo mecánico.
-- **Los 5 objetivos y los 4 casos de uso** necesitan pruebas de extremo a
-  extremo que no existen. La propuesta honesta no es fabricarlas para llenar la
-  tabla: es **declararlos verificables por inspección o por demostración** —29148
-  lo permite— y dejarlo escrito.
-- **RNF-01** es el único que preocupa: "ninguna clave en el código ni en el
-  historial" se comprueba con `gitleaks` **a mano**, según `E4 §5.1`. Un control
-  manual ejecutado una vez en agosto no protege el commit de mañana. Debería ir
-  al CI.
+**RF-13 y RF-25 ya están anclados** (06/09): sus tests existían y solo les
+faltaba el marcador. Una versión anterior de esta sección decía que **RNF-04**
+también tenía tests, y era **falso** — no tiene ninguno, y se declara verificable
+por inspección en vez de inventarle uno.
+
+**RNF-01 es el hueco real**: "ninguna clave en el código ni en el historial" se
+comprueba con `gitleaks` **a mano**, según `E4 §5.1`. Un control manual ejecutado
+una vez en agosto no protege el commit de mañana. Debería ir al CI, fijando la
+acción por SHA como exige `DEP-05`.
 
 ## 5. Observaciones menores
 
@@ -144,7 +143,7 @@ inventariados en `10_indice_de_identificadores.md`.
 | Prioridad asignada | ✅ Crítica / Alta / Media |
 | Criterios de aceptación | 🟡 Presentes; tres no medibles (§3) |
 | Requisitos verificables | 🟡 |
-| Trazabilidad bidireccional | 🟡 29 de 46, con ancla en código y verificación automática |
+| Trazabilidad bidireccional | 🟡 31 de 46, con ancla en código y verificación automática |
 | Gestión de cambios de requisitos | ✅ `E1` se declara "documento vivo" v2.1, y el diario registra cada cambio con fecha |
 | Requisitos fuera de alcance declarados | ✅ `E1 §1.3` |
 | Partes interesadas identificadas | 🟡 Implícitas; recogidas en `00_alcance.md` §4 |

@@ -26,9 +26,8 @@ existiera esta carpeta:
 
 Aplicado aquí: **ningún ✅ sin evidencia que se pueda ejecutar**. Donde no hay
 evidencia, el documento dice "no medido" o abre una no conformidad. Hay 15
-en `09_no_conformidades.md` — 5 cerradas en esta misma auditoría, 1 corregida a
-medias y **9 que siguen abiertas**, una de ellas mayor. Ese número es el dato
-más honesto del kit.
+en `09_no_conformidades.md` — **8 cerradas, 2 a medias y 5 abiertas** tras la
+segunda pasada del 06/09. Ese número es el dato más honesto del kit.
 
 ## Los documentos
 
@@ -70,7 +69,7 @@ Lo resumido; el detalle en `09_no_conformidades.md`.
   prueba en 33 ficheros; había 815 en 34, y `test_noticias.py` no figuraba.
   Corregido, y ahora hay un control que lo impide.
 - **Ningún test decía a qué requisito responde.** `grep -rn "RF-" src tests`
-  devolvía cero. Ahora 78 tests llevan ancla y 29 de los 46 identificadores
+  devolvía cero. Ahora 103 tests llevan ancla y 31 de los 46 identificadores
   están trazados.
 - **Los cinco requisitos críticos** (RF-02, RF-08, RF-11, RF-17, RF-23) están
   los cinco trazados, y el script se pone rojo si uno se queda sin test.

@@ -1,0 +1,5 @@
+# Un solo autor, y el CI lo verifica: todo el repositorio es suyo.
+# NC-13 de la auditoria del 04/09/2026 (ISO/IEC 27001 A.5.2, asignacion de
+# responsabilidades). En un proyecto de una persona esto no reparte trabajo:
+# deja escrito, de forma legible por GitHub, quien responde de cada cosa.
+*       @Jordiprof
