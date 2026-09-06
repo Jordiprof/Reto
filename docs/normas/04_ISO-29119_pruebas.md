@@ -66,9 +66,9 @@ local, `ruff` limpio, y todo control nuevo llega con su test.
 | Puerta | Comprobación | Dónde |
 |---|---|---|
 | Lint | `ruff check src tests scripts` | `ci.yml` |
-| Pruebas | Los 815 casos en verde | `ci.yml` |
+| Pruebas | Los 830 casos en verde | `ci.yml` |
 | Cadena de suministro | `pip-audit` sin `continue-on-error` | `ci.yml` |
-| Cobertura | No baja del 78 % de rama | job `normas` |
+| Cobertura | No baja del 79 % de rama | job `normas` |
 | Trazabilidad | `trazabilidad.py --check` sale 0 | job `normas` |
 | Mutación | Los cuatro módulos críticos | job `mutacion` — **a mano todavía**, no es puerta (§5.3) |
 
@@ -103,8 +103,11 @@ Ejecución del **04/09/2026**, commit `35f3445`, en la plataforma objetivo
 | Fallan | **0** |
 | **Total recolectado** | **815** |
 
-En 54,70 s. Cobertura resultante: **78 % de rama**. Desglose por módulo en
-`03_ISO-25010_calidad.md` §5.
+En 54,70 s. Cobertura resultante: **78,01 % de rama**.
+
+**Actualización del 06/09**, al cerrar `NC-06`: la batería sube a **830 casos** en
+35 ficheros con los 15 nuevos de `test_main_cli.py`, y la cobertura a **79,86 %**.
+Desglose por módulo en `03_ISO-25010_calidad.md` §5.
 
 **Medición previa y por qué se conserva.** Una primera pasada, en un entorno con
 Python 3.11 y sin salida a internet, dio *808 pasan · 2 se saltan · 5 no

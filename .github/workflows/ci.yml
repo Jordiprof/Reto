@@ -175,12 +175,19 @@ jobs:
         # cobertura de linea basta con pasar por el if una vez, y los fallos de
         # "falla abierto" se cuelan justo por el camino que no se prueba.
         #
-        # Aviso para la primera ejecucion: la cifra se midio en un entorno sin
-        # salida a internet, donde 5 tests de test_documentos.py no pudieron
-        # correr (descargan el modelo de embeddings). Aqui SI hay red, asi que
-        # el porcentaje real deberia salir algo mas alto. Conviene subir el
-        # umbral a lo que salga de verdad. Ver docs/normas/03_ISO-25010_calidad.md
-        run: python -m pytest -q --cov=src --cov-report=term --cov-fail-under=78
+        # 06/09: sube de 78 a 79 al cerrar NC-06. Los 15 tests nuevos de
+        # test_main_cli.py llevan src/main.py del 17 % al 34 %, y eso arrastra
+        # el total de 78,01 % a 79,86 %.
+        #
+        # 79 Y NO 80, aunque la tabla de coverage imprima "80%": ese 80 esta
+        # REDONDEADO. El valor real es 79,86 y --cov-fail-under compara contra
+        # el numero de verdad, asi que un umbral de 80 tumbaria el CI con la
+        # cobertura subiendo. Cazado al comprobarlo en local antes de subir,
+        # que es la unica razon por la que no volvio a ponerse rojo.
+        #
+        # El umbral se mueve DETRAS de la medicion, nunca delante: su trabajo
+        # es que no BAJE, no marcar un objetivo.
+        run: python -m pytest -q --cov=src --cov-report=term --cov-fail-under=79
 
       - name: Trazabilidad
         # Se pone rojo si un test apunta a un requisito que no existe, si un

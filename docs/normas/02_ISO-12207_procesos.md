@@ -31,11 +31,11 @@ Los que sí se ejecutan, y con qué evidencia.
 | **Análisis** | ✅ | `E3`: comparativa medida de proveedores, no supuesta. `ADR-001` documenta que se verificó contra documentación oficial antes de decidir |
 | **Implementación** | ✅ | `src/` — 18 módulos, 11.205 líneas |
 | **Integración** | ✅ | CI en cada push; memoria compartida entre CLI y bot con test de invariante |
-| **Verificación** | ✅ | 815 casos, 78 % de cobertura de rama, mutación. Ver `04_ISO-29119_pruebas.md` |
+| **Verificación** | ✅ | 830 casos, 79,86 % de cobertura de rama, mutación. Ver `04_ISO-29119_pruebas.md` |
 | **Transición (despliegue)** | ✅ | `scripts/jimmy.service`, desplegado y probado en real el 21/08 en una VPS Hetzner; sobrevivió a dos reinicios arrancando solo |
 | **Validación** | 🟡 | Pruebas manuales contra APIs reales (`E4 §3.4`, 15 fallos hallados), no repetibles automáticamente |
 | **Operación** | ✅ | `vigilar-bots.timer` + avisos por Telegram independientes del bot |
-| **Mantenimiento** | ✅ | El diario de decisiones con 174 entradas fechadas es el registro de mantenimiento |
+| **Mantenimiento** | ✅ | El diario de decisiones con 177 entradas fechadas es el registro de mantenimiento |
 | **Retirada** | ⬜ | No aplica: el sistema está en operación |
 
 ## 2. Procesos de gestión técnica (12207 §6.3)
@@ -44,7 +44,7 @@ Los que sí se ejecutan, y con qué evidencia.
 |---|---|---|
 | **Planificación** | ✅ | `E3 §7`: plan de fases con diagrama de ejecución **planeado contra real**, incluida la explicación del adelanto (§7.2). Poca gente documenta la desviación cuando va a favor |
 | **Evaluación y control** | ✅ | Tres auditorías de seguridad y esta evaluación |
-| **Gestión de decisiones** | ✅ | 6 ADR + 174 decisiones fechadas con alternativas y motivo. **Es el proceso mejor ejecutado del proyecto** |
+| **Gestión de decisiones** | ✅ | 6 ADR + 177 decisiones fechadas con alternativas y motivo. **Es el proceso mejor ejecutado del proyecto** |
 | **Gestión de riesgos** | 🟡 | Existía como tabla de 9 filas sin ID ni severidad (`E1 §5`). Sustituida por `08_registro_riesgos.md` |
 | **Gestión de la configuración** | ✅ | Git con ramas por nivel y tags por entrega; lockfile con 111 hashes; `.env.example` versionado |
 | **Gestión de la información** | ✅ | `docs/` con E1-E4, ADR y diario |
@@ -70,14 +70,14 @@ bien no es una evaluación.
 
 A pesar de la advertencia inicial, el recorrido deja tres cosas útiles:
 
-1. **La gestión de decisiones está por encima de lo esperable.** 174 decisiones
+1. **La gestión de decisiones está por encima de lo esperable.** 177 decisiones
    fechadas con alternativas consideradas y motivo es más de lo que documentan
    muchos equipos con proceso formal. En términos de 12207 es el proceso de
    Gestión de Decisiones (§6.3.3) ejecutado en serio, y existía antes de que
    nadie lo pidiera.
 
 2. **La validación es el eslabón flojo.** La verificación (¿está bien
-   construido?) está muy bien cubierta: 815 tests, cobertura, mutación. La
+   construido?) está muy bien cubierta: 830 tests, cobertura, mutación. La
    validación (¿es lo que hacía falta?) depende de pruebas manuales que no se
    repiten. Es el mismo hueco que señala `06_ISO-42001_gestion_IA.md` §5 desde
    otro ángulo, y que las dos normas coincidan apuntando ahí es la señal de que

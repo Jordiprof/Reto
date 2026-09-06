@@ -15,7 +15,7 @@ para ejecutarlo:
 | Elemento | Dónde |
 |---|---|
 | Código de la aplicación | `src/` — 18 módulos, 11.205 líneas |
-| Batería de pruebas | `tests/` — 34 ficheros, 815 casos, 12.111 líneas |
+| Batería de pruebas | `tests/` — 35 ficheros, 830 casos, 12.478 líneas |
 | Cadena de suministro | `requirements-lock.txt` — 111 paquetes con hash SHA256 |
 | Integración continua | `.github/workflows/ci.yml` |
 | Despliegue | `scripts/jimmy.service` y unidades systemd asociadas, en una VPS Hetzner CX23 (Ubuntu 26.04) |

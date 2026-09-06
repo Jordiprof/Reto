@@ -28,7 +28,8 @@ con este comando:
 python -m pytest -q --cov=src --cov-report=term
 ```
 
-Resultado: **815 de 815 en verde**, en 54,70 s, con **78 % de cobertura de rama**.
+Resultado (06/09, tras cerrar `NC-06`): **830 casos**, con **79,86 % de cobertura
+de rama**. La medición del 04/09 daba 815 casos y 78,01 %.
 
 *Nota metodológica, porque el camino importa.* Una primera medición se hizo en un
 entorno con Python 3.11 y sin salida a internet, donde 5 casos de
@@ -44,11 +45,11 @@ comprobó.
 
 | # | Característica (25010:2023) | Veredicto | Evidencia |
 |---|---|---|---|
-| 1 | Idoneidad funcional | 🟡 Evidencia parcial | 815 casos verdes; 31 de 46 requisitos trazados (§4) |
+| 1 | Idoneidad funcional | 🟡 Evidencia parcial | 830 casos; 31 de 46 requisitos trazados (§4) |
 | 2 | Eficiencia de desempeño | ⬜ No medido | Sin instrumentación de latencia ni de memoria (§9) |
 | 3 | Compatibilidad | 🟡 Evidencia parcial | CLI y bot comparten memoria, con test de invariante |
 | 4 | Interacción (usabilidad) | 🟡 Evidencia parcial | 15 fallos de UX hallados probando en real (`E4 §3.4`) |
-| 5 | Fiabilidad | ✅ Medido | 78 % de rama; degradación entre proveedores probada (§6) |
+| 5 | Fiabilidad | ✅ Medido | 79,86 % de rama; degradación entre proveedores probada (§6) |
 | 6 | Seguridad | ✅ Medido | 11 de 12 controles de `E2 §8` con test que los ancla (§7) |
 | 7 | Mantenibilidad | ✅ Medido | Ratio test/código 1,08:1; `ruff` limpio; 6 ADR (§8) |
 | 8 | Flexibilidad | 🟡 Evidencia parcial | 4 proveedores LLM intercambiables por configuración |
@@ -61,7 +62,7 @@ del proyecto, no una nota.
 
 | Métrica | Valor | Cómo se reproduce |
 |---|---|---|
-| Casos de prueba | **815** en 34 ficheros | `python -m pytest --collect-only -q` |
+| Casos de prueba | **830** en 35 ficheros | `python -m pytest --collect-only -q` |
 | Requisitos con verificación trazada | **31 de 46** (67 %) | `python scripts/trazabilidad.py` |
 | Requisitos críticos trazados | **5 de 5** (100 %) | ídem; el script falla si baja de ahí |
 | Casos de uso trazados | **3 de 7** | ídem |
@@ -72,8 +73,11 @@ probada; lo que no está es demostrado que lo probado sea lo que se pidió.
 
 ## 5. Cobertura medida, por módulo
 
-La cifra global es **78 % de cobertura de rama**: 3.251 sentencias con 668 sin
+La cifra global es **79,86 % de cobertura de rama**: 3.251 sentencias con 622 sin
 cubrir, y 924 ramas con 83 parcialmente cubiertas.
+
+> Ojo al leer la tabla de `coverage`: imprime **80 %** porque redondea. El valor
+> real es 79,86, y por eso el umbral del CI es 79 y no 80 — ver `NC-06`.
 
 | Módulo | Cobertura | Lectura |
 |---|---|---|
@@ -93,7 +97,7 @@ cubrir, y 924 ramas con 83 parcialmente cubiertas.
 | `llm_client.py` | 78 % | |
 | `telegram_bot.py` | 77 % | 927 sentencias, el módulo más grande |
 | `voz.py` | 77 % | |
-| **`main.py`** | **17 %** | **El agujero: 273 de 339 sentencias sin cubrir** (`NC-06`) |
+| **`main.py`** | **34 %** | Era el agujero: del 17 % al 34 % con `test_main_cli.py` (`NC-06` cerrada). Lo que queda es `_sesion()`, el bucle interactivo |
 
 Se mide **cobertura de rama y no de línea** a propósito, y está razonado en
 `pyproject.toml`: casi todos los controles de este proyecto son un `if` que
@@ -111,7 +115,7 @@ la razón por la que este documento no propone perseguir el 100 %.
 
 | Métrica | Valor | Evidencia |
 |---|---|---|
-| Cobertura de rama | 78 % | §5 |
+| Cobertura de rama | 79,86 % | §5 |
 | Tests de degradación entre proveedores | 24 | `test_llm_router.py` |
 | Tests de tolerancia a fallo de API | 19 | `test_avisos_caida.py` |
 | Recuperación tras caída del proceso | Probada | `test_cerrojo.py::test_un_proceso_muerto_NO_deja_el_cerrojo_colgado` |
@@ -143,11 +147,11 @@ El detalle control a control está en `05_ISO-27001_declaracion_aplicabilidad.md
 | Métrica | Valor | Cómo se reproduce |
 |---|---|---|
 | Líneas de código | 11.205 en 18 módulos | `wc -l src/*.py` |
-| Líneas de test | 12.111 en 34 ficheros | `wc -l tests/*.py` |
-| Proporción test:código | **1,08 : 1** | — |
+| Líneas de test | 12.478 en 35 ficheros | `wc -l tests/*.py` |
+| Proporción test:código | **1,11 : 1** | — |
 | Incidencias de lint | **0** | `ruff check src tests scripts` |
 | Decisiones de arquitectura registradas | 6 ADR | `docs/ADR/` |
-| Decisiones fechadas en el diario | 174 | `docs/diario_decisiones.md` |
+| Decisiones fechadas en el diario | 177 | `docs/diario_decisiones.md` |
 | Dependencias fijadas con hash | 111 de 111 | `requirements-lock.txt` |
 
 La proporción 1,08:1 sustituye al 1,10:1 que declaraba `E4 §1.1`: la diferencia
@@ -156,7 +160,7 @@ calidad — 12.000 líneas de test pueden ejercitar el 30 % del código. Por eso
 dato que manda es el 78 % de §5 y no esta proporción.
 
 Lo que sí es un activo de mantenibilidad poco común y conviene decirlo: el diario
-de decisiones con 174 entradas fechadas explica **por qué** está cada cosa como
+de decisiones con 177 entradas fechadas explica **por qué** está cada cosa como
 está. Eso es lo que ISO 12207 llama gestión de la configuración y de la decisión,
 y aquí existe desde antes de que nadie lo pidiera.
 

@@ -121,6 +121,7 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_recuerdo_y_limpiar.py` | 18 | Ruido del RAG, `/limpiar`, reglas del prompt |
 | `test_config_logging.py` | 16 | Modo depuración opt-in |
 | `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
+| `test_main_cli.py` | 15 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
 | `test_logging.py` | 14 | Política de solo metadatos |
 | `test_agent.py` | 14 | Núcleo, contaminación de historial |
 | `test_llm_gemini.py` | 13 | Traducción del dialecto de Gemini |
@@ -134,7 +135,7 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_clave_cifrado.py` | 9 | Validación de la clave Fernet |
 | `test_redirecciones.py` | 7 | Que una redirección no salte el guardián |
 | `test_llm_client.py` | 5 | Despacho de tools |
-| **TOTAL** | **815** | |
+| **TOTAL** | **830** | |
 
 ### 3.2 Cómo se ejecutan
 

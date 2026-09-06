@@ -17,15 +17,17 @@ Auditoría del **04/09/2026** sobre el commit `35f3445`. Auditor: el propio auto
 
 | Estado | Mayores | Menores | Observaciones | Total |
 |---|---|---|---|---|
-| Cerradas | 0 | 5 | 3 | **8** |
+| Cerradas | 0 | 6 | 3 | **9** |
 | Parcialmente corregidas | 1 | 1 | 0 | **2** |
-| Abiertas | 0 | 4 | 1 | **5** |
+| Abiertas | 0 | 3 | 1 | **4** |
 | **Total** | **1** | **10** | **4** | **15** |
 
-**Segunda pasada, 06/09/2026.** Se cierran NC-08, NC-13 y NC-14, y NC-05 baja de
-abierta a parcial. Lo que queda abierto son cinco: NC-06, NC-07, NC-10, NC-12 y
-NC-15 — y dos de ellas (NC-10 y NC-15) no son cerrables desde el entorno donde se
-hizo este trabajo, por motivos que se explican en cada una.
+**Segunda pasada, 06/09/2026.** Se cierran NC-06, NC-08, NC-13 y NC-14, y NC-05
+baja de abierta a parcial. Quedan **cuatro abiertas**: NC-07, NC-10, NC-12 y
+NC-15 — y tres de ellas no son cerrables desde el entorno donde se hizo este
+trabajo (`mutmut` necesita la batería en verde, `pip-compile` necesita Python
+3.13, y la revisión independiente no existe con un solo autor). La única que
+depende de una decisión y no de una limitación es **NC-12**.
 
 ---
 
@@ -129,25 +131,41 @@ norma que se intenta cumplir. Es un paso de dos minutos desde una máquina con
 acceso, y está descrito en la lista de acciones de este documento.
 
 ### NC-06 · Menor · `src/main.py` está al 17 % de cobertura
+**CERRADA**
 
-| Módulo | Cobertura | Sentencias sin cubrir |
+`main.py` es el menú de la CLI: eran 339 sentencias de las que **273 no se
+ejecutaban nunca**. No es crítico para la seguridad —la superficie expuesta es
+el bot, no la CLI— pero era el mayor agujero de la batería y hasta la auditoría
+no estaba declarado en ninguna parte.
+
+**Corrección aplicada**: 15 tests nuevos en `tests/test_main_cli.py`, sobre lo
+que estaba a cero:
+
+| Qué cubre | Por qué importa |
+|---|---|
+| `_imprimir_sitios` | La lista blanca tal y como se ve en la CLI: URL completa y pegable, agrupada, y el aviso de que no se siguen redirecciones |
+| `mostrar_conversacion` | Que **no** imprima el system prompt, y que una conversación indescifrable avise en vez de reventar (`RNF-02`) |
+| `menu_tools` | Que cancelar **no** apague herramientas por sorpresa, y que encender `web` liste los sitios |
+| **`main()`** | **El cerrojo (`RF-24`)**: con la memoria ocupada la CLI no arranca, y el cerrojo se suelta aunque la sesión reviente |
+
+Los tres de `main()` son los que más valen: prueban desde la CLI el control que
+nació del 31/07, cuando se ejecutó la terminal **con el bot arrancado**.
+
+| Módulo | Antes | Ahora |
 |---|---|---|
-| `src/main.py` | **17 %** | 273 de 339 |
-| `src/telegram_bot.py` | 77 % | 199 de 927 |
-| `src/voz.py` | 77 % | 25 de 107 |
-| `src/llm_client.py` | 78 % | 78 de 329 |
-| `src/cerrojo.py` | 82 % | 9 de 51 |
+| **`src/main.py`** | **17 %** (273 sin cubrir) | **34 %** (220 sin cubrir) |
+| **TOTAL del proyecto** | **78,01 %** | **79,86 %** |
 
-`main.py` es el menú de la CLI: 339 sentencias de las que 273 no se ejecutan
-nunca en pruebas. No es crítico para la seguridad —la superficie expuesta es el
-bot, no la CLI— pero es el mayor agujero de la suite y hasta hoy no estaba
-declarado en ninguna parte.
+El umbral del CI sube de 78 a **79**, detrás de la medición. **79 y no 80**
+aunque la tabla de `coverage` imprima "80 %": ese 80 está redondeado, el valor
+real es 79,86, y `--cov-fail-under` compara contra el número de verdad. Un
+umbral de 80 habría tumbado el CI **con la cobertura subiendo**. Se cazó
+comprobándolo en local antes de subir.
 
-**Hecho**: el job `normas` de `ci.yml` fija `--cov-fail-under=78`, el valor
-realmente medido, para que la cobertura no pueda bajar sin que nadie se entere.
-
-**Pendiente**: subir `main.py`, en un trabajo aparte. No se propone perseguir el
-100 %: `E3 §6.1` ya establece que lo que vale es la mutación, no el porcentaje.
+**Lo que sigue sin cubrir, y por qué**: las líneas 531-1025, que son `_sesion()`
+—el bucle interactivo del chat—. Cubrirlo exigiría simular una terminal entera,
+y `E3 §6.1` ya establece que lo que vale es la mutación, no el porcentaje. Se
+declara como límite conocido, no como tarea pendiente.
 
 ### NC-07 · Menor · `RNF-08` exige validación por mutación y se hace a mano
 
