@@ -39,7 +39,24 @@ pytest-cov==7.1.0
 # criticos se validan por mutacion, no solo con tests en verde"- pero hasta
 # ahora se hacia A MANO, ocho mutaciones documentadas en prosa en E3 §6.1.
 # Un requisito verificado a mano no se vuelve a verificar nunca.
-mutmut==3.7.0
+#
+# 2.5.1 Y NO 3.7.0, y se baja a proposito. Aqui se fijo la 3.7.0 el 04/09
+# mientras el comando de ci.yml estaba escrito para la 2.x
+# (--paths-to-mutate). Nadie ejecuto las dos piezas juntas hasta el 06/09, y
+# el job murio al segundo con "No such option: --paths-to-mutate".
+#
+# Arreglar la sintaxis no bastaba: la 3.x copia el codigo a mutants/ y su
+# instrumentacion lleva dentro un assert not name.startswith("src."). Los 35
+# ficheros de test de este proyecto importan "from src.X import ...", asi que
+# la 3.x revienta en el primer test. Comprobado ejecutandola, no leyendo el
+# changelog. Adaptarse seria renombrar el paquete y tocar src/ y tests/
+# enteros -el codigo que corre en la VPS- por una metrica: no compensa.
+#
+# La 2.5.1 se ejecuto entera el 06/09: 167 mutantes sobre red_segura.py,
+# cerrojo.py y storage.py, 100 muertos. Detalle en NC-07. Sus dependencias
+# (parso 0.8.7, pony 0.7.20) declaran soporte de Python 3.13, que es la
+# version del CI - verificado en PyPI, no supuesto.
+mutmut==2.5.1
 
 # SBOM (inventario de materiales de software). ISO/IEC 27001 A.5.9 pide
 # inventario de activos; en una aplicacion Python el activo real son las 111

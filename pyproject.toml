@@ -50,3 +50,58 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
 ]
+
+[tool.mutmut]
+# ---------------------------------------------------------------------------
+# RNF-08 / NC-07. Esta invocacion NUNCA se habia ejecutado: estaba escrita en
+# ci.yml, tras workflow_dispatch, con la nota de "la primera vez hay que
+# lanzarla a mano y mirarla". El 06/09 se lanzo a mano por primera vez y se
+# puso roja al segundo. Encontro DOS fallos, y el segundo es el gordo.
+#
+# FALLO 1 - la opcion no existe. El comando era
+#   mutmut run --paths-to-mutate src/red_segura.py,src/cerrojo.py,...
+# y mutmut 3.x SACO --paths-to-mutate de la linea de comandos: ahora la
+# configuracion vive en fichero. Pero requirements-dev.txt fijaba mutmut==3.7.0
+# mientras el comando estaba escrito para la 2.x. Las dos piezas se fijaron por
+# separado y nadie las ejecuto juntas, que es exactamente como se pudre una
+# promesa escrita (la misma clase de fallo que ADR-004, donde la cadena de
+# proveedores existia solo en la documentacion).
+#
+# FALLO 2 - mutmut 3.x NO PUEDE usarse en este proyecto, y no es cuestion de
+# sintaxis. Probado: la 3.7 copia el codigo a mutants/ y ejecuta la bateria
+# alli, y su instrumentacion lleva dentro un
+#   assert not name.startswith("src.")
+# Este proyecto importa "from src.X import ..." en los 35 ficheros de test, asi
+# que la 3.7 revienta en el primer test. Adaptarse significaria renombrar el
+# paquete y tocar src/ y tests/ enteros -o sea, el codigo que corre en la VPS-
+# para conseguir una metrica. No compensa: se vuelve a la 2.5.1, que es la
+# version para la que estaba escrito el comando desde el principio.
+#
+# Se configura AQUI y no en ci.yml para que "mutmut run" a secas haga lo mismo
+# en local que en el CI. La 2.5.1 lee [tool.mutmut] de este fichero.
+# ---------------------------------------------------------------------------
+
+# Los cuatro modulos criticos: el 11 % del codigo y el 100 % de los controles
+# que fallarian ABRIENDOSE.
+#   red_segura.py (252 lineas) - guardian anti-SSRF
+#   cerrojo.py    (140) - exclusion mutua entre procesos
+#   storage.py    (342) - cifrado en reposo
+#   documentos.py (479) - extension, tamano, bomba de descompresion
+# Sobre las 11.205 lineas de src/ seria inviable.
+paths_to_mutate = "src/red_segura.py,src/cerrojo.py,src/storage.py,src/documentos.py"
+
+# EL RUNNER ES LA PARTE QUE HAY QUE ENTENDER, no un detalle de configuracion.
+#
+# Por defecto mutmut lanza la bateria ENTERA por cada mutante. Son 830 casos y
+# ~55 s por pasada; con los ~300 mutantes de estos cuatro modulos eso son mas
+# de CUATRO HORAS de reloj, y GitHub corta un job a las 6. O sea: aunque se
+# hubiera arreglado solo la sintaxis, el job habria seguido sin terminar nunca.
+# Ese es el fallo que de verdad escondia el error de la opcion inexistente.
+#
+# Se acota a los tests que apuntan a estos cuatro modulos. La pasada baja de
+# ~55 s a menos de 2 s, y la medida sigue significando algo preciso: NO dice
+# "la bateria caza esta mutacion", dice "los tests escritos para este modulo
+# cazan esta mutacion", que es justo lo que RNF-08 quiere saber. Un mutante que
+# sobreviva aqui y muera en otro fichero de test seria un test colocado en el
+# sitio equivocado, no un control protegido.
+runner = "python -m pytest -x -q --assert=plain tests/test_red_segura.py tests/test_redirecciones.py tests/test_cerrojo.py tests/test_storage.py tests/test_clave_cifrado.py tests/test_documentos.py"

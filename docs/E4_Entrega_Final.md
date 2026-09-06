@@ -104,7 +104,7 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_telegram_seguridad.py` | 90 | Las tres puertas, privacidad de logs, comandos, adjuntos |
 | `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
-| `test_red_segura.py` | 38 | Guardián anti-SSRF |
+| `test_red_segura.py` | 39 | Guardián anti-SSRF |
 | `test_resumen_largo.py` | 36 | `/condensar` por bloques |
 | `test_rag.py` | 29 | Memoria semántica, privacidad del índice |
 | `test_readme.py` | 28 | **Que el README no mienta** |
@@ -135,7 +135,7 @@ salió de una auditoría hecha a propósito antes de tocar Telegram.
 | `test_clave_cifrado.py` | 9 | Validación de la clave Fernet |
 | `test_redirecciones.py` | 7 | Que una redirección no salte el guardián |
 | `test_llm_client.py` | 5 | Despacho de tools |
-| **TOTAL** | **830** | |
+| **TOTAL** | **831** | |
 
 ### 3.2 Cómo se ejecutan
 

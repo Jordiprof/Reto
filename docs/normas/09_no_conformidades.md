@@ -17,17 +17,19 @@ Auditoría del **04/09/2026** sobre el commit `35f3445`. Auditor: el propio auto
 
 | Estado | Mayores | Menores | Observaciones | Total |
 |---|---|---|---|---|
-| Cerradas | 0 | 6 | 3 | **9** |
+| Cerradas | 0 | 7 | 3 | **10** |
 | Parcialmente corregidas | 1 | 1 | 0 | **2** |
-| Abiertas | 0 | 3 | 2 | **5** |
+| Abiertas | 0 | 2 | 2 | **4** |
 | **Total** | **1** | **10** | **5** | **16** |
 
-**Segunda pasada, 06/09/2026.** Se cierran NC-06, NC-08, NC-13 y NC-14, y NC-05
-baja de abierta a parcial. Quedan **cuatro abiertas**: NC-07, NC-10, NC-12 y
-NC-15 — y tres de ellas no son cerrables desde el entorno donde se hizo este
-trabajo (`mutmut` necesita la batería en verde, `pip-compile` necesita Python
-3.13, y la revisión independiente no existe con un solo autor). La única que
-depende de una decisión y no de una limitación es **NC-12**.
+**Segunda pasada, 06/09/2026.** Se cierran NC-06, NC-08, NC-13, NC-14 y —al
+final del día, tras lanzar el job a mano por primera vez— **NC-07**, que es la
+que más ha dado de sí: encontró un control sin test en el guardián anti-SSRF.
+NC-05 baja de abierta a parcial. Quedan **tres abiertas**: NC-10, NC-12 y NC-15,
+y dos de ellas no son cerrables desde el entorno donde se hizo este trabajo
+(`pip-compile` necesita Python 3.13, y la revisión independiente no existe con
+un solo autor). La única que depende de una decisión y no de una limitación es
+**NC-12**.
 
 ---
 
@@ -167,32 +169,116 @@ comprobándolo en local antes de subir.
 y `E3 §6.1` ya establece que lo que vale es la mutación, no el porcentaje. Se
 declara como límite conocido, no como tarea pendiente.
 
-### NC-07 · Menor · `RNF-08` exige validación por mutación y se hace a mano
+### NC-07 · Menor · `RNF-08` exige validación por mutación y se hacía a mano
+**CERRADA el 06/09 — y la ejecución encontró tres cosas**
 
 `RNF-08` dice: *"Los controles críticos se validan por mutación, no solo con
 tests en verde"*. Es el requisito más exigente del proyecto y el mejor razonado
 (`E3 §6.1`: dos de las ocho mutaciones sobrevivieron y destaparon tests que no
 comprobaban lo que decían comprobar).
 
-Y se cumple **a mano**. Las ocho mutaciones están escritas en prosa, con fecha,
-pero nada las vuelve a ejecutar. Un requisito verificado a mano se verifica una
+Y se cumplía **a mano**. Las ocho mutaciones están escritas en prosa, con fecha,
+pero nada las volvía a ejecutar. Un requisito verificado a mano se verifica una
 vez y nunca más.
 
-**Preparado, no cerrado**: `mutmut` está fijado en `requirements-dev.txt` y hay
-un job `mutacion` en `ci.yml` acotado a los cuatro módulos críticos
-(`red_segura.py`, `cerrojo.py`, `storage.py`, `documentos.py` — 1.213 líneas;
-sobre las 11.205 de `src/` sería inviable).
+El 04/09 quedó *preparado, no cerrado*: el job `mutacion` de `ci.yml` existía,
+acotado a los cuatro módulos críticos, pero **detrás de `workflow_dispatch` y
+sin haberse ejecutado nunca**, con esta nota escrita al lado: *"la primera
+ejecución hay que lanzarla a mano y mirarla"*. El 06/09 se lanzó. Se puso roja
+al segundo, y a partir de ahí salieron tres cosas.
 
-Ese job **no se ejecuta en cada push**: está detrás de `workflow_dispatch`, para
-lanzarlo a mano. Dos motivos, y el segundo es el que manda: cada mutante exige
-una pasada entera de la batería, y **esta invocación no se ha podido probar
-todavía** — se preparó en un entorno con Python 3.11 y sin red, donde la batería
-no pasa entera. Convertirla en puerta de cada push sin haberla visto correr una
-sola vez sería exactamente el "audit pegado" del que avisa `E3 §6.2`.
+#### 1 · La opción no existía
 
-**Acción**: lanzarlo a mano una vez, mirar cuánto tarda y qué score da, y
-entonces decidir si pasa a ser puerta. Hasta entonces `RNF-08` sigue
-verificándose a mano y esta NC sigue abierta.
+```
+Error: No such option '--paths-to-mutate'.
+Process completed with exit code 2.
+```
+
+`mutmut` **3.x sacó `--paths-to-mutate` de la línea de comandos** y movió la
+configuración a fichero. El comando de `ci.yml` estaba escrito para la 2.x
+mientras `requirements-dev.txt` fijaba `mutmut==3.7.0`. **Las dos piezas se
+escribieron por separado, cada una correcta a su manera, y nadie las ejecutó
+juntas.** Es la misma clase de fallo que `ADR-004`, donde la cadena de
+proveedores existía solo en la documentación: una promesa que nadie ejecuta no
+envejece, se pudre.
+
+#### 2 · Volver a la 3.x no era una opción, y se comprobó ejecutándola
+
+El arreglo evidente era traducir el comando a la sintaxis nueva. Se hizo, y
+entonces `mutmut` 3.7 murió en el primer test:
+
+```
+AssertionError: Failed trampoline hit.
+Module name starts with `src.`, which is invalid
+```
+
+No es un despiste: la 3.x copia el código a `mutants/`, ejecuta la batería allí
+y su instrumentación **lleva dentro un `assert` que prohíbe que el módulo se
+llame `src.algo`**. Los 35 ficheros de test de este proyecto importan
+`from src.X import ...`. Adaptarse significaría renombrar el paquete y tocar
+`src/` y `tests/` enteros — o sea, **el código que corre en la VPS** — para
+conseguir una métrica. No compensa: se baja a `mutmut==2.5.1`, que es la versión
+para la que el comando estaba escrito desde el principio, y cuyas dependencias
+(`parso` 0.8.7, `pony` 0.7.20) declaran soporte de Python 3.13, verificado en
+PyPI y no supuesto.
+
+#### 3 · El fallo gordo, que el primero tapaba
+
+Con la sintaxis arreglada, el job **habría seguido sin terminar nunca**. `mutmut`
+lanza por defecto **la batería entera por cada mutante**: 831 casos, ~55 s por
+pasada, unos 300 mutantes → **más de cuatro horas**, y GitHub corta un job a las
+seis. El error de la opción inexistente escondía un problema de diseño mucho
+peor, y solo apareció al ejecutar.
+
+Se acota el *runner* a los tests que apuntan a esos cuatro módulos (config en
+`[tool.mutmut]` de `pyproject.toml`, con el porqué al lado). La pasada baja de
+~55 s a menos de 2 s. **La medida sigue significando algo preciso**: no dice "la
+batería caza esta mutación", dice "los tests escritos para este módulo cazan
+esta mutación", que es exactamente lo que `RNF-08` quiere saber.
+
+#### El resultado, y un control sin test
+
+Primera medición real del proyecto, sobre `red_segura.py`, `cerrojo.py` y
+`storage.py`:
+
+| | |
+|---|---|
+| Mutantes generados | **167** |
+| Muertos 🎉 | **100** |
+| Supervivientes 🙁 | **67** |
+
+`documentos.py` no entra en esta cifra: sus tests descargan el modelo de
+*embeddings* y el entorno de medición no tenía red. En el CI, que sí la tiene,
+entra.
+
+**La mayoría de los 67 supervivientes son ruido**: `mutmut` 2.x mutila *cada
+literal de cadena* (`"conversations"` → `"XXconversationsXX"`), así que mutar un
+mensaje de log o una clave de diccionario y que nadie se queje no dice nada. Por
+eso el job es **informativo y no puerta**: un control que se pone rojo por ruido
+se aprende a ignorar, y entonces deja de ser un control.
+
+Pero uno de ellos **no era ruido**:
+
+```diff
+- return True   # si no se puede interpretar, se trata como peligrosa
++ return False
+```
+
+Es `_es_interna()` en `red_segura.py`. La doctrina de fallar cerrado, escrita a
+mano en el sitio correcto, con su comentario explicándola… **y ningún test la
+sujetaba**: al invertirla —al hacer que el guardián anti-SSRF *abriera* ante una
+dirección ilegible— los 38 tests de ese fichero seguían en verde.
+
+No es explotable hoy (por el camino público, `ipaddress.ip_address` ya ha
+funcionado antes de llegar ahí), pero el otro llamador, `validar_url`, le pasa
+**lo que devuelva el DNS**, que es un sistema de fuera. Es código defensivo real
+que nadie defendía. Cerrado con `test_una_IP_que_no_se_puede_interpretar_se_trata_como_INTERNA`,
+validado rompiendo el control a propósito y viéndolo en rojo, como manda el
+propio `RNF-08`.
+
+**Y esa es la respuesta a por qué `RNF-08` pedía esto.** La primera ejecución de
+mutación del proyecto encontró un control sin test en el módulo más delicado que
+hay, después de 830 tests en verde y de 79,86 % de cobertura de rama.
 
 ### NC-08 · Menor · LLM03 y LLM10 no se declaran en la tabla OWASP
 **CERRADA**
@@ -381,7 +467,8 @@ Por relación valor/coste, no por gravedad:
 2. **NC-05 parcial** — anclar RF-13, RF-25 y RNF-04, cuyos tests ya existen.
    Trabajo mecánico, sube la trazabilidad de 29/46 a 32/46.
 3. **NC-11** — capacidades en `Herramienta`; convierte un documento en un control.
-4. **NC-07** — lanzar a mano una vez el job `mutacion` y, si el tiempo lo
-   permite, promoverlo a puerta de cada push.
+4. **NC-07** — ✅ hecho el 06/09. La ejecución costó dos arreglos (la opción
+   inexistente y el *runner* que tardaba cuatro horas) y devolvió 100 mutantes
+   muertos de 167, más un control sin test en `red_segura.py`.
 5. **NC-13** — `LICENSE`, cinco minutos.
 6. **NC-06** — cobertura de `main.py`, el trabajo más largo y el menos urgente.

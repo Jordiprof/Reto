@@ -28,7 +28,7 @@ con este comando:
 python -m pytest -q --cov=src --cov-report=term
 ```
 
-Resultado (06/09, tras cerrar `NC-06`): **830 casos**, con **79,86 % de cobertura
+Resultado (06/09, tras cerrar `NC-06`): **831 casos**, con **79,86 % de cobertura
 de rama**. La medición del 04/09 daba 815 casos y 78,01 %.
 
 *Nota metodológica, porque el camino importa.* Una primera medición se hizo en un
@@ -45,7 +45,7 @@ comprobó.
 
 | # | Característica (25010:2023) | Veredicto | Evidencia |
 |---|---|---|---|
-| 1 | Idoneidad funcional | 🟡 Evidencia parcial | 830 casos; 31 de 46 requisitos trazados (§4) |
+| 1 | Idoneidad funcional | 🟡 Evidencia parcial | 831 casos; 31 de 46 requisitos trazados (§4) |
 | 2 | Eficiencia de desempeño | ⬜ No medido | Sin instrumentación de latencia ni de memoria (§9) |
 | 3 | Compatibilidad | 🟡 Evidencia parcial | CLI y bot comparten memoria, con test de invariante |
 | 4 | Interacción (usabilidad) | 🟡 Evidencia parcial | 15 fallos de UX hallados probando en real (`E4 §3.4`) |
@@ -62,7 +62,7 @@ del proyecto, no una nota.
 
 | Métrica | Valor | Cómo se reproduce |
 |---|---|---|
-| Casos de prueba | **830** en 35 ficheros | `python -m pytest --collect-only -q` |
+| Casos de prueba | **831** en 35 ficheros | `python -m pytest --collect-only -q` |
 | Requisitos con verificación trazada | **31 de 46** (67 %) | `python scripts/trazabilidad.py` |
 | Requisitos críticos trazados | **5 de 5** (100 %) | ídem; el script falla si baja de ahí |
 | Casos de uso trazados | **3 de 7** | ídem |

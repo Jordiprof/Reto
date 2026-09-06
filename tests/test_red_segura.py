@@ -299,3 +299,30 @@ def test_el_mensaje_habla_a_JIM_en_SEGUNDA_persona():
     assert "TÚ MISMO" in mensaje
     assert "nadie puede hacerlo por ti" in mensaje
     assert "que JIM añada" not in mensaje, "vuelve a hablar de JIM en tercera persona"
+
+
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-RED")
+@pytest.mark.mutacion("_es_interna devuelve False ante una IP ilegible: sobrevivio")
+def test_una_IP_que_no_se_puede_interpretar_se_trata_como_INTERNA():
+    """HALLAZGO DE LA PRIMERA EJECUCION REAL DE `mutmut` (06/09).
+
+    `_es_interna` termina en un `except ValueError: return True` con el
+    comentario "si no se puede interpretar, se trata como peligrosa". Es la
+    doctrina de fallar cerrado, escrita a mano en el sitio correcto... y
+    NINGUN test la sujetaba: al cambiarlo a `return False` -o sea, al hacer
+    que el guardian abriera ante una direccion ilegible- los 38 tests de este
+    fichero seguian en verde.
+
+    No es explotable hoy: el camino de `es_url_interna` solo llama aqui
+    despues de que `ipaddress.ip_address` ya haya funcionado. Pero el OTRO
+    llamador (`validar_url`, con cada IP que devuelve `_resolver`) recibe lo
+    que diga el DNS, que es un sistema de fuera. Es codigo defensivo real y
+    ahora tiene quien lo defienda.
+
+    Se prueba la funcion privada a proposito: por el camino publico esta rama
+    es inalcanzable, y un test que no puede llegar al codigo que dice
+    verificar es justo la promesa que E2 §1 no admite."""
+    assert red_segura._es_interna("no-soy-una-ip") is True
+    assert red_segura._es_interna("") is True
+    assert red_segura._es_interna("999.999.999.999") is True

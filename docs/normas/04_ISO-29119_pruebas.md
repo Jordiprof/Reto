@@ -66,7 +66,7 @@ local, `ruff` limpio, y todo control nuevo llega con su test.
 | Puerta | Comprobación | Dónde |
 |---|---|---|
 | Lint | `ruff check src tests scripts` | `ci.yml` |
-| Pruebas | Los 830 casos en verde | `ci.yml` |
+| Pruebas | Los 831 casos en verde | `ci.yml` |
 | Cadena de suministro | `pip-audit` sin `continue-on-error` | `ci.yml` |
 | Cobertura | No baja del 79 % de rama | job `normas` |
 | Trazabilidad | `trazabilidad.py --check` sale 0 | job `normas` |
@@ -105,7 +105,7 @@ Ejecución del **04/09/2026**, commit `35f3445`, en la plataforma objetivo
 
 En 54,70 s. Cobertura resultante: **78,01 % de rama**.
 
-**Actualización del 06/09**, al cerrar `NC-06`: la batería sube a **830 casos** en
+**Actualización del 06/09**, al cerrar `NC-06`: la batería sube a **831 casos** en
 35 ficheros con los 15 nuevos de `test_main_cli.py`, y la cobertura a **79,86 %**.
 Desglose por módulo en `03_ISO-25010_calidad.md` §5.
 
@@ -169,15 +169,15 @@ Los tests que detectan cada mutación llevan ahora el marcador
 `@pytest.mark.mutacion(...)`, así que la relación mutación→test dejó de vivir
 solo en prosa.
 
-### 5.2 Qué falla
+### 5.2 Qué fallaba
 
-**Se hizo a mano, una vez, y nada lo vuelve a ejecutar.** `RNF-08` es el
+**Se hizo a mano, una vez, y nada lo volvía a ejecutar.** `RNF-08` es el
 requisito más exigente del proyecto y su verificación caducó el día que se
-escribió. Es la no conformidad `NC-07`.
+escribió. Fue la no conformidad `NC-07`, **cerrada el 06/09**.
 
-### 5.3 Qué se propone
+### 5.3 Automatizado: `mutmut` sobre los cuatro módulos críticos
 
-`mutmut` acotado a los cuatro módulos donde vive la seguridad:
+Acotado a los cuatro módulos donde vive la seguridad:
 
 | Módulo | Líneas | Qué protege |
 |---|---|---|
@@ -192,12 +192,47 @@ entera de la batería. Acotarlo a 1.213 líneas —el 11 % del código, y el 100
 los controles que fallarían abriéndose— es la única forma de que esto llegue a
 ejecutarse de verdad.
 
-**Estado real, sin adornos**: el job `mutacion` existe en `ci.yml` pero está
-detrás de `workflow_dispatch`, no en la puerta de cada push. La invocación **no
-se ha llegado a probar**: se preparó en un entorno con Python 3.11 y sin red,
-donde la batería no pasa entera. Hay que lanzarla a mano una vez y mirarla antes
-de convertirla en puerta. Hasta entonces `NC-07` sigue abierta y `RNF-08` sigue
-verificándose a mano.
+**Cómo se ejecuta.** `mutmut run`, a secas. Qué se muta y con qué tests se
+comprueba vive en `[tool.mutmut]` de `pyproject.toml`, para que el comando sea
+literalmente el mismo en local y en el CI: si divergen, esto vuelve a ser una
+promesa sin probar.
+
+**El *runner* es la decisión de diseño, no un detalle.** Por defecto `mutmut`
+lanza la batería entera por cada mutante: 831 casos × ~55 s × ~300 mutantes son
+**más de cuatro horas**, y GitHub corta un job a las seis. Se acota a los tests
+que apuntan a esos cuatro módulos y la pasada baja a menos de 2 s. La medida
+sigue siendo precisa: no dice *"la batería caza esta mutación"*, dice **"los
+tests escritos para este módulo cazan esta mutación"**, que es justo lo que
+`RNF-08` pregunta.
+
+**Primera medición real (06/09)**, sobre `red_segura.py`, `cerrojo.py` y
+`storage.py` — `documentos.py` queda fuera de esta cifra porque sus tests
+descargan el modelo de *embeddings* y el entorno de medición no tenía red:
+
+| | |
+|---|---|
+| Mutantes generados | **167** |
+| Muertos 🎉 | **100** |
+| Supervivientes 🙁 | **67** |
+
+**Qué significa ese 67, dicho con precisión.** La mayoría es ruido: `mutmut` 2.x
+mutila *cada literal de cadena*, así que cambiar un mensaje de log o una clave de
+diccionario y que nadie proteste no informa de nada. Por eso el job **informa y
+no vigila** (`|| true` en `ci.yml`): un control que se pone rojo por ruido se
+aprende a ignorar, y ahí deja de ser un control. Se fijará umbral cuando se sepa
+cuántos supervivientes son reales.
+
+**Y uno no era ruido.** `_es_interna()` de `red_segura.py` termina en un
+`except ValueError: return True` — fallar cerrado ante una dirección ilegible,
+con su comentario explicándolo. Invertirlo a `return False` **dejaba los 38 tests
+del fichero en verde**: la doctrina estaba escrita y nada la sujetaba. Cerrado
+con un test propio, validado rompiendo el control y viéndolo en rojo. La primera
+ejecución de mutación del proyecto encontró un control sin test en el módulo más
+delicado que hay, después de 830 casos en verde y 79,86 % de cobertura de rama.
+
+El job sigue detrás de `workflow_dispatch` y no en la puerta de cada push: aun
+acotado, sigue siendo caro para un push, y su valor está en mirarlo, no en que
+frene nada.
 
 ### 5.4 La mutación aplicada a este propio kit
 
@@ -246,4 +281,4 @@ test automático. Esa es la parte que sí se repite.
 | Informe de resultados | ✅ §3 |
 | Trazabilidad requisito → prueba | 🟡 31 de 46 (`NC-05`) |
 | Gestión de incidencias de prueba | 🟡 En el diario y en los ADR, sin registro formal |
-| Medición y mejora del proceso | 🟡 Mutación existe, sin automatizar (`NC-07`) |
+| Medición y mejora del proceso | ✅ Mutación automatizada: 167 mutantes, 100 muertos (`NC-07` cerrada) |

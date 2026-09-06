@@ -209,14 +209,16 @@ jobs:
   #
   #   1. Cada mutante exige una pasada entera de la bateria. Acotado a los 4
   #      modulos criticos (1.213 lineas) sigue siendo caro para un push.
-  #   2. Esta invocacion NO se ha podido probar todavia: se preparo en un
-  #      entorno con Python 3.11 y sin red, donde la bateria no pasa entera.
-  #      Meterla en la puerta de cada push sin haberla visto correr una vez
-  #      seria justo lo que E3 §6.2 llama fiarse de un audit pegado.
+  #   2. Sobrevive de momento en modo INFORMATIVO ("|| true" abajo): mide y
+  #      publica el resultado, pero no tumba nada. Un control que se pone
+  #      rojo por ruido se aprende a ignorar, y entonces ya no es un control.
   #
-  # La PRIMERA ejecucion hay que lanzarla a mano y mirarla. Cuando se sepa
-  # cuanto tarda y que score da, se decide si pasa a ser una puerta de verdad.
-  # Mientras tanto, RNF-08 sigue verificandose a mano: ver NC-07.
+  # LA PRIMERA EJECUCION REAL FUE EL 06/09, y valio para lo que estaba puesta:
+  # se puso roja al segundo con "No such option: --paths-to-mutate" y, al
+  # arreglarlo, aparecio el fallo de verdad -el runner por defecto lanza los
+  # 830 tests por CADA mutante, o sea mas de cuatro horas, y GitHub corta a
+  # las seis-. Los dos arreglos y sus motivos estan en [tool.mutmut] de
+  # pyproject.toml. Encontro ademas un control sin test: ver NC-07.
   # ---------------------------------------------------------------------------
   mutacion:
     if: github.event_name == 'workflow_dispatch'
@@ -234,14 +236,26 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Mutar los cuatro modulos criticos
-        # red_segura.py (252 lineas) - guardian anti-SSRF
-        # cerrojo.py    (140) - exclusion mutua entre procesos
-        # storage.py    (342) - cifrado en reposo
-        # documentos.py (479) - extension, tamaño, bomba de descompresion
+        # QUE SE MUTA y CON QUE TESTS se comprueba esta en [tool.mutmut] de
+        # pyproject.toml, con el porque escrito al lado. Aqui va el comando a
+        # secas para que sea LITERALMENTE el mismo que se ejecuta en local:
+        # si diverge, esto vuelve a ser una promesa sin probar.
         #
-        # El 11 % del codigo, y el 100 % de los controles que fallarian
-        # ABRIENDOSE. Sobre las 11.205 lineas de src/ seria inviable.
+        # Antes decia "mutmut run --paths-to-mutate src/a.py,src/b.py". Esa
+        # opcion no existe en mutmut 3.x y el job murio al segundo la primera
+        # vez que se lanzo a mano, el 06/09. Ver NC-07 y requirements-dev.txt.
+        #
+        # "|| true": mutmut sale con codigo 2 cuando algun mutante SOBREVIVE,
+        # y eso no es un fallo del CI, es el resultado de la medida. Hoy
+        # sobreviven 67 de 167 y casi todos son literales de texto (mutmut 2.x
+        # mutila cada cadena: mensajes de log, nombres de carpeta, claves de
+        # diccionario). Poner el job en rojo por eso lo convertiria en ruido
+        # que se aprende a ignorar, que es como muere un control. El paso
+        # siguiente IMPRIME el resultado, que es a lo que se viene.
+        #
+        # Cuando se sepa cuantos supervivientes son de verdad -y no ruido de
+        # cadenas- se podra fijar un umbral y quitar el "|| true". Hasta
+        # entonces esto informa, no vigila, y se dice claramente.
         run: |
-          mutmut run --paths-to-mutate \
-            src/red_segura.py,src/cerrojo.py,src/storage.py,src/documentos.py
+          mutmut run || true
           mutmut results

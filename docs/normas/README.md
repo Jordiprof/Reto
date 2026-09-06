@@ -26,7 +26,7 @@ existiera esta carpeta:
 
 Aplicado aquí: **ningún ✅ sin evidencia que se pueda ejecutar**. Donde no hay
 evidencia, el documento dice "no medido" o abre una no conformidad. Hay **16**
-en `09_no_conformidades.md` — **9 cerradas, 2 a medias y 5 abiertas** tras la
+en `09_no_conformidades.md` — **10 cerradas, 2 a medias y 4 abiertas** tras la
 segunda pasada del 06/09. Ese número es el dato más honesto del kit.
 
 ## Los documentos
@@ -37,7 +37,7 @@ segunda pasada del 06/09. Ese número es el dato más honesto del kit.
 | 01 | [Requisitos](01_ISO-29148_requisitos.md) | ISO/IEC/IEEE 29148 | Los 46 identificadores de E1 auditados uno a uno |
 | 02 | [Procesos](02_ISO-12207_procesos.md) | ISO/IEC/IEEE 12207 | Procesos de ciclo de vida ejecutados y N/A declarados |
 | 03 | [Calidad de producto](03_ISO-25010_calidad.md) | ISO/IEC 25010 | Las 9 características, con métricas medidas |
-| 04 | [Pruebas](04_ISO-29119_pruebas.md) | ISO/IEC/IEEE 29119 | Política, estrategia y reporte sobre 830 casos |
+| 04 | [Pruebas](04_ISO-29119_pruebas.md) | ISO/IEC/IEEE 29119 | Política, estrategia y reporte sobre 831 casos |
 | 05 | [Declaración de aplicabilidad](05_ISO-27001_declaracion_aplicabilidad.md) | ISO/IEC 27001 Anexo A | Controles aplicables, implantados y descartados |
 | 06 | [Gestión de IA](06_ISO-42001_gestion_IA.md) | ISO/IEC 42001 · 23894 | Riesgos propios de un sistema con LLM |
 | 07 | [Matriz de trazabilidad](07_matriz_trazabilidad.md) | 29148 §5.2.8 | **Generado**. Requisito → test, en los dos sentidos |
@@ -77,7 +77,9 @@ Lo resumido; el detalle en `09_no_conformidades.md`.
   era el agujero al 17 %; con `test_main_cli.py` sube al 34 % (`NC-06`).
 - **La validación por mutación era manual.** `RNF-08` la exige y se hacía a
   mano, ocho mutaciones escritas en prosa en `E3 §6.1`. Un requisito verificado
-  a mano no se vuelve a verificar nunca.
+  a mano no se vuelve a verificar nunca. Automatizada el 06/09: **167 mutantes,
+  100 muertos**. Y en la primera ejecución encontró un **control sin test** en
+  el guardián anti-SSRF (`NC-07`).
 - **`ADR-006` define una fórmula de riesgo que el código no calcula.** Vive solo
   en el documento.
 
