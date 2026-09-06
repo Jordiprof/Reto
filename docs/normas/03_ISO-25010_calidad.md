@@ -147,7 +147,7 @@ El detalle control a control está en `05_ISO-27001_declaracion_aplicabilidad.md
 | Proporción test:código | **1,08 : 1** | — |
 | Incidencias de lint | **0** | `ruff check src tests scripts` |
 | Decisiones de arquitectura registradas | 6 ADR | `docs/ADR/` |
-| Decisiones fechadas en el diario | 173 | `docs/diario_decisiones.md` |
+| Decisiones fechadas en el diario | 174 | `docs/diario_decisiones.md` |
 | Dependencias fijadas con hash | 111 de 111 | `requirements-lock.txt` |
 
 La proporción 1,08:1 sustituye al 1,10:1 que declaraba `E4 §1.1`: la diferencia
@@ -156,7 +156,7 @@ calidad — 12.000 líneas de test pueden ejercitar el 30 % del código. Por eso
 dato que manda es el 78 % de §5 y no esta proporción.
 
 Lo que sí es un activo de mantenibilidad poco común y conviene decirlo: el diario
-de decisiones con 173 entradas fechadas explica **por qué** está cada cosa como
+de decisiones con 174 entradas fechadas explica **por qué** está cada cosa como
 está. Eso es lo que ISO 12207 llama gestión de la configuración y de la decisión,
 y aquí existe desde antes de que nadie lo pidiera.
 

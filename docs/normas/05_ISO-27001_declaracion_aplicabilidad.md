@@ -52,7 +52,7 @@ Leyenda: ✅ implantado · 🟡 parcial · ❌ no implantado
 
 | Control | Estado | Evidencia |
 |---|---|---|
-| A.6.3 Concienciación y formación | 🟡 | No aplica en su forma organizativa. Su equivalente real es el diario de decisiones: 173 entradas que explican por qué está cada cosa como está |
+| A.6.3 Concienciación y formación | 🟡 | No aplica en su forma organizativa. Su equivalente real es el diario de decisiones: 174 entradas que explican por qué está cada cosa como está |
 | A.6.8 Notificación de eventos de seguridad | ❌ | No hay `SECURITY.md` ni canal declarado. `NC-13` |
 
 Los otros 6 (selección de personal, condiciones de empleo, medidas

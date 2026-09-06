@@ -2407,8 +2407,8 @@ pygments==2.20.0 \
     #   pytest
     #   rich
 pypdf==6.17.0 \
-    --hash=sha256:5ddc34857a5e31cf708c163929f61a9ba4bd357a8850e49fc4e846ced527b51f \
-    --hash=sha256:c1081e9731038124a9127e1d27848952b86fb32b2f45f8f1b94adc7f0817a6ac
+    --hash=sha256:097ad0d829778ec5b615aeaa5c6da4b6cac4992f8fd80b56f98a1a8c006573bb \
+    --hash=sha256:5bd827266a21553b74d910e350131a6227b72f2ab4209bf372814b8195fa11c5
     # via -r requirements-lock.txt
 pypika==0.51.1 \
     --hash=sha256:77985b4d7ce71b9905255bf12468cf598349e98837c037541cfc240e528aec46 \

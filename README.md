@@ -293,6 +293,22 @@ que protege del descuido, **no de quien administra el hierro**.
 | [docs/E3_Estado_Arte_Planificacion.md](docs/E3_Estado_Arte_Planificacion.md) | Estado del arte, comparativas, OWASP LLM y plan de fases |
 | [docs/E4_Entrega_Final.md](docs/E4_Entrega_Final.md) | Entrega final: cifras, tests, cómo ejecutar, límites y reflexión |
 | [docs/ADR/](docs/ADR/) | Las 6 decisiones de arquitectura (ADR-001 … ADR-006) |
+| [docs/normas/](docs/normas/) | **Kit de normas ISO**: el proyecto evaluado contra 29148, 12207, 25010, 29119, 27001 y 42001, en formato de auditoría |
+| [SECURITY.md](SECURITY.md) | Cómo reportar un fallo, alcance, y las CVE aceptadas con su motivo |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Las normas de abajo, ampliadas, y el procedimiento ante una CVE |
+
+El kit de normas es **una autoevaluación, no una certificación**, y lo dice él mismo en la
+primera línea. Su parte útil no son los doce documentos: es
+[`scripts/trazabilidad.py`](scripts/trazabilidad.py), que se pone **rojo** si un test apunta a un
+requisito que no existe, si un requisito crítico pierde su verificación, o si un conteo declarado
+en la documentación deja de cuadrar con la realidad. Se ejecuta en cada CI:
+
+```bash
+python scripts/trazabilidad.py --check
+```
+
+Las **no conformidades abiertas** están publicadas, no escondidas:
+[docs/normas/09_no_conformidades.md](docs/normas/09_no_conformidades.md).
 
 ## Normas del proyecto
 
@@ -300,6 +316,15 @@ que protege del descuido, **no de quien administra el hierro**.
 2. **Toda utilidad sin IA tiene tests** (norma activa desde el Nivel Intermedio).
 3. **Toda excepción queda registrada** en `logs/`.
 4. Los secretos viven en `.env` (gitignored); el repo solo contiene `.env.example`.
+
+Y dos doctrinas de verificación, que son lo que de verdad distingue a este proyecto:
+
+> **Un control sin test es una promesa** ([E2 §1](docs/E2_Arquitectura.md)).
+> **Un test que nunca has visto fallar no demuestra nada** — por eso los controles críticos se
+> rompen a propósito y se comprueba que un test se pone rojo
+> (`RNF-08`, [E3 §6.1](docs/E3_Estado_Arte_Planificacion.md)).
+
+Ampliadas en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Git
 
