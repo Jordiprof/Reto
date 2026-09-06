@@ -195,7 +195,7 @@
   <div class="cifras">
     <div class="cifra"><span class="n">11.205</span><span class="q">líneas de código</span></div>
     <div class="cifra"><span class="n">12.478</span><span class="q">líneas de test</span></div>
-    <div class="cifra"><span class="n">830</span><span class="q">tests en verde</span></div>
+    <div class="cifra"><span class="n">831</span><span class="q">tests en verde</span></div>
     <div class="cifra"><span class="n">79,9<span style="font-size:11pt;">%</span></span><span class="q">cobertura de rama</span></div>
   </div>
   <div class="cifras">
@@ -473,7 +473,7 @@
 │   ├── voz.py                 <span class="c">  322 · transcripción y síntesis</span>
 │   └── config.py              <span class="c">  606 · configuración, catálogo, listas blancas</span>
 │
-├── <span class="d">tests/</span>                      <span class="c">12.478 líneas · 35 ficheros · 830 tests</span>
+├── <span class="d">tests/</span>                      <span class="c">12.478 líneas · 35 ficheros · 831 tests</span>
 │   └── ...                    <span class="c">uno por módulo, más los de seguridad y los de</span>
 │                              <span class="c">contrato (hay uno que comprueba que el README no mienta)</span>
 │
@@ -785,9 +785,28 @@
   <p>Ese ejercicio ha encontrado tests malos míos más de una vez. Es incómodo y es el rato mejor
   invertido de todo el proyecto.</p>
 
+  <div class="caja bien">
+    <h4>Y el día que lo automaticé, me pilló a mí</h4>
+    <p>Durante meses esas roturas las hice a mano, una a una. Automatizarlas es dejar que una
+    herramienta modifique el código sola, cientos de veces, y compruebe cada vez si algún test
+    protesta. La primera ejecución generó <strong>167 mutaciones</strong> sobre tres de los
+    módulos críticos y <strong>mató 100</strong>.</p>
+    <p>De las que sobrevivieron, casi todas eran ruido —la herramienta también cambia mensajes
+    de texto, y que nadie proteste por eso no significa nada—. <strong>Pero una no.</strong> En
+    el guardián de URLs hay una línea que dice: <em>si esta dirección no se puede interpretar,
+    trátala como peligrosa</em>. Es la doctrina de fallar cerrado, escrita a mano, en el sitio
+    correcto, con su comentario al lado explicándola. La herramienta la invirtió —o sea, hizo
+    que el guardián <em>abriera</em> ante una dirección ilegible— y <strong>los 38 tests de ese
+    fichero siguieron en verde</strong>.</p>
+    <p>Ochocientos treinta tests pasando y un 79,86 % de cobertura no lo habían visto. La
+    primera pasada de mutación, sí. <strong>Eso es exactamente lo que esa regla existía para
+    encontrar</strong>, y me alegra más haberlo encontrado que no haber tenido nada que
+    encontrar.</p>
+  </div>
+
   <h3>Los números, y de dónde salen</h3>
   <div class="cifras">
-    <div class="cifra"><span class="n">830</span><span class="q">casos de prueba</span></div>
+    <div class="cifra"><span class="n">831</span><span class="q">casos de prueba</span></div>
     <div class="cifra"><span class="n">35</span><span class="q">ficheros de test</span></div>
     <div class="cifra"><span class="n">1,11:1</span><span class="q">test por código</span></div>
     <div class="cifra"><span class="n">79,86<span style="font-size:11pt;">%</span></span><span class="q">cobertura de rama</span></div>
@@ -926,7 +945,7 @@
   </div>
 
   <h3>Qué encontré</h3>
-  <p><strong>Dieciséis no conformidades</strong>: nueve cerradas, dos a medias y cinco abiertas.
+  <p><strong>Dieciséis no conformidades</strong>: diez cerradas, dos a medias y cuatro abiertas.
   Ese número es el dato más honesto de todo el trabajo. Las que más me dolieron:</p>
   <ul>
     <li><strong>La documentación envejecía en silencio.</strong> Mi tabla de tests declaraba 784
@@ -973,10 +992,6 @@
   <table>
     <tr><th style="width:34%">Lo que falta</th><th>Por qué no lo he cerrado</th></tr>
     <tr>
-      <td><b>Puntuación de mutación automática</b></td>
-      <td>La herramienta necesita una batería <b>en verde</b> para calibrarse, y en el entorno donde lo intenté cinco tests fallan por no tener salida a internet (se descargan el modelo de <i>embeddings</i>). Una puntuación sacada de una base rota no vale nada, así que preferí no tenerla a tenerla falsa. La validación por mutación sigue haciéndose, a mano.</td>
-    </tr>
-    <tr>
       <td><b>Detector de secretos en el CI</b></td>
       <td>Meterlo exige fijar la acción por su identificador exacto de commit, y la API de GitHub me devolvió un error de permisos desde ese entorno. <b>Inventarme ese identificador habría roto a la vez el CI y la norma que estoy intentando cumplir.</b> Preferí dejarlo abierto y escrito.</td>
     </tr>
@@ -999,15 +1014,21 @@
   </table>
 
   <h3>Por qué paré ahí y no más allá</h3>
-  <p>Porque cada una de esas seis cosas tiene un motivo concreto, verificable y escrito, y
-  ninguna es «no me dio tiempo». Podría haberlas cerrado todas a medias: poner una puntuación de
-  mutación calculada sobre una base rota, inventarme el identificador que no pude consultar,
-  llamar «independiente» a una revisión que hice yo. Habrían quedado seis casillas marcadas y
-  el documento habría dejado de valer.</p>
-  <p>Prefiero entregar <strong>cinco no conformidades abiertas y explicadas</strong> que
+  <p>Porque cada una de esas cinco cosas tiene un motivo concreto, verificable y escrito, y
+  ninguna es «no me dio tiempo». Podría haberlas cerrado todas a medias: inventarme el
+  identificador que no pude consultar, llamar «independiente» a una revisión que hice yo,
+  marcar como resuelta una fórmula que el código no calcula. Habrían quedado cinco casillas
+  marcadas y el documento habría dejado de valer.</p>
+  <p>Prefiero entregar <strong>cuatro no conformidades abiertas y explicadas</strong> que
   dieciséis cerradas y tres de ellas mentira. Si algo he aprendido en estos dos meses es que en
   cuanto un documento miente una vez, deja de servir para todo lo demás — y este proyecto tiene
   demasiada documentación como para permitirse eso.</p>
+  <p>Y hay una que sí se cerró, precisamente por lanzarla en vez de darla por buena: la
+  validación por mutación llevaba semanas escrita en el CI y sin ejecutarse nunca. El día que
+  la lancé se puso roja a los dos segundos, y arreglarla destapó otro fallo peor detrás —el
+  proceso habría tardado más de cuatro horas y el sistema lo habría cortado— y, al final del
+  todo, un control sin test en el guardián de URLs. <strong>Tres fallos que solo existían
+  porque nadie había ejecutado aquello.</strong></p>
 </section>
 
 <!-- ============ 11 ============ -->
