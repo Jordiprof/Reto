@@ -1,21 +1,32 @@
-MIT License
+Copyright (c) 2026 Jordi Izquierdo Montalbán. Todos los derechos reservados.
 
-Copyright (c) 2026 Jordi
+PROYECTO PRIVADO — NO SE CONCEDE LICENCIA DE USO
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Este repositorio y todo su contenido —código fuente, documentación, diario de
+decisiones, pruebas y material asociado— son obra original de su autor y están
+protegidos por la legislación de propiedad intelectual.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Se elabora en el marco de las prácticas del Grado Superior de Desarrollo de
+Aplicaciones Multiplataforma, como respuesta a un reto de aprendizaje propuesto
+por DataQuantum, y se comparte únicamente con fines de evaluación.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+NO se concede, ni expresa ni implícitamente, autorización para:
+
+  - copiar, reproducir o distribuir este trabajo, total o parcialmente;
+  - crear obras derivadas;
+  - usarlo con fines comerciales o formativos;
+  - incorporarlo a otro proyecto, publicación o repositorio;
+  - emplearlo como material de entrenamiento de modelos.
+
+Lo único permitido sin permiso previo es LEERLO para evaluarlo.
+
+Cualquier otro uso requiere autorización previa y por escrito del autor.
+
+Contacto: a través del canal por el que se te haya facilitado este material.
+
+---
+
+Nota sobre las dependencias: este proyecto utiliza librerías de terceros, cada
+una con su propia licencia, listadas en requirements.txt y requirements-lock.txt.
+Esta licencia se aplica al trabajo original del autor, no a esas dependencias,
+que conservan sus términos respectivos.

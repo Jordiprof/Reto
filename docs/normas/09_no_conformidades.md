@@ -302,7 +302,7 @@ Las "Normas del proyecto" de `README.md:297-302` ya hacían de facto de
 
 | Fichero | Qué resuelve |
 |---|---|
-| `LICENSE` | MIT. **Decisión legal del autor: conviene confirmarla antes de publicar**, porque una vez publicada la gente puede fiarse de ella |
+| `LICENSE` | **Propietario**: todos los derechos reservados, y lo único permitido sin permiso previo es leerlo para evaluarlo. Se escribió MIT en la primera pasada y **el autor lo corrigió el mismo día**: MIT autoriza copiar, modificar y redistribuir, que es justo lo contrario de lo que se quiere aquí — el trabajo se comparte para que se evalúe, no para que se reutilice. Queda anotado porque el error importa: una licencia publicada es una promesa de la que la gente se fía |
 | `SECURITY.md` | A.6.8: canal de reporte, alcance, y las cuatro CVE aceptadas con su motivo |
 | `CONTRIBUTING.md` | Recoge las 4 normas del proyecto y las 2 doctrinas de verificación, que estaban repartidas |
 | `.github/CODEOWNERS` | A.5.2: quién responde de qué. Con un autor, es una línea |

@@ -330,3 +330,12 @@ Ampliadas en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Ramas `feature/*` → `main`, con un tag por nivel completado:
 `nivel-basico` · `nivel-intermedio` · `nivel-avanzado` · `nivel-experto`.
+
+## Licencia
+
+Proyecto **privado**. Todos los derechos reservados — ver [LICENSE](LICENSE).
+
+Se comparte con fines de evaluación: lo único permitido sin permiso previo por
+escrito es **leerlo**. No se concede autorización para copiarlo, redistribuirlo,
+crear obras derivadas, usarlo con fines comerciales o formativos, ni emplearlo
+como material de entrenamiento de modelos.
