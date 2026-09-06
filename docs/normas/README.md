@@ -25,8 +25,8 @@ existiera esta carpeta:
 > *Seguro sí, privado a medias, confidencial no.* — `E4 §1.0`
 
 Aplicado aquí: **ningún ✅ sin evidencia que se pueda ejecutar**. Donde no hay
-evidencia, el documento dice "no medido" o abre una no conformidad. Hay 15
-en `09_no_conformidades.md` — **8 cerradas, 2 a medias y 5 abiertas** tras la
+evidencia, el documento dice "no medido" o abre una no conformidad. Hay **16**
+en `09_no_conformidades.md` — **9 cerradas, 2 a medias y 5 abiertas** tras la
 segunda pasada del 06/09. Ese número es el dato más honesto del kit.
 
 ## Los documentos
@@ -37,12 +37,12 @@ segunda pasada del 06/09. Ese número es el dato más honesto del kit.
 | 01 | [Requisitos](01_ISO-29148_requisitos.md) | ISO/IEC/IEEE 29148 | Los 46 identificadores de E1 auditados uno a uno |
 | 02 | [Procesos](02_ISO-12207_procesos.md) | ISO/IEC/IEEE 12207 | Procesos de ciclo de vida ejecutados y N/A declarados |
 | 03 | [Calidad de producto](03_ISO-25010_calidad.md) | ISO/IEC 25010 | Las 9 características, con métricas medidas |
-| 04 | [Pruebas](04_ISO-29119_pruebas.md) | ISO/IEC/IEEE 29119 | Política, estrategia y reporte sobre 815 casos |
+| 04 | [Pruebas](04_ISO-29119_pruebas.md) | ISO/IEC/IEEE 29119 | Política, estrategia y reporte sobre 830 casos |
 | 05 | [Declaración de aplicabilidad](05_ISO-27001_declaracion_aplicabilidad.md) | ISO/IEC 27001 Anexo A | Controles aplicables, implantados y descartados |
 | 06 | [Gestión de IA](06_ISO-42001_gestion_IA.md) | ISO/IEC 42001 · 23894 | Riesgos propios de un sistema con LLM |
 | 07 | [Matriz de trazabilidad](07_matriz_trazabilidad.md) | 29148 §5.2.8 | **Generado**. Requisito → test, en los dos sentidos |
 | 08 | [Registro de riesgos](08_registro_riesgos.md) | 27005 · 23894 | Riesgos con ID, probabilidad, impacto y residual |
-| 09 | [No conformidades](09_no_conformidades.md) | 19011 cl.6 | Los 15 hallazgos, con plan de acción |
+| 09 | [No conformidades](09_no_conformidades.md) | 19011 cl.6 | Los 16 hallazgos, con plan de acción |
 | 10 | [Índice de identificadores](10_indice_de_identificadores.md) | — | Las familias AUD-, SEG-, DEP-, LOG-, AUT- |
 
 ## Lo único que aquí es ejecutable
@@ -73,8 +73,8 @@ Lo resumido; el detalle en `09_no_conformidades.md`.
   están trazados.
 - **Los cinco requisitos críticos** (RF-02, RF-08, RF-11, RF-17, RF-23) están
   los cinco trazados, y el script se pone rojo si uno se queda sin test.
-- **La cobertura nunca se había medido**: 78 % de rama. `src/main.py` está al
-  17 %, que es el agujero real y ahora está declarado.
+- **La cobertura nunca se había medido**: ahora **79,86 % de rama**. `src/main.py`
+  era el agujero al 17 %; con `test_main_cli.py` sube al 34 % (`NC-06`).
 - **La validación por mutación era manual.** `RNF-08` la exige y se hacía a
   mano, ocho mutaciones escritas en prosa en `E3 §6.1`. Un requisito verificado
   a mano no se vuelve a verificar nunca.
@@ -83,6 +83,6 @@ Lo resumido; el detalle en `09_no_conformidades.md`.
 
 ## Fecha y alcance temporal
 
-Auditoría del **04/09/2026**, sobre el commit `35f3445` de la rama
-`claude/iso-standards-kit-5vkemf`. Las cifras de cobertura y de conteo de tests
-son de esa ejecución; se regeneran solas en cada CI.
+Auditoría del **04/09/2026** sobre el commit `35f3445`, con una **segunda pasada
+el 06/09** que cerró NC-06, NC-08, NC-13 y NC-14 y abrió NC-16. Las cifras de
+cobertura y de conteo de tests se regeneran solas en cada CI.

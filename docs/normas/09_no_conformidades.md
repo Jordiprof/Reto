@@ -19,8 +19,8 @@ Auditoría del **04/09/2026** sobre el commit `35f3445`. Auditor: el propio auto
 |---|---|---|---|---|
 | Cerradas | 0 | 6 | 3 | **9** |
 | Parcialmente corregidas | 1 | 1 | 0 | **2** |
-| Abiertas | 0 | 3 | 1 | **4** |
-| **Total** | **1** | **10** | **4** | **15** |
+| Abiertas | 0 | 3 | 2 | **5** |
+| **Total** | **1** | **10** | **5** | **16** |
 
 **Segunda pasada, 06/09/2026.** Se cierran NC-06, NC-08, NC-13 y NC-14, y NC-05
 baja de abierta a parcial. Quedan **cuatro abiertas**: NC-07, NC-10, NC-12 y
@@ -326,6 +326,38 @@ y los tres informes de auditoría dejaron sus hallazgos en el diario y en el
 código (familias `AUD-`, `SEG-`, inventariadas en `10_indice_de_identificadores.md`).
 Ninguno de esos dos casos sostiene un control de seguridad, que era lo que hacía
 grave a este hallazgo.
+
+### NC-16 · Observación · Las acciones del CI apuntan a Node.js 20, que GitHub retira
+
+Detectada el 06/09 leyendo los avisos de una ejecución **en verde**. GitHub
+Actions anota, en cada `run`:
+
+> *Node.js 20 is deprecated. The following actions target Node.js 20 but are
+> being forced to run on Node.js 24:* `actions/checkout@11d5960…`,
+> `actions/setup-python@a26af69…`
+
+Las dos acciones están **bien fijadas por SHA**, como exige `DEP-05`, y esa
+decisión no se discute: un tag es móvil y un SHA no. El efecto secundario es que
+quedan congeladas en la versión que se fijó el 02/08, y esa versión declara
+Node 20 en su `action.yml`.
+
+**Hoy no rompe nada**: GitHub las está forzando a correr sobre Node 24 mientras
+dura la transición. El problema llega el día que retiren ese modo de
+compatibilidad — y entonces el CI se cae de golpe, sin que nadie haya tocado el
+proyecto.
+
+Es la contrapartida honesta de fijar por SHA: **ganas reproducibilidad y pierdes
+las actualizaciones automáticas**, incluidas las que arreglan cosas. `DEP-05`
+sigue siendo la decisión correcta; lo que hace falta es acordarse de renovar.
+
+**Acción propuesta**: resolver los SHA nuevos **contra la API de GitHub** —el
+mismo método del 02/08, y no copiarlos de ningún sitio, que es la lección del
+30/07 con la lista de dominios— y actualizar **también** el comentario `# v4` /
+`# v5` de al lado, que es lo único que permite saber qué versión es sin ir a
+buscar el hash.
+
+Se clasifica como Observación y no como Menor porque no incumple ningún
+requisito declarado: es deuda con fecha de caducidad, no un control ausente.
 
 ### NC-15 · Menor · No hay revisión independiente de la seguridad
 
