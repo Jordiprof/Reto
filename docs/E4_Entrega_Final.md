@@ -1,14 +1,23 @@
 # E4 — Entrega Final
 ## JIMMY — Asistente personal con IA (CLI + Telegram)
 
-**Versión:** 1.1
-**Fecha:** 15/07/2026 (v0.1, esqueleto) → 31/07/2026 (v1.0) → 07/08/2026 (**v1.1**)
+**Versión:** 1.2
+**Fecha:** 15/07/2026 (v0.1, esqueleto) → 31/07/2026 (v1.0) → 07/08/2026 (v1.1) → 08/09/2026 (**v1.2**)
 **Autor:** Jordi
-**Estado:** Entregado — Fase 5 cerrada
+**Estado:** Entregado — Fase 5 cerrada, con mantenimiento post-cierre documentado
 
 > **v1.1 (07/08):** actualizado tras siete días más de trabajo que la v1.0 no recogía —
 > voz, cerrojo entre procesos, `/condensar`, reordenación de ADR-001, dos auditorías de
 > seguridad y las baterías de prueba manual. Los tests pasaron de 374 a 784.
+
+> **v1.2 (08/09):** un mes de mantenimiento post-cierre que la v1.1 no recogía. Lo más
+> relevante: **el hosting 24/7 ya está resuelto** (VPS Hetzner desde el 21/08, con aviso
+> automático si el bot se cae — antes era la única pieza abierta en §8); la cobertura de
+> rama se mide por primera vez (79,86 %, umbral en CI); la primera ejecución real de
+> mutación encuentra y cierra un control sin test en el guardián anti-SSRF (NC-07); kit de
+> auto-evaluación contra cuatro normas ISO (`docs/normas/`), con 16 no conformidades
+> detectadas y 10 cerradas; y la licencia pasa de MIT a propietaria, corrigiendo una
+> contradicción con el propio objetivo del reto. Los tests pasaron de 784 a 831.
 
 ---
 
@@ -30,7 +39,7 @@ importa en un asistente que maneja datos personales:
 
 | | Veredicto | Por qué |
 |---|---|---|
-| **Seguro** | ✅ **Sí** | Frente a terceros aguanta: acceso por lista blanca y solo chat privado, que **falla cerrado** y está validado por mutación; cero secretos en 81 commits; guardián anti-SSRF; las cuatro inyecciones del documento de prueba rebotaron |
+| **Seguro** | ✅ **Sí** | Frente a terceros aguanta: acceso por lista blanca y solo chat privado, que **falla cerrado** y está validado por mutación; cero secretos en 80 commits; guardián anti-SSRF (con la doctrina de fallar cerrado ahora también probada por mutación, NC-07); las cuatro inyecciones del documento de prueba rebotaron |
 | **Privado** | 🟡 **A medias, por diseño** | El texto de cada turno **viaja al proveedor del LLM**, y con `memoria` encendida viajan recuerdos descifrados. El cifrado protege el disco, no la conversación. Telegram no es E2E. Los **títulos** de las conversaciones salen. La voz es un dato biométrico |
 | **Confidencial** | ❌ **No** | La clave de cifrado vive **en la misma carpeta** que los datos que cifra. Protege contra el descuido, no contra alguien con acceso a la máquina |
 
@@ -42,16 +51,20 @@ no se sostiene. Las limitaciones completas están en §6, sin esconder ninguna.
 
 | Métrica | Valor |
 |---|---|
-| Código fuente | **10.586 líneas** (17 módulos) |
-| Tests | **11.683 líneas · 784 tests, todos en verde** |
-| Proporción test/código | **1,10 : 1** — hay más test que código |
+| Código fuente | **11.205 líneas** (18 módulos) |
+| Tests | **12.505 líneas · 831 tests, todos en verde** |
+| Proporción test/código | **1,12 : 1** — hay más test que código |
+| Cobertura de rama | **79,86 %** (medida por primera vez el 04/09; umbral en CI = 79) |
+| Verificación por mutación | Primera ejecución real (06/09): 167 mutantes sobre los 3 módulos críticos, 100 muertos, 67 vivos — 1 no era ruido y cerró NC-07 |
 | Herramientas implementadas | 7, en 6 categorías |
 | ADR | 6 aceptados (ADR-001 **revisado** el 03/08) |
-| Entradas del diario de decisiones | **20 días · 151 decisiones** |
-| Commits | 83 |
+| Entradas del diario de decisiones | **25 días · 181 decisiones** |
+| Commits | 80 |
 | Lint (`ruff`) | limpio en **todo** el repo (`src`, `tests` y `scripts`) |
-| CI (GitHub Actions) | verde: lint + tests + `pip-audit` sobre el lockfile |
+| CI (GitHub Actions) | verde: lint + tests + cobertura de rama + `pip-audit` sobre el lockfile; mutación informativa (`\|\| true`) |
 | Auditorías de seguridad | **3** (23/07, 27/07, 04-07/08) |
+| Auto-evaluación ISO (`docs/normas/`) | 4 familias de normas, 16 no conformidades (**10 cerradas, 2 a medias, 4 abiertas**) tras la segunda pasada del 06/09 |
+| Licencia | **Propietaria** (cambiada de MIT el 06/09 — MIT autorizaba justo lo que no se quería conceder) |
 
 ---
 
@@ -91,6 +104,21 @@ implementa distinto**. Bug real: Gemini puede repartir la petición de función 
 
 **Aprendido, lo más valioso:** endurecer **antes** de exponer. F5.0 no estaba planificada —
 salió de una auditoría hecha a propósito antes de tocar Telegram.
+
+### Mantenimiento post-cierre (04–06/09)
+
+Con el reto ya entregado, un mes de trabajo adicional cerró huecos que habían quedado
+documentados como abiertos en la v1.1:
+
+| Qué se hizo | Resultado |
+|---|---|
+| Cobertura de rama medida por primera vez, en un job de CI separado | 78,01 % → **79,86 %** tras 15 tests nuevos sobre `main.py` (17 % → 34 %) |
+| Primera ejecución real del job de mutación, escrito desde el 04/09 pero nunca lanzado | 167 mutantes, 100 muertos, 67 vivos; **NC-07**: encontró un `return True`/`False` sin test en el guardián anti-SSRF |
+| Auto-evaluación contra 4 normas ISO (`docs/normas/`) | 16 no conformidades detectadas; **10 cerradas, 2 a medias, 4 abiertas** tras la segunda pasada |
+| Licencia: MIT → propietaria | MIT autorizaba copiar y redistribuir; el repositorio se comparte para evaluarlo, no para reutilizarlo |
+| `pip-audit` cazó 6 CVEs nuevas (2ª vez) | `pypdf` actualizado con cirugía sobre el lockfile; 3 CVEs de `chromadb` ignoradas con motivo escrito en el propio `ci.yml` |
+
+Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/normas/09_no_conformidades.md`.
 
 ---
 
@@ -236,16 +264,18 @@ python -m src.telegram_bot
 ## 5. Checklist de entrega
 
 ### 5.1 Código
-- [x] Todo en repositorio Git con historial real (83 commits)
+- [x] Todo en repositorio Git con historial real (80 commits)
 - [x] README funcional y verificado — **con 26 tests que impiden que vuelva a mentir**
 - [x] Lint limpio en **todo** el repo (`ruff check .`, incluido `scripts/`)
-- [x] Sin secretos en el código ni en el historial (`gitleaks` sobre 81 commits, 4 ramas)
+- [x] Sin secretos en el código ni en el historial (`gitleaks` sobre 80 commits, 4 ramas)
 - [x] Dependencias auditadas (`pip-audit` en CI, sin `continue-on-error`)
 - [x] Versiones fijadas y **con hashes** en `requirements-lock.txt` (`--require-hashes`)
+- [x] Licencia propietaria, coherente con que el proyecto se comparte para evaluarlo, no para reutilizarlo
 
 ### 5.2 Tests
-- [x] 784 tests en verde
-- [x] Controles críticos validados **por mutación**
+- [x] 831 tests en verde
+- [x] Cobertura de rama medida (79,86 %) con umbral real en CI, no uno "redondo"
+- [x] Controles críticos validados **por mutación** — primera ejecución real el 06/09, cerró NC-07
 - [x] Tests de privacidad que reproducen la fuga real del 27/07
 - [x] CI verde en GitHub Actions, con permisos mínimos y Actions fijadas por SHA
 - [x] Prueba manual contra APIs reales de cada herramienta
@@ -254,9 +284,10 @@ python -m src.telegram_bot
 ### 5.3 Documentación
 - [x] E1, E2, E3, E4 completos y actualizados
 - [x] ADR-001 a ADR-006 aceptados (ADR-001 **revisado** el 03/08, con la decisión original intacta)
-- [x] Diario de decisiones con **20 días y 151 decisiones**, sin huecos
+- [x] Diario de decisiones con **25 días y 181 decisiones**, sin huecos
 - [x] Reflexión final (§7)
 - [x] Tres informes de auditoría de seguridad (23/07, 27/07, 04-07/08)
+- [x] Kit de auto-evaluación contra 4 normas ISO (`docs/normas/`), con matriz de trazabilidad y registro de no conformidades verificable
 
 ### 5.4 Funcionalidad
 - [x] CLI y bot funcionando
@@ -267,8 +298,8 @@ python -m src.telegram_bot
 - [x] **Voz por Telegram** ✅ 31/07 — Whisper por Groq + Piper local, ambos apagados al arrancar
 - [x] **Cerrojo entre procesos** ✅ 01/08 — CLI y bot ya no pueden corromper el índice
 - [x] **`/condensar`** ✅ 02/08 — resumen por bloques de documentos largos
-- [ ] Hosting 24/7 — **decisión abierta**
-- [ ] Mini eval harness — opcional desde el principio (`[F5.0/T6]`)
+- [x] **Hosting 24/7** ✅ 21/08 — VPS Hetzner CX23 (Núremberg, sin permanencia), aislado por usuario Linux + `MemoryMax`/`CPUQuota` en systemd, con aviso automático por Telegram si el servicio cae
+- [x] Mini eval harness y conversor de formatos — **evaluados y decididos no construir** (07/08, cierre de Fase 5, ver §8)
 
 ---
 
@@ -358,26 +389,32 @@ mis datos.
 
 ## 8. Trabajo futuro
 
-**Lo inmediato: decidir el hosting 24/7.** Es lo único que separa a JIMMY de estar vivo de
-verdad: hoy solo funciona con el PC encendido. Opciones evaluadas en E1 §7.
+**El hosting 24/7 ya no es trabajo futuro.** JIMMY corre desde el 21/08 en un VPS Hetzner
+CX23, aislado por usuario Linux propio, con topes de memoria en systemd y aviso automático
+por Telegram si el servicio se cae. Detalle en el diario de decisiones (21/08 en adelante).
 
-**Lo siguiente, por orden de valor:**
+**Lo que queda abierto, por orden de valor:**
 
 | Tema | Por qué |
 |---|---|
-| **Mini eval harness** | Previsto como opcional desde F5.0/T6. Hoy la calidad de las respuestas se juzga a ojo; un harness la mediría entre modelos y entre cambios de prompt |
-| **Conversor de formatos** (F5.5 #9) | La única tool del catálogo que quedó sin construir. Estrenaría `escribe_disco` |
 | Tavily, Obsidian, Outlook | Evaluadas y no construidas (ADR-006). Outlook es **la única que sacaría datos personales**: matizaría RNF-06 |
 | Indexar pares pregunta-respuesta *de verdad* | Hoy se resuelve al **buscar** (ventana de turno). Indexarlos como pareja sería la solución completa |
 | Particionar el RAG por usuario | Hoy el bot **no arranca** con más de un `user_id`, a propósito |
 
-**Descartado por el camino:** la comparación con **LangGraph** (F5.6). Era un extra desde el
-principio y el tiempo se fue en cosas con más valor — doce bugs reales del 01/08, la memoria
-del RAG, el condensado de documentos y tres agujeros de seguridad. Una comparación honesta
-exige reimplementar el router entero, y a medias no dice nada.
+**Descartado por el camino:**
+
+- **Comparación con LangGraph** (F5.6). Era un extra desde el principio y el tiempo se fue en
+  cosas con más valor — doce bugs reales del 01/08, la memoria del RAG, el condensado de
+  documentos y tres agujeros de seguridad. Una comparación honesta exige reimplementar el
+  router entero, y a medias no dice nada.
+- **Mini eval harness** (07/08, cierre de Fase 5). Las baterías de prueba manual encontraron
+  **15 fallos reales** que un harness automático, midiendo contra un criterio inventado a
+  posteriori, no habría encontrado ni uno — el proyecto ya tenía algo mejor para lo mismo.
+- **Conversor de formatos** (F5.5 #9, 07/08). Habría sido la primera tool en escribir en disco
+  sin que ninguna necesidad real lo pidiera; ya evaluado y descartado en ADR-006.
 
 Detalle completo y motivos de las descartadas en **E3 §9**.
 
 ---
 
-*E4 — Entrega Final v1.0 · 31/07/2026*
+*E4 — Entrega Final v1.2 · 08/09/2026*
