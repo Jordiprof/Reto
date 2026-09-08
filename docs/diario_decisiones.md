@@ -2,6 +2,7 @@
  
 > Tabla oficial del reto: una fila por decisión, **con fecha**. Registra el porqué,
 > no solo el qué. La reflexión final se añade al cierre (F6.2).
+
 | Fecha | Semana/Nivel | Decisión | Alternativas consideradas | Por qué |
 |---|---|---|---|---|
 | 15/07/2026 | S1 / Fase 0 | `.gitignore` como **primer commit**, antes de cualquier código | Añadirlo más tarde | Hace imposible filtrar la API key en el historial de git; revertir una filtración es mucho más caro que prevenirla |
