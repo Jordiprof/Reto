@@ -128,6 +128,21 @@ _rutas: dict[int, Path] = {}
 # que el guardado automatico no la pise con "Telegram" al reescribir.
 _nombres: dict[int, str] = {}
 
+# R-02 (auditoria de seguridad de noviembre): usuarios cuyo ULTIMO guardado
+# fallo, y a cuales de ellos ya se les ha dicho. Antes un fallo de
+# _persistir solo iba al log y el usuario seguia hablando creyendo que todo
+# quedaba guardado. Se avisa UNA vez por racha de fallos: repetirlo en cada
+# mensaje con el disco lleno seria ruido que se aprende a ignorar. Un
+# guardado bueno vacia los dos, asi que la racha siguiente vuelve a avisar.
+_guardado_fallido: set[int] = set()
+_avisados_guardado: set[int] = set()
+
+_AVISO_GUARDADO = (
+    "⚠️ No he podido guardar esta conversación en disco. Lo vuelvo a intentar "
+    "con cada mensaje (se guarda entera cada vez, así que no se pierde nada "
+    "mientras siga encendido), pero si me reinician ahora, lo último se perdería."
+)
+
 # F5.5 #8 - Voz: que mitades estan encendidas por usuario, subconjunto de
 # {"escuchar", "hablar"}. Empieza VACIO, o sea las dos apagadas.
 #
@@ -353,12 +368,27 @@ def _persistir(user_id: int, nombre: str | None = None) -> Path | None:
             # "Telegram" al reescribir el mismo fichero.
             _nombres[user_id] = nombre
         indexar_conversacion(ruta)
+        # R-02: guardado bueno, se cierra la racha de fallos (si la habia).
+        _guardado_fallido.discard(user_id)
+        _avisados_guardado.discard(user_id)
         return ruta
     except Exception as error:
         # Tipo, no texto (politica de logging del proyecto): el str() de un
         # error de cifrado o de ChromaDB puede arrastrar contenido.
         logging.error("Telegram: no se pudo persistir el turno (%s)", type(error).__name__)
+        # R-02: se apunta para poder DECIRSELO al usuario (ver
+        # _avisar_si_no_se_guardo). Aqui no se puede: esto corre en un hilo.
+        _guardado_fallido.add(user_id)
         return None
+
+
+async def _avisar_si_no_se_guardo(user_id: int, mensaje) -> None:
+    """R-02: si el ultimo guardado fallo y aun no se le ha dicho, se le
+    dice UNA vez, con un texto fijo nuestro: nunca el de la excepcion, que
+    puede llevar rutas o contenido (misma politica que el log)."""
+    if user_id in _guardado_fallido and user_id not in _avisados_guardado:
+        _avisados_guardado.add(user_id)
+        await mensaje.reply_text(_AVISO_GUARDADO)
 
 
 def _cerrojo_de(user_id: int) -> asyncio.Lock:
@@ -613,6 +643,16 @@ async def _cerrar_con_nombre(update: Update, nombre: str) -> None:
     try:
         async with _cerrojo_de(usuario.id):
             ruta = await asyncio.to_thread(_persistir, usuario.id, nombre)
+            # R-02: si el guardado FALLA no se cierra la charla. Cerrarla
+            # tiraria el Agente, y con el la unica copia de lo hablado que
+            # no llego al disco. Se dice y se deja abierta para reintentar.
+            if ruta is None and usuario.id in _guardado_fallido:
+                _avisados_guardado.add(usuario.id)
+                await mensaje.reply_text(
+                    "⚠️ No he podido guardarla, así que no la cierro: sigue "
+                    "abierta. Inténtalo de nuevo dentro de un rato."
+                )
+                return
             aviso = _aviso_categorias_perdidas(_agentes.get(usuario.id))
             # Se cierra igual que en _CONSERVAR: se olvida el contexto y se
             # suelta el fichero, para que el mensaje siguiente estrene charla.
@@ -779,6 +819,12 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
 
     for trozo in _trocear(_sin_markdown(respuesta)):
         await mensaje.reply_text(trozo, link_preview_options=sin_vista_previa)
+
+    # R-02: DESPUES de la respuesta, que es lo principal (mismo orden que la
+    # foto y la voz). Solo si el turno fue bien: si fallo, no se intento
+    # guardar.
+    if not fallo:
+        await _avisar_si_no_se_guardo(usuario.id, mensaje)
 
     # Salida binaria (01/08, peticion de Jordi): si alguna tool dejo una
     # imagen en la bandeja del turno, se manda como FOTO. Va despues del
@@ -1533,7 +1579,13 @@ async def _ejecutar_guardar(user_id: int, mensaje, nombre: str) -> None:
     async with _cerrojo_de(user_id):
         ruta = await asyncio.to_thread(_persistir, user_id, nombre)
 
-    if ruta is None:
+    # R-02: None tambien es lo que devuelve _persistir cuando FALLA. Antes
+    # se contestaba "no hay nada que guardar" en los dos casos, y con el
+    # disco lleno eso era mentir sobre una peticion explicita.
+    if ruta is None and user_id in _guardado_fallido:
+        _avisados_guardado.add(user_id)
+        await mensaje.reply_text("⚠️ No he podido guardarla. Inténtalo dentro de un rato.")
+    elif ruta is None:
         await mensaje.reply_text("Todavía no hemos hablado de nada que guardar.")
     else:
         await mensaje.reply_text(f'Guardada como "{nombre}".')

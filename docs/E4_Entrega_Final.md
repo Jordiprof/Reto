@@ -129,7 +129,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | Fichero | Tests | Qué protege |
 |---|---|---|
 | `test_tools.py` | 115 | Herramientas, validación de argumentos, SEG-07, categorías |
-| `test_telegram_seguridad.py` | 90 | Las tres puertas, privacidad de logs, comandos, adjuntos |
+| `test_telegram_seguridad.py` | 91 | Las tres puertas, privacidad de logs, comandos, adjuntos |
 | `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
 | `test_red_segura.py` | 39 | Guardián anti-SSRF |
@@ -141,7 +141,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_llm_router.py` | 24 | Reintentos, degradación, reservas de modelo |
 | `test_voz.py` | 21 | Whisper + Piper, límites de duración |
 | `test_telegram_voz.py` | 20 | La puerta de la voz antes de descargar el audio |
-| `test_storage.py` | 20 | Cifrado, metadatos en claro, borrado |
+| `test_storage.py` | 21 | Cifrado, metadatos en claro, borrado |
 | `test_cuota_y_orden.py` | 20 | Cuota diaria, orden de proveedores, tope por proveedor |
 | `test_config.py` | 19 | Configuración, lista blanca de dominios |
 | `test_avisos_caida.py` | 19 | Avisos de caída distinguiendo tokens/peticiones/día |

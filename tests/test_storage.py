@@ -266,6 +266,35 @@ def test_sin_ruta_se_sigue_creando_uno_nuevo(entorno_aislado, sin_clave):
     assert len(listar_conversaciones()) == 2
 
 
+@pytest.mark.requisito("RF-06", "RNF-02")
+def test_R02_un_fallo_A_MITAD_de_escribir_no_destroza_lo_que_habia(
+    entorno_aislado, con_clave, monkeypatch
+):
+    """R-02 (auditoria de seguridad de noviembre): el guardado no era
+    atomico. open(ruta, "w") VACIA el fichero antes de escribir, asi que un
+    corte, un disco lleno o una excepcion a mitad dejaban el JSON vacio o
+    truncado - y en el bot ese fichero es la conversacion ENTERA, reescrita
+    en cada turno. Lo que habia antes tiene que sobrevivir intacto, y no
+    puede quedar basura temporal en conversations/."""
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m")
+    antes = ruta.read_bytes()
+
+    def dump_a_medias(datos, fichero, **kw):
+        fichero.write('{"fecha": "a medi')
+        raise OSError("disco lleno")
+
+    dump_de_verdad = storage.json.dump
+    monkeypatch.setattr(storage.json, "dump", dump_a_medias)
+    ampliado = HISTORIAL + [{"role": "user", "content": "esto no llega a guardarse"}]
+    with pytest.raises(OSError):
+        guardar_conversacion(ampliado, "groq", "m", ruta=ruta)
+    monkeypatch.setattr(storage.json, "dump", dump_de_verdad)
+
+    assert ruta.read_bytes() == antes
+    assert cargar_conversacion(ruta)["historial"] == HISTORIAL
+    assert [p.name for p in storage.CONVERSATIONS_DIR.iterdir()] == [ruta.name]
+
+
 def test_reescribir_no_duplica_la_fila_del_indice_sqlite(entorno_aislado, sin_clave):
     """Antes _indexar_en_sqlite INSERTABA siempre. Con el bot guardando cada
     turno, /historial acabaria mostrando la misma conversacion 30 veces."""

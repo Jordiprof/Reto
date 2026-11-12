@@ -30,6 +30,8 @@ def estado_limpio(monkeypatch):
     telegram_bot._rutas.clear()
     telegram_bot._voz_activa.clear()
     telegram_bot._esperando_texto.clear()
+    telegram_bot._guardado_fallido.clear()
+    telegram_bot._avisados_guardado.clear()
     monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, "111")
     monkeypatch.setenv(config.TELEGRAM_TOKEN_ENV, "123456:token-de-mentira")
     yield
@@ -759,7 +761,48 @@ def test_si_falla_el_guardado_el_usuario_recibe_su_respuesta(monkeypatch, persis
 
     asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
 
-    assert enviados == ["aqui tienes"]
+    # R-02: la respuesta llega PRIMERO y entera; detras, el aviso de que no
+    # se pudo guardar (antes el fallo solo iba al log y nadie se enteraba).
+    assert enviados[0] == "aqui tienes"
+
+
+@pytest.mark.requisito("RF-06", "RNF-02")
+def test_R02_si_falla_el_guardado_se_DICE_una_vez_y_sin_el_texto_del_error(
+    monkeypatch, persistencia_espiada
+):
+    """R-02 (auditoria de seguridad de noviembre). Un fallo de _persistir
+    solo iba al log: el usuario seguia hablando creyendo que todo quedaba
+    guardado. Se le dice en el chat, pero UNA vez por racha de fallos (si el
+    disco esta lleno, repetirlo en cada mensaje es ruido que se aprende a
+    ignorar) y SIN el texto de la excepcion, que puede llevar rutas o
+    contenido. Si vuelve a guardar bien y luego falla otra vez, se avisa
+    otra vez: es otra racha."""
+    estado = {"falla": True}
+
+    def guardar(historial, proveedor, modelo, nombre=None, ruta=None):
+        if estado["falla"]:
+            raise OSError("disco lleno en /home/bot-jimmy/conversations/secreto.json")
+        return persistencia_espiada.ruta
+
+    monkeypatch.setattr(telegram_bot, "guardar_conversacion", guardar)
+    _agente_falso(monkeypatch, respuesta="vale")
+
+    def turno():
+        enviados = []
+        asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
+        return [e for e in enviados if e != "vale"]
+
+    primero, segundo = turno(), turno()
+    estado["falla"] = False
+    tercero = turno()
+    estado["falla"] = True
+    cuarto = turno()
+
+    assert len(primero) == 1 and "guardar" in primero[0]
+    assert segundo == [] and tercero == []
+    assert len(cuarto) == 1
+    for aviso in primero + cuarto:
+        assert "disco lleno" not in aviso and "secreto" not in aviso
 
 
 def test_limpiar_suelta_el_fichero_pero_no_borra_lo_guardado(monkeypatch, persistencia_espiada):

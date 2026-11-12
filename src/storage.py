@@ -162,6 +162,48 @@ def _indexar_en_sqlite(ruta_json: Path, proveedor: str, modelo: str, num_mensaje
             )
 
 
+def _escribir_json_atomico(ruta: Path, datos: dict) -> None:
+    """Escribe el JSON de forma que el fichero quede ENTERO o como estaba.
+
+    R-02 (auditoria de seguridad de noviembre). Antes era open(ruta, "w"),
+    que VACIA el fichero antes de escribir nada: un corte de luz, un disco
+    lleno o una excepcion a mitad dejaban el JSON vacio o truncado. En la
+    CLI eso es una conversacion; en el bot, que reescribe el mismo fichero
+    en cada turno, es la conversacion ENTERA desde que empezo.
+
+    Se escribe a un temporal EN LA MISMA CARPETA (os.replace solo es
+    atomico dentro del mismo sistema de ficheros), se fuerza a disco con
+    flush + fsync y se sustituye de golpe con os.replace. Quien lea ve el
+    fichero viejo o el nuevo, nunca uno a medias.
+
+    El temporal acaba en ".tmp" y no en ".json" a proposito: si el proceso
+    muere justo en medio, listar_conversaciones (glob "*.json") no lo toma
+    por una conversacion. mkstemp lo crea con permisos 0600 (solo el dueño),
+    que es mas restrictivo que antes y no cambia nada para el propio bot.
+    """
+    # Import local: solo los usa esta funcion.
+    import os
+    import tempfile
+
+    descriptor, temporal = tempfile.mkstemp(
+        dir=ruta.parent, prefix=f".{ruta.stem}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as fichero:
+            # ensure_ascii=False: sin esto, cada tilde/eñe saldria escapada
+            # como "ó" en vez de legible al abrir el fichero a mano.
+            # indent=2: formato legible, no una sola linea larga.
+            json.dump(datos, fichero, ensure_ascii=False, indent=2)
+            fichero.flush()
+            os.fsync(fichero.fileno())
+        os.replace(temporal, ruta)
+    except BaseException:
+        # BaseException y no Exception: un Ctrl+C a mitad tambien debe
+        # llevarse el temporal. Se relanza siempre; aqui solo se limpia.
+        Path(temporal).unlink(missing_ok=True)
+        raise
+
+
 def guardar_conversacion(
     historial: list, proveedor: str, modelo: str, nombre: str | None = None,
     ruta: Path | None = None,
@@ -239,11 +281,7 @@ def guardar_conversacion(
         "historial": contenido,
     }
 
-    # ensure_ascii=False: sin esto, cada tilde/eñe saldria escapada como
-    # "ó" en vez de legible al abrir el fichero a mano. indent=2:
-    # formato legible, no una sola linea larga.
-    with open(ruta, "w", encoding="utf-8") as fichero:
-        json.dump(datos, fichero, ensure_ascii=False, indent=2)
+    _escribir_json_atomico(ruta, datos)
 
     # F3.5: ademas del JSON (fuente completa), dejamos una fila-indice en
     # SQLite. Si esto fallara por lo que sea, no queremos perder el JSON
