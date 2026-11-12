@@ -134,7 +134,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
 | `test_red_segura.py` | 39 | Guardián anti-SSRF |
 | `test_resumen_largo.py` | 36 | `/condensar` por bloques |
-| `test_rag.py` | 29 | Memoria semántica, privacidad del índice |
+| `test_rag.py` | 30 | Memoria semántica, privacidad del índice |
 | `test_readme.py` | 28 | **Que el README no mienta** |
 | `test_noticias.py` | 27 | `/noticias`: RSS, fechas RFC-822/ISO, lista blanca |
 | `test_llm_loop.py` | 25 | Bucle de tools, presupuesto, idempotencia |
@@ -149,13 +149,13 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_recuerdo_y_limpiar.py` | 18 | Ruido del RAG, `/limpiar`, reglas del prompt |
 | `test_config_logging.py` | 16 | Modo depuración opt-in |
 | `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
-| `test_main_cli.py` | 15 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
+| `test_main_cli.py` | 17 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
 | `test_logging.py` | 14 | Política de solo metadatos |
 | `test_agent.py` | 14 | Núcleo, contaminación de historial |
 | `test_llm_gemini.py` | 13 | Traducción del dialecto de Gemini |
 | `test_tool_call_mal_generada.py` | 12 | `tool_use_failed` como reintentable |
 | `test_telegram_presentacion.py` | 12 | Markdown, foto duplicada, estado y adjuntos |
-| `test_compactar_historial.py` | 12 | AUD-03: el historial no crece sin freno |
+| `test_compactar_historial.py` | 14 | AUD-03: el historial no crece sin freno |
 | `test_tools_apagadas.py` | 11 | Aviso de categoría apagada |
 | `test_main_menus.py` | 11 | Menús de la CLI |
 | `test_cerrojo.py` | 11 | Cerrojo del SO entre procesos |

@@ -333,9 +333,15 @@ def _persistir(user_id: int, nombre: str | None = None) -> Path | None:
     agente = _agentes.get(user_id)
     if agente is None:
         return None
+    # R-01: la conversacion COMPLETA y no agente.historial. Tras compactar,
+    # historial es solo lo que se reenvia al modelo; reescribir el fichero
+    # con eso borraba del disco los mensajes viejos y dejaba los punteros
+    # "fichero:indice" del RAG señalando otros mensajes. getattr porque los
+    # dobles de test (SimpleNamespace) solo traen historial.
+    mensajes = getattr(agente, "conversacion_completa", agente.historial)
     try:
         ruta = guardar_conversacion(
-            agente.historial, agente.proveedor, agente.modelo,
+            mensajes, agente.proveedor, agente.modelo,
             nombre=nombre or _nombres.get(user_id) or "Telegram",
             ruta=_rutas.get(user_id),
         )
@@ -739,9 +745,10 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             await asyncio.to_thread(_persistir, usuario.id)
 
     # AUD-03: si se saco algo del contexto, se dice. Aqui NO hace falta
-    # pasarle `persistir` a preguntar(): el bot ya guarda e indexa despues
-    # de CADA turno (_persistir), asi que lo que se compacta ya esta a
-    # salvo en conversations/ y en el RAG antes de salir del historial.
+    # pasarle `persistir` a preguntar(): lo compactado sale del CONTEXTO pero
+    # no de la conversacion (R-01, Agente.conversacion_completa), y
+    # _persistir guarda e indexa la conversacion entera despues de cada
+    # turno. Por eso el "siguen guardados" del aviso es verdad.
     compactados = getattr(_agentes.get(usuario.id), "compactados", 0)
     if compactados and not fallo:
         await mensaje.reply_text(

@@ -969,17 +969,25 @@ def _sesion():
 
             # Un turno completo (historial, tools, guardado del turno) lo
             # resuelve el Agente por dentro - main.py solo imprime.
-            # AUD-03: se le pasa COMO guardar. La CLI solo guarda al salir,
-            # asi que sin esto lo que se compactara a mitad de sesion se
-            # perderia de verdad; con esto queda en conversations/ y entra
-            # al RAG en el siguiente arranque. En Telegram no hace falta
-            # porque ya persiste despues de cada turno.
-            respuesta = agente.preguntar(pregunta, persistir=agente.guardar)
+            #
+            # R-09 (auditoria de seguridad de noviembre): antes se le pasaba
+            # persistir=agente.guardar, y cada compactacion ESCRIBIA la
+            # charla en un fichero nuevo a mitad de sesion. Dos efectos: un
+            # "no guardar" al salir ya no borraba nada (el modo efimero de
+            # RNF-06 mentia), y al guardar salian ficheros repetidos que el
+            # RAG indexaba varias veces. Ya no hace falta: lo compactado
+            # sale del contexto pero sigue en Agente.conversacion_completa,
+            # que es lo que se guarda (o no) al salir, como siempre.
+            respuesta = agente.preguntar(pregunta)
             if agente.compactados:
+                # R-09: el texto cambia porque antes prometia "siguen
+                # guardados" y en la CLI eso dependia del guardado a mitad
+                # de sesion que se ha quitado. Ahora se guardan con el resto
+                # de la charla al salir, si se contesta que si.
                 print(
                     f"ℹ️ La conversación se estaba haciendo larga: he sacado del "
                     f"contexto los {agente.compactados} mensajes más antiguos "
-                    "(siguen guardados y los puedo buscar con /recuerdo)."
+                    "(no se pierden: se guardan con el resto al salir)."
                 )
             # Si contesto un fallback, se dice ANTES de la respuesta (misma
             # razon que en Telegram): si no, se lee creyendo que la dio el

@@ -134,6 +134,41 @@ def test_un_UNICO_mensaje_gigante_no_deja_la_conversacion_vacia():
     assert len(agente.historial) == 2
 
 
+@pytest.mark.requisito("RF-26", "RF-06")
+def test_R01_lo_compactado_sale_del_CONTEXTO_pero_no_de_la_conversacion():
+    """R-01: compactar recorta lo que se REENVIA al modelo, nunca lo que se
+    GUARDA. La conversacion completa conserva todos los mensajes, en orden,
+    y es lo que acaba en disco - asi el fichero solo crece y ningun puntero
+    "fichero:indice" del RAG cambia de significado."""
+    agente = _agente()
+    _llenar(agente, mensajes=40)
+    entera = list(agente.historial)
+
+    assert agente.compactar_si_hace_falta() > 0
+    assert agente.conversacion_completa == entera
+
+    # Una segunda compactacion tampoco pierde ni reordena nada.
+    nuevos = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"n{i} " + "x" * 1000}
+        for i in range(30)
+    ]
+    agente.historial.extend(nuevos)
+    assert agente.compactar_si_hace_falta() > 0
+    assert agente.conversacion_completa == entera + nuevos
+
+
+def test_R01_limpiar_suelta_tambien_lo_que_estaba_fuera_del_contexto():
+    """/limpiar empieza conversacion nueva: lo compactado de la anterior no
+    puede colarse en el fichero de la siguiente."""
+    agente = _agente()
+    _llenar(agente, mensajes=40)
+    agente.compactar_si_hace_falta()
+
+    agente.limpiar_historial()
+
+    assert agente.conversacion_completa == agente.historial[:1]
+
+
 @pytest.mark.requisito("RF-26")
 @pytest.mark.parametrize("mensajes", [12, 20, 40, 100])
 def test_da_igual_lo_larga_que_sea_la_charla_el_contexto_queda_acotado(mensajes):

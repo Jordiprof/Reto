@@ -258,3 +258,80 @@ def test_el_cerrojo_se_suelta_AUNQUE_la_sesion_reviente(monkeypatch):
         m.main()
 
     assert _CerrojoFalso.ultimo.soltado, "el cerrojo quedaria colgado"
+
+
+# ---------------------------------------------------------------------------
+# R-09 (auditoria de seguridad de noviembre): la compactacion NO escribe nada
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sesion_cli_con_charla_larga(tmp_path, monkeypatch):
+    """Monta _sesion() de punta a punta sin terminal, sin red y sin tocar las
+    conversaciones reales: un Agente de verdad con un router falso, una
+    charla lo bastante larga para que se compacte, y luego /salir.
+
+    Devuelve una funcion que ejecuta la sesion contestando `respuesta` a la
+    pregunta "¿Guardar esta conversación?", y la carpeta donde se guarda.
+    """
+    from types import SimpleNamespace
+
+    from src import rag, storage
+
+    monkeypatch.setattr(storage, "CONVERSATIONS_DIR", tmp_path / "conversations")
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "conversations.db")
+    storage.CONVERSATIONS_DIR.mkdir()
+    monkeypatch.delenv("CONVERSATIONS_KEY", raising=False)
+    monkeypatch.setattr(rag, "indexar_conversaciones", lambda: 0)
+    monkeypatch.setattr(m, "elegir_proveedor_y_modelo", lambda: ("groq", "fake", "x"))
+    monkeypatch.setattr(m, "pedir_nombre_conversacion", lambda: None)
+
+    class _AgenteSinRed(m.Agente):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.router = SimpleNamespace(
+                responder=lambda mensajes, tools: "respuesta " + "z" * 1500,
+                aviso_fallback=None,
+            )
+
+    monkeypatch.setattr(m, "Agente", _AgenteSinRed)
+
+    def ejecutar(respuesta_guardar):
+        entradas = iter([f"pregunta {i} " + "y" * 1500 for i in range(15)] + ["/salir"])
+        monkeypatch.setattr("builtins.input", lambda *a: next(entradas))
+        monkeypatch.setattr(
+            m.questionary, "confirm",
+            lambda *a, **kw: SimpleNamespace(ask=lambda: respuesta_guardar),
+        )
+        m._sesion()
+        return sorted(storage.CONVERSATIONS_DIR.glob("*.json"))
+
+    return ejecutar
+
+
+@pytest.mark.requisito("RF-26", "RNF-06")
+def test_R09_si_dices_NO_GUARDAR_no_queda_nada_en_disco_aunque_se_compactara(
+    sesion_cli_con_charla_larga, capsys
+):
+    """Antes, la compactacion llamaba a agente.guardar() a mitad de sesion:
+    la charla ya estaba en disco (y entraba al RAG en el siguiente arranque)
+    cuando al salir se contestaba "no guardar". El "modo efimero" de RNF-06
+    mentia."""
+    ficheros = sesion_cli_con_charla_larga(False)
+
+    assert "he sacado del" in capsys.readouterr().out  # precondicion: compacto
+    assert ficheros == []
+
+
+@pytest.mark.requisito("RF-26", "RF-06")
+def test_R09_al_guardar_queda_UN_fichero_con_TODA_la_charla(sesion_cli_con_charla_larga):
+    """La otra mitad: antes salian dos ficheros (el de la compactacion y el de
+    la salida), y el RAG indexaba los mismos mensajes dos veces."""
+    from src import storage
+
+    ficheros = sesion_cli_con_charla_larga(True)
+
+    assert len(ficheros) == 1
+    datos = storage.cargar_conversacion(ficheros[0])
+    assert len(datos["historial"]) == 1 + 2 * 15
+    assert datos["historial"][1]["content"].startswith("pregunta 0 ")

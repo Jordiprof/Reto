@@ -90,6 +90,16 @@ class Agente:
         # AUD-03: cuantos mensajes se tiraron del contexto en el ultimo
         # turno. Lo lee el canal para avisar por pantalla.
         self.compactados = 0
+        # R-01 (auditoria de seguridad de noviembre): lo que la compactacion
+        # saca del CONTEXTO, en el orden en que se dijo. No se reenvia al
+        # modelo -eso es lo que ahorra cuota- pero sigue siendo parte de la
+        # conversacion, y es lo que se GUARDA (ver conversacion_completa).
+        #
+        # Antes la compactacion recortaba self.historial y nadie guardaba lo
+        # recortado: el bot reescribia su fichero con la version corta y los
+        # mensajes viejos desaparecian del disco, mientras los punteros
+        # "fichero:indice" del RAG pasaban a señalar OTROS mensajes.
+        self._fuera_de_contexto: list[dict] = []
         # Lo que una tool ha dejado para ENSEÑAR en este turno y no cabe en
         # el texto de la respuesta (hoy: la foto de la NASA). Lo recoge quien
         # sepa mostrarlo -Telegram con send_photo- y lo ignora quien no -la
@@ -120,6 +130,19 @@ class Agente:
         if documento is not self._documento_pendiente:
             self.lectura_condensada = []
         self._documento_pendiente = documento
+
+    @property
+    def conversacion_completa(self) -> list:
+        """La conversacion ENTERA: system prompt + lo compactado + lo que
+        sigue en el contexto. Es lo que se guarda en disco (R-01).
+
+        Solo puede CRECER por el final mientras dure la conversacion: la
+        compactacion pasa mensajes de self.historial a _fuera_de_contexto
+        sin cambiar el orden, asi que el mensaje N del fichero es siempre el
+        mismo mensaje. De eso depende que el puntero "fichero:indice" del
+        RAG no cambie de significado al reescribir el fichero.
+        """
+        return self.historial[:1] + self._fuera_de_contexto + self.historial[1:]
 
     def cambiar_modelo(self, modelo: str) -> None:
         self.modelo = modelo
@@ -227,14 +250,19 @@ class Agente:
         el modelo lo necesita. Se deja de REENVIAR, que es lo que costaba
         dinero; no se olvida.
 
-        Y DE AHI EL `persistir`, que es lo que hace segura la ventana:
-        antes de tirar nada hay que asegurarse de que esta guardado. En
-        Telegram ya se persiste despues de cada turno, asi que llega
-        cubierto; la CLI solo guarda AL SALIR, y sin esto lo tirado a mitad
-        de sesion se habria perdido de verdad. Se recibe como funcion en vez
-        de llamar a self.guardar() a pelo porque cada canal guarda distinto
-        (el bot reescribe SU fichero con `ruta=`), y el Agente no tiene por
-        que saberlo - misma frontera que el resto de F4.5.
+        R-01 (auditoria de seguridad de noviembre): "no se pierde" solo era
+        verdad hasta el siguiente guardado. El bot reescribia su fichero con
+        el historial YA recortado, asi que lo compactado desaparecia del
+        disco y el RAG se quedaba con punteros a mensajes que ya no eran.
+        Ahora lo que sale del contexto pasa a self._fuera_de_contexto y se
+        sigue guardando (ver conversacion_completa): la ventana recorta lo
+        que se REENVIA, nunca lo que se GUARDA.
+
+        `persistir` sigue existiendo como gancho opcional, pero ya ningun
+        canal lo necesita: nada se tira de la conversacion, asi que no hay
+        que guardar antes de compactar. La CLI lo pasaba (R-09) y eso
+        escribia la charla en disco aunque luego se dijera "no guardar", y
+        al salir creaba un segundo fichero con lo mismo.
         """
         if self._tamaño_historial() <= _MAX_CARACTERES_HISTORIAL:
             return 0
@@ -262,6 +290,8 @@ class Agente:
                 )
                 return 0
 
+        # R-01: lo que sale del contexto NO se tira, se aparta en orden.
+        self._fuera_de_contexto.extend(self.historial[1:1 + tirados])
         self.historial = self.historial[:1] + conservados
         logging.info("Historial compactado: %d mensajes fuera del contexto", tirados)
         return tirados
@@ -277,6 +307,9 @@ class Agente:
         OJO: no toca lo ya guardado en disco ni la memoria semantica -
         solo el historial de ESTA sesion en memoria."""
         self.historial = self.historial[:1]
+        # R-01: lo compactado de la charla anterior tampoco pasa a la nueva;
+        # si no, acabaria escrito en el fichero de la siguiente.
+        self._fuera_de_contexto = []
         # F5.5 #7: "empezamos de cero" incluye el documento puesto sobre la
         # mesa - si no se soltara aqui, una charla nueva podria seguir
         # leyendo un PDF de la charla anterior sin que nadie lo haya pedido.
@@ -361,5 +394,10 @@ class Agente:
     def guardar(self, nombre: str | None = None):
         """Delega en storage.py - devuelve la ruta del fichero, o None
         si no habia nada real que guardar (ver storage.py). "nombre" es la
-        etiqueta opcional que Jordi pone al guardar (F5.3+)."""
-        return guardar_conversacion(self.historial, self.proveedor, self.modelo, nombre)
+        etiqueta opcional que Jordi pone al guardar (F5.3+).
+
+        R-01: guarda la conversacion COMPLETA, no solo lo que queda en el
+        contexto tras compactar."""
+        return guardar_conversacion(
+            self.conversacion_completa, self.proveedor, self.modelo, nombre
+        )
