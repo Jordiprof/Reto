@@ -127,8 +127,9 @@ fichero ya es la autorización** — pedir un segundo permiso era fricción sin 
 a cambio.
 
 Cada conversación queda guardada en `conversations/<fecha>_<hora>.json` — **cifrada con
-Fernet** si configuraste `CONVERSATIONS_KEY` en el `.env` (ver `.env.example`; si no, se
-guarda en claro y el programa avisa al arrancar) — y también indexada en
+Fernet** si configuraste `CONVERSATIONS_KEY` en el `.env` (ver `.env.example`; si no, la
+CLI guarda en claro y avisa al arrancar, y **el bot de Telegram no arranca** salvo que
+pongas a propósito `PERMITIR_CONVERSACIONES_SIN_CIFRAR=1`) — y también indexada en
 `conversations.db` (SQLite, una fila por conversación — ver [E2 §2](docs/E2_Arquitectura.md)).
 Al arrancar, el agente indexa tus conversaciones pasadas en un índice de memoria
 semántica local (ChromaDB) para poder buscarlas por significado con la tool

@@ -353,6 +353,21 @@ def depuracion_contenido_activa() -> bool:
     return os.environ.get(DEPURACION_ENV, "").strip().lower() in _VALORES_ENCENDIDO
 
 
+# R-04 (auditoria de seguridad de noviembre): consentimiento EXPLICITO para
+# que el BOT arranque sin CONVERSATIONS_KEY. Sin clave, el bot -24/7, en una
+# VPS, guardando la vida de alguien- se niega a arrancar; la CLI sigue con su
+# aviso de siempre. Nombre largo y en español a proposito, como
+# DEBUG_LOG_CONTENIDO: que nadie la encienda sin entender lo que hace.
+PERMITIR_SIN_CIFRAR_ENV = "PERMITIR_CONVERSACIONES_SIN_CIFRAR"
+
+
+def guardar_sin_cifrar_consentido() -> bool:
+    """True SOLO con un "si" explicito en PERMITIR_CONVERSACIONES_SIN_CIFRAR.
+    Misma allowlist de valores que DEBUG_LOG_CONTENIDO: ausente, vacia, "0"
+    o cualquier texto raro -> False, o sea el bot no arranca sin clave."""
+    return os.environ.get(PERMITIR_SIN_CIFRAR_ENV, "").strip().lower() in _VALORES_ENCENDIDO
+
+
 # Logger APARTE para el modo depuracion, con su propio fichero
 # (logs/debug_contenido.log). La pieza clave es propagate=False: sin ella,
 # todo lo que se escriba aqui subiria al logger raiz y acabaria en

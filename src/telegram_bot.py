@@ -2638,18 +2638,40 @@ def _arrancar(cerrojo) -> None:
     # con una clave rota levantaba tan tranquilo y reventaba al guardar el
     # primer turno. Es la misma asimetria que el bug del 28/07 (la CLI
     # indexaba al arrancar y el bot no): dos puertas, un solo control.
-    from src.config import ClaveCifradoInvalida
+    from src.config import (
+        CLAVE_CONVERSACIONES_ENV,
+        PERMITIR_SIN_CIFRAR_ENV,
+        ClaveCifradoInvalida,
+        guardar_sin_cifrar_consentido,
+    )
     from src.storage import cifrado_activo
 
     try:
-        if not cifrado_activo():
-            print(
-                "⚠️ Las conversaciones se guardarán SIN CIFRAR "
-                "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
-            )
+        hay_cifrado = cifrado_activo()
     except ClaveCifradoInvalida as error:
         print(f"❌ {error}")
         return
+    if not hay_cifrado:
+        # R-04 (auditoria de seguridad de noviembre): antes esto era solo un
+        # print y el bot arrancaba igual. En la VPS ese print acaba en
+        # journalctl, que no lee nadie, y el bot se quedaba guardando en
+        # claro meses. Ahora FALLA CERRADO salvo consentimiento explicito.
+        # Se sale con return (codigo 0), igual que con una clave rota:
+        # jimmy.service no lo reintenta en bucle, porque pide que venga
+        # una persona. La CLI conserva su aviso: alli se ve en pantalla.
+        if not guardar_sin_cifrar_consentido():
+            print(
+                f"❌ Falta {CLAVE_CONVERSACIONES_ENV} en el .env y el bot NO arranca "
+                "sin cifrar las conversaciones. Genera una clave (ver .env.example) "
+                f"o, si de verdad quieres guardarlas en claro, pon "
+                f"{PERMITIR_SIN_CIFRAR_ENV}=1."
+            )
+            return
+        print(
+            "⚠️ Las conversaciones se guardarán SIN CIFRAR: lo has permitido con "
+            f"{PERMITIR_SIN_CIFRAR_ENV} (configura {CLAVE_CONVERSACIONES_ENV} "
+            "en el .env para cifrarlas; ver .env.example)."
+        )
 
     aplicacion = construir_aplicacion()
 

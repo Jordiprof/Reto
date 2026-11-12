@@ -865,6 +865,75 @@ def test_limpiar_suelta_el_fichero_pero_no_borra_lo_guardado(monkeypatch, persis
 # --- F5.2+: comandos con paridad con la CLI ----------------------------
 
 
+@pytest.fixture
+def arranque_espiado(monkeypatch):
+    """main_bot() sin red ni Telegram: se espia si llega a construir la
+    Application y a indexar. Devuelve la lista de lo que llego a hacer."""
+    hecho = []
+    monkeypatch.setattr(
+        telegram_bot, "indexar_conversaciones", lambda: hecho.append("indexar") or 0
+    )
+    monkeypatch.setattr(
+        telegram_bot, "construir_aplicacion",
+        lambda: SimpleNamespace(run_polling=lambda: hecho.append("polling")),
+    )
+    return hecho
+
+
+@pytest.mark.requisito("RF-17", "RNF-06")
+@pytest.mark.control("E2-REPOSO")
+def test_R04_sin_clave_de_cifrado_el_bot_NO_arranca(monkeypatch, arranque_espiado, capsys):
+    """R-04 (auditoria de seguridad de noviembre). Sin CONVERSATIONS_KEY el
+    bot arrancaba y guardaba en claro con solo un print, que en la VPS va a
+    journalctl y no lo lee nadie. Un bot 24/7 que guarda la vida de alguien
+    en claro no debe poder quedarse asi por olvido: falla cerrado."""
+    monkeypatch.delenv(config.CLAVE_CONVERSACIONES_ENV, raising=False)
+    monkeypatch.delenv(config.PERMITIR_SIN_CIFRAR_ENV, raising=False)
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == []
+    salida = capsys.readouterr().out
+    assert config.CLAVE_CONVERSACIONES_ENV in salida
+    assert config.PERMITIR_SIN_CIFRAR_ENV in salida
+
+
+@pytest.mark.parametrize("valor", ["", "0", "no", "quizas"])
+def test_R04_un_consentimiento_AMBIGUO_no_vale(monkeypatch, arranque_espiado, valor):
+    """Allowlist de valores, como DEBUG_LOG_CONTENIDO: solo un "si"
+    explicito abre la puerta; cualquier otra cosa la deja cerrada."""
+    monkeypatch.delenv(config.CLAVE_CONVERSACIONES_ENV, raising=False)
+    monkeypatch.setenv(config.PERMITIR_SIN_CIFRAR_ENV, valor)
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == []
+
+
+def test_R04_con_consentimiento_EXPLICITO_arranca_y_avisa(
+    monkeypatch, arranque_espiado, capsys
+):
+    monkeypatch.delenv(config.CLAVE_CONVERSACIONES_ENV, raising=False)
+    monkeypatch.setenv(config.PERMITIR_SIN_CIFRAR_ENV, "1")
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == ["indexar", "polling"]
+    assert "SIN CIFRAR" in capsys.readouterr().out
+
+
+def test_R04_con_clave_arranca_como_siempre(monkeypatch, arranque_espiado):
+    """No romper el arranque de quien YA tiene la clave (la VPS de hoy)."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv(config.CLAVE_CONVERSACIONES_ENV, Fernet.generate_key().decode())
+    monkeypatch.delenv(config.PERMITIR_SIN_CIFRAR_ENV, raising=False)
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == ["indexar", "polling"]
+
+
 def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
     """REGRESION del bug encontrado probando en real el 28/07.
 
@@ -877,6 +946,12 @@ def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
     Este test no existia porque todos los demas ESPIAN el indexado en vez de
     arrancar el bot - por eso el fallo paso limpio los 175 tests.
     """
+    # R-04: desde que el bot no arranca sin clave, estos tests -que miran el
+    # indexado, no el cifrado- necesitan una. Antes pasaban o no segun el
+    # .env de la maquina, que es justo lo que un test no puede hacer.
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv(config.CLAVE_CONVERSACIONES_ENV, Fernet.generate_key().decode())
     llamadas = []
     monkeypatch.setattr(telegram_bot, "indexar_conversaciones", lambda: llamadas.append(1) or 0)
     # La Application real no se construye ni se arranca: solo interesa que
@@ -894,6 +969,12 @@ def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
 def test_si_falla_el_indexado_el_bot_arranca_igual(monkeypatch):
     """RNF-02: sin memoria semantica el bot sigue siendo util, asi que un
     fallo al indexar no debe impedir que arranque."""
+    # R-04: desde que el bot no arranca sin clave, estos tests -que miran el
+    # indexado, no el cifrado- necesitan una. Antes pasaban o no segun el
+    # .env de la maquina, que es justo lo que un test no puede hacer.
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv(config.CLAVE_CONVERSACIONES_ENV, Fernet.generate_key().decode())
     def revienta():
         raise RuntimeError("chroma roto")
 

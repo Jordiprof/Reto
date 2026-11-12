@@ -129,7 +129,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | Fichero | Tests | Qué protege |
 |---|---|---|
 | `test_tools.py` | 115 | Herramientas, validación de argumentos, SEG-07, categorías |
-| `test_telegram_seguridad.py` | 92 | Las tres puertas, privacidad de logs, comandos, adjuntos |
+| `test_telegram_seguridad.py` | 99 | Las tres puertas, privacidad de logs, comandos, adjuntos |
 | `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
 | `test_red_segura.py` | 41 | Guardián anti-SSRF |
