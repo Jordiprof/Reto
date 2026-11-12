@@ -143,12 +143,19 @@ def _dominio_autorizado(host: str, permitidos: frozenset) -> bool:
     return any(host == d or host.endswith("." + d) for d in permitidos)
 
 
-def validar_url(url: str) -> str:
+def validar_url(url: str, permitidos: frozenset[str] | None = None) -> str:
     """Deja pasar la URL o lanza UrlNoPermitida explicando por que no.
 
     Devuelve la URL tal cual si es valida, para poder escribir
     `httpx.get(validar_url(u))` y que sea imposible saltarse el guardian
     por olvido.
+
+    `permitidos` (R-03, auditoria de seguridad de noviembre): una lista de
+    dominios PROPIA que SUSTITUYE a DOMINIOS_PERMITIDOS_WEB, nunca la
+    amplia. La usa /noticias para abrir los articulos de SUS medios sin
+    meterlos en la lista general (que es la que decide a donde puede ir el
+    modelo con resumir_url). Lo demas -esquema, IP interna escrita a pelo
+    y resolucion DNS- se comprueba exactamente igual. None = la general.
     """
     try:
         partes = urlparse(url.strip())
@@ -168,7 +175,8 @@ def validar_url(url: str) -> str:
     if not host:
         raise UrlNoPermitida("Esa dirección no tiene dominio.")
 
-    permitidos = obtener_dominios_permitidos()
+    if permitidos is None:
+        permitidos = obtener_dominios_permitidos()
     if not permitidos:
         raise UrlNoPermitida(
             "No tengo ningún dominio autorizado todavía. Añádelos a "

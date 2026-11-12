@@ -132,11 +132,11 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_telegram_seguridad.py` | 92 | Las tres puertas, privacidad de logs, comandos, adjuntos |
 | `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
-| `test_red_segura.py` | 39 | Guardián anti-SSRF |
+| `test_red_segura.py` | 41 | Guardián anti-SSRF |
 | `test_resumen_largo.py` | 36 | `/condensar` por bloques |
 | `test_rag.py` | 30 | Memoria semántica, privacidad del índice |
 | `test_readme.py` | 28 | **Que el README no mienta** |
-| `test_noticias.py` | 27 | `/noticias`: RSS, fechas RFC-822/ISO, lista blanca |
+| `test_noticias.py` | 37 | `/noticias`: RSS, fechas RFC-822/ISO, lista blanca |
 | `test_llm_loop.py` | 25 | Bucle de tools, presupuesto, idempotencia |
 | `test_llm_router.py` | 24 | Reintentos, degradación, reservas de modelo |
 | `test_voz.py` | 21 | Whisper + Piper, límites de duración |

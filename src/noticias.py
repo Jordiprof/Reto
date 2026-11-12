@@ -72,6 +72,48 @@ FUENTES: dict[str, str] = {
     "The Record": "https://therecord.media/feed",
 }
 
+
+
+def _dominios_de(fuentes: dict[str, str]) -> frozenset[str]:
+    """Los dominios de los medios, sacados de la URL de su feed.
+
+    R-03 (auditoria de seguridad de noviembre): los enlaces de cada item los
+    escribe el MEDIO, no nosotros, asi que antes de abrirlos pasan por el
+    guardian (red_segura.validar_url) con ESTA lista y no con
+    DOMINIOS_PERMITIDOS_WEB: meter los medios en la general dejaria a
+    resumir_url visitarlos por su cuenta, que es lo que se decidio el 08/08
+    NO hacer (y lo sujeta test_las_fuentes_NO_estan_en_la_lista_blanca).
+
+    Solo se quitan "www." y "feeds." del principio (feeds.arstechnica.com
+    publica articulos en arstechnica.com) y NADA MAS. No se sube "a los dos
+    ultimos trozos" a proposito: con un medio en .co.uk eso autorizaria
+    co.uk entero. Si se añade un feed cuyo dominio no sea el de sus
+    articulos, sus articulos no se abriran y el informe lo anotara como
+    "solo titular" - falla cerrado y a la vista.
+    """
+    from urllib.parse import urlsplit
+
+    dominios = set()
+    for url in fuentes.values():
+        host = (urlsplit(url).hostname or "").lower()
+        dominios.add(host.removeprefix("www.").removeprefix("feeds."))
+    return frozenset(d for d in dominios if d)
+
+
+_DOMINIOS_DE_LAS_FUENTES = _dominios_de(FUENTES)
+
+# Saltos de redireccion que se siguen, cada uno REVALIDADO con el guardian.
+# Mas que los 2 de resumir_url (tools._MAX_REDIRECCIONES) porque hasta hoy
+# esto seguia los que hiciera falta (httpx admite 20) y no se ha medido
+# cuantos encadenan los medios: con 5 se cubre http->https->www.->barra
+# final sin dejar de cortar un bucle.
+_MAX_REDIRECCIONES = 5
+
+# Tope del titular del RSS. Va al prompt FUERA de <fuente> (es metadato), asi
+# que no debe poder colar un parrafo entero. Los titulares reales rondan los
+# 60-120 caracteres.
+_MAX_CARACTERES_TITULAR = 300
+
 # Ventana por defecto. DOS dias y no siete: ver la medicion del cabecero.
 DIAS_POR_DEFECTO = 2
 
@@ -201,20 +243,75 @@ def _leer_fecha(texto: str) -> datetime | None:
 
 
 def _bajar(url: str, tipos: tuple[str, ...], tope: int) -> str:
-    """Descarga y devuelve el texto crudo. Lanza si no sirve."""
+    """Descarga y devuelve el texto crudo. Lanza si no sirve.
+
+    R-03 (auditoria de seguridad de noviembre): antes era
+    follow_redirects=True y la URL no pasaba por nadie. Los feeds son
+    constantes, pero los <link> de sus items y los saltos de redireccion
+    los decide el MEDIO: uno manipulado podia mandar la peticion a
+    169.254.169.254 (credenciales de la VPS) o a 127.0.0.1. Ahora es el
+    mismo mecanismo que resumir_url (tools._pedir_texto): la URL y CADA
+    salto pasan por validar_url -lista de dominios de los medios + bloqueo
+    de IPs internas con resolucion DNS- y httpx no sigue nada por su cuenta.
+    UrlNoPermitida se lanza como cualquier otro fallo: quien llama ya anota
+    la fuente como caida o el articulo como "solo titular".
+    """
+    from urllib.parse import urljoin
+
     import httpx
 
-    with httpx.stream("GET", url, timeout=_TIMEOUT, follow_redirects=True) as respuesta:
-        respuesta.raise_for_status()
-        tipo = respuesta.headers.get("content-type", "").split(";")[0].strip()
-        if tipo and tipo not in tipos:
-            raise ValueError(f"tipo inesperado: {tipo}")
-        crudo = b""
-        for bloque in respuesta.iter_bytes():
-            crudo += bloque
-            if len(crudo) > tope:
-                break
-    return crudo.decode("utf-8", errors="replace")
+    from src.red_segura import validar_url
+
+    destino = validar_url(url, _DOMINIOS_DE_LAS_FUENTES)
+    for _ in range(_MAX_REDIRECCIONES + 1):
+        with httpx.stream(
+            "GET", destino, timeout=_TIMEOUT, follow_redirects=False
+        ) as respuesta:
+            if respuesta.is_redirect:
+                salto = respuesta.headers.get("location", "")
+                if not salto:
+                    raise ValueError("redireccion sin destino")
+                # urljoin: los destinos relativos ("/2026/08/x/") se
+                # resuelven contra la URL de origen, igual que en tools.py.
+                destino = validar_url(urljoin(destino, salto), _DOMINIOS_DE_LAS_FUENTES)
+                continue
+            respuesta.raise_for_status()
+            tipo = respuesta.headers.get("content-type", "").split(";")[0].strip()
+            if tipo and tipo not in tipos:
+                raise ValueError(f"tipo inesperado: {tipo}")
+            crudo = b""
+            for bloque in respuesta.iter_bytes():
+                crudo += bloque
+                if len(crudo) > tope:
+                    break
+            return crudo.decode("utf-8", errors="replace")
+    raise ValueError("demasiadas redirecciones")
+
+
+def _titular_saneado(texto: str) -> str:
+    """El titular tal y como entra en los prompts.
+
+    R-03 (auditoria de seguridad de noviembre): el titular lo escribe el
+    medio y va FUERA de <fuente> en las dos pasadas (es metadato, y por eso
+    el prompt puede exigir respetarlo). Fuera de la cita no tenia ningun
+    saneado: un titular con "</fuente>" o "<fuente>" jugaba con las
+    etiquetas de cita, y uno kilometrico colaba un parrafo de instrucciones.
+    Se le pasa el MISMO saneado que al contenido citado
+    (tools._sanear_contenido) y se acota. Los saltos de linea ya se
+    colapsan aqui, asi que tampoco puede fingir una linea "Enlace:" nueva.
+    """
+    limpio = _sanear_contenido(" ".join(texto.split()))
+    if len(limpio) > _MAX_CARACTERES_TITULAR:
+        limpio = limpio[: _MAX_CARACTERES_TITULAR - 1] + "…"
+    return limpio
+
+
+def _sanear_contenido(texto: str) -> str:
+    """Import perezoso del saneado de tools.py, igual que _envolver mas
+    abajo: tools arrastra pydantic y no hace falta pagarlo al importar."""
+    from src.tools import _sanear_contenido as sanear
+
+    return sanear(texto)
 
 
 def descargar_titulares(
@@ -255,8 +352,10 @@ def descargar_titulares(
                 continue
             noticias.append(Noticia(
                 fuente=nombre,
-                titulo=" ".join(entrada["titulo"].split()),
-                enlace=entrada["enlace"],
+                titulo=_titular_saneado(entrada["titulo"]),
+                # El enlace tambien lo escribe el medio y tambien va fuera
+                # de <fuente>: mismo saneado, por el mismo motivo (R-03).
+                enlace=_sanear_contenido(entrada["enlace"]),
                 fecha=fecha,
             ))
 
