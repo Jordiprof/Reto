@@ -1666,6 +1666,54 @@ def test_un_docx_demasiado_grande_no_llega_a_guardarse(monkeypatch):
     assert "pesa demasiado" in " ".join(enviados)
 
 
+@pytest.mark.requisito("RF-20")
+@pytest.mark.control("E2-FICHEROS")
+def test_R08_un_adjunto_que_Telegram_ya_dice_que_es_enorme_NI_se_descarga(monkeypatch):
+    """R-08 (auditoria de seguridad de noviembre). El tope de 15 MB se
+    miraba DESPUES de bajarse el fichero entero a memoria. Telegram dice el
+    tamaño en el propio update (file_size): si ya pasa del tope, no hay
+    nada que descargar. En una VPS con 1 GB de techo, eso es la diferencia
+    entre rechazar y caerse."""
+    import src.documentos as documentos
+
+    descargas = []
+    update = _update_documento(datos=b"%PDF", nombre="enorme.pdf")
+    update.effective_message.document.file_size = documentos._MAX_BYTES_ADJUNTO + 1
+
+    async def get_file():
+        descargas.append(1)
+        raise AssertionError("no deberia ni pedir el fichero")
+
+    update.effective_message.document.get_file = get_file
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    assert descargas == []
+    assert "pesa demasiado" in " ".join(update.effective_message.enviados)
+
+
+def test_R08_validar_el_adjunto_NO_corre_en_el_bucle_de_eventos(monkeypatch):
+    """validar_adjunto descomprime el .docx entero por bloques para medirlo
+    (LOG-02): es CPU, y en el bucle de eventos congelaba el bot -incluida la
+    puerta de acceso- mientras duraba. Mismo criterio que preparar() y
+    Agente.preguntar: a un hilo."""
+    import threading
+
+    import src.documentos as documentos
+
+    hilos = []
+
+    def validar_espia(datos, nombre):
+        hilos.append(threading.current_thread() is threading.main_thread())
+        raise documentos.DocumentoNoValido("no vale")
+
+    monkeypatch.setattr(documentos, "validar_adjunto", validar_espia)
+
+    asyncio.run(telegram_bot.manejar_documento(_update_documento(datos=b"x"), _context()))
+
+    assert hilos == [False]
+
+
 def test_los_documentos_pasan_por_la_allowlist():
     """Mismo argumento que con los botones (ADR-005): manejar_documento
     esta en el mismo grupo 0 que el resto, y el grupo -1 con las dos

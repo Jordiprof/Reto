@@ -993,7 +993,20 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await mensaje.reply_text("Ese adjunto no tiene nombre de fichero; no sé qué es.")
         return
 
-    from src.documentos import DocumentoNoValido, validar_adjunto
+    import src.documentos as documentos
+    from src.documentos import DocumentoNoValido
+
+    # R-08 (auditoria de seguridad de noviembre): el tope de tamaño se
+    # miraba DESPUES de bajar el fichero entero a memoria. Telegram ya dice
+    # cuanto pesa en el propio update: si pasa del tope, ni se descarga. Si
+    # no lo dice (file_size None), validar_adjunto lo sigue parando despues.
+    tamaño = getattr(documento, "file_size", None)
+    if tamaño is not None and tamaño > documentos._MAX_BYTES_ADJUNTO:
+        await mensaje.reply_text(
+            f"⚠️ Ese fichero pesa demasiado "
+            f"(máximo {documentos._MAX_BYTES_ADJUNTO // 1_000_000} MB)."
+        )
+        return
 
     async with _cerrojo_de(usuario.id):
         try:
@@ -1005,7 +1018,12 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
 
         try:
-            adjunto = validar_adjunto(datos, documento.file_name)
+            # R-08: a un hilo. Para un .docx descomprime cada entrada por
+            # bloques para medirla (LOG-02), o sea CPU; en el bucle de
+            # eventos congelaba el bot entero, puerta de acceso incluida.
+            adjunto = await asyncio.to_thread(
+                documentos.validar_adjunto, datos, documento.file_name
+            )
         except DocumentoNoValido as error:
             await mensaje.reply_text(f"⚠️ {error}")
             return
