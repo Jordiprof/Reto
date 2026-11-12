@@ -143,7 +143,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_telegram_voz.py` | 20 | La puerta de la voz antes de descargar el audio |
 | `test_storage.py` | 26 | Cifrado, metadatos en claro, borrado |
 | `test_cuota_y_orden.py` | 20 | Cuota diaria, orden de proveedores, tope por proveedor |
-| `test_config.py` | 19 | Configuración, lista blanca de dominios |
+| `test_config.py` | 24 | Configuración, lista blanca de dominios |
 | `test_avisos_caida.py` | 19 | Avisos de caída distinguiendo tokens/peticiones/día |
 | `test_condensar_lectura.py` | 17 | Caché de lectura, una llamada por bloque |
 | `test_recuerdo_y_limpiar.py` | 18 | Ruido del RAG, `/limpiar`, reglas del prompt |

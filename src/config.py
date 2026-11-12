@@ -7,6 +7,7 @@
 import hashlib
 import logging
 import os
+import re
 
 # secrets: generador criptograficamente seguro (no "random", que es
 # predecible). Se usa para la sal del hash de identificadores en el log.
@@ -574,12 +575,18 @@ def obtener_usuarios_permitidos() -> frozenset[int]:
         raise ConfiguracionTelegramInvalida(
             f"Falta {TELEGRAM_PERMITIDOS_ENV} en el .env: el bot NO arranca sin lista blanca."
         )
-    try:
-        permitidos = frozenset(int(t) for t in crudo.split(",") if t.strip())
-    except ValueError:
+    # R-10 (auditoria de seguridad de noviembre): int(t) a secas es mas
+    # tolerante de lo que parece - acepta "1_0" (=10), "+5" y digitos de
+    # otras escrituras ("١١١" = 111). En el control nº1 del bot, un id que
+    # no es LITERALMENTE una tira de cifras se trata como lista ilegible,
+    # que falla cerrado. re.ASCII porque sin el, \d tambien casa esos
+    # digitos no latinos y el agujero seguiria abierto.
+    trozos = [t.strip() for t in crudo.split(",") if t.strip()]
+    if not all(re.fullmatch(r"\d+", t, re.ASCII) for t in trozos):
         raise ConfiguracionTelegramInvalida(
             f"{TELEGRAM_PERMITIDOS_ENV} debe ser una lista de numeros separados por comas."
-        ) from None
+        )
+    permitidos = frozenset(int(t) for t in trozos)
     if not permitidos:
         raise ConfiguracionTelegramInvalida(
             f"{TELEGRAM_PERMITIDOS_ENV} no contiene ningun id valido."
