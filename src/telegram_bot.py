@@ -2193,7 +2193,15 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # mensaje entero - el mismo fallo que ya hubo el 30/07 con los
         # titulos de la lista de dominios.
         meta_nombre = datos.get("nombre") or "(sin nombre)"
-        await consulta.edit_message_text(f"📖 {meta_nombre}")
+        # R-05: guardada en claro aunque hay clave. Puede ser legitima
+        # (anterior a F5.3) o haberla plantado alguien: no se esconde, pero
+        # tampoco se presenta igual que una cifrada.
+        aviso_claro = (
+            "\n⚠️ Esta conversación está guardada SIN CIFRAR aunque el cifrado "
+            "está activo: es anterior al cifrado o alguien la ha tocado."
+            if datos.get("aviso_sin_cifrar") else ""
+        )
+        await consulta.edit_message_text(f"📖 {meta_nombre}{aviso_claro}")
         mensaje_origen = update.effective_message or consulta.message
         if mensaje_origen is None:  # defensa: sin mensaje no hay donde escribir
             return

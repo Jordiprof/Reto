@@ -128,6 +128,74 @@ def test_fichero_antiguo_sin_marcador_se_lee_en_claro(entorno_aislado, con_clave
     assert cargar_conversacion(antiguo)["historial"] == HISTORIAL
 
 
+def _escribir_en_claro(ruta, historial, **extra):
+    ruta.write_text(
+        json.dumps({
+            "fecha": "2026-07-20T10:00:00", "proveedor": "groq",
+            "modelo": "llama-3.3-70b-versatile", "historial": historial, **extra,
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.requisito("RF-17", "RNF-06")
+@pytest.mark.control("E2-REPOSO")
+def test_R05_con_clave_un_fichero_EN_CLARO_se_lee_pero_MARCADO_y_avisado(
+    entorno_aislado, con_clave, caplog
+):
+    """R-05 (auditoria de seguridad de noviembre). cargar_conversacion se
+    fiaba de la marca "cifrado" del propio fichero, que va en claro y no la
+    protege nada: quien pueda escribir en conversations/ planta un JSON en
+    claro (o pone "cifrado": false) y se carga como recuerdo legitimo, sin
+    que Fernet tenga ocasion de detectar nada.
+
+    Los ficheros anteriores a F5.3 son legitimos y estan en claro, asi que
+    rechazarlos seria perder conversaciones de verdad. Lo conservador: se
+    siguen leyendo, pero MARCADOS (aviso_sin_cifrar) para que quien los
+    enseñe lo diga, y con un aviso en el log - el nombre del fichero, nunca
+    el contenido."""
+    ruta = entorno_aislado / "conversations" / "2026-07-20_10-00-00.json"
+    _escribir_en_claro(ruta, HISTORIAL, cifrado=False)
+
+    with caplog.at_level("WARNING"):
+        datos = cargar_conversacion(ruta)
+
+    assert datos["historial"] == HISTORIAL
+    assert datos["aviso_sin_cifrar"] is True
+    assert ruta.name in caplog.text
+    assert "médico" not in caplog.text
+
+
+def test_R05_sin_clave_no_hay_nada_que_avisar(entorno_aislado, sin_clave, caplog):
+    """Sin clave, guardar en claro es lo esperado (y ya se avisa al
+    arrancar): marcar cada fichero seria ruido."""
+    ruta = guardar_conversacion(HISTORIAL, "groq", "m")
+
+    with caplog.at_level("WARNING"):
+        datos = cargar_conversacion(ruta)
+
+    assert not datos.get("aviso_sin_cifrar")
+    assert ruta.name not in caplog.text
+
+
+@pytest.mark.requisito("RF-17", "RNF-02")
+@pytest.mark.control("E2-REPOSO")
+@pytest.mark.parametrize("historial", ["gAAAAABbloquecifrado==", [1, 2], [{"role": 3}]])
+def test_R05_una_marca_que_MIENTE_sobre_un_contenido_ilegible_no_se_traga(
+    entorno_aislado, con_clave, historial
+):
+    """"cifrado": false sobre lo que no es un historial (por ejemplo, el
+    bloque cifrado de antes con la marca cambiada a mano). Antes se
+    devolvia tal cual, y el RAG reventaba al recorrerlo con un
+    AttributeError que tumbaba el indexado ENTERO. Ahora es un fichero que
+    no se puede leer, como uno con la clave equivocada."""
+    ruta = entorno_aislado / "conversations" / "2026-07-20_10-00-00.json"
+    _escribir_en_claro(ruta, historial, cifrado=False)
+
+    with pytest.raises(ConversacionNoDescifrable):
+        cargar_conversacion(ruta)
+
+
 # --- Fallos: cada uno con su mensaje, no un error generico ------------
 
 

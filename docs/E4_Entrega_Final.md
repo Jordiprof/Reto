@@ -130,7 +130,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 |---|---|---|
 | `test_tools.py` | 115 | Herramientas, validación de argumentos, SEG-07, categorías |
 | `test_telegram_seguridad.py` | 99 | Las tres puertas, privacidad de logs, comandos, adjuntos |
-| `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
+| `test_telegram_ux.py` | 40 | Menús, catálogo de comandos, estado de espera |
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
 | `test_red_segura.py` | 41 | Guardián anti-SSRF |
 | `test_resumen_largo.py` | 36 | `/condensar` por bloques |
@@ -141,7 +141,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_llm_router.py` | 24 | Reintentos, degradación, reservas de modelo |
 | `test_voz.py` | 21 | Whisper + Piper, límites de duración |
 | `test_telegram_voz.py` | 20 | La puerta de la voz antes de descargar el audio |
-| `test_storage.py` | 21 | Cifrado, metadatos en claro, borrado |
+| `test_storage.py` | 26 | Cifrado, metadatos en claro, borrado |
 | `test_cuota_y_orden.py` | 20 | Cuota diaria, orden de proveedores, tope por proveedor |
 | `test_config.py` | 19 | Configuración, lista blanca de dominios |
 | `test_avisos_caida.py` | 19 | Avisos de caída distinguiendo tokens/peticiones/día |
@@ -149,7 +149,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_recuerdo_y_limpiar.py` | 18 | Ruido del RAG, `/limpiar`, reglas del prompt |
 | `test_config_logging.py` | 16 | Modo depuración opt-in |
 | `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
-| `test_main_cli.py` | 17 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
+| `test_main_cli.py` | 18 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
 | `test_logging.py` | 14 | Política de solo metadatos |
 | `test_agent.py` | 15 | Núcleo, contaminación de historial |
 | `test_llm_gemini.py` | 13 | Traducción del dialecto de Gemini |

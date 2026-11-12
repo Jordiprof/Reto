@@ -309,7 +309,7 @@ def cargar_conversacion(ruta: Path) -> dict:
     # .get() y no [""]: los ficheros guardados antes de F5.3 no tienen esta
     # clave, y para ellos la respuesta correcta es "no, no esta cifrado".
     if not datos.get("cifrado"):
-        return datos
+        return _en_claro_comprobado(datos, ruta)
 
     clave = obtener_clave_conversaciones()
     if clave is None:
@@ -319,6 +319,65 @@ def cargar_conversacion(ruta: Path) -> dict:
         )
 
     datos["historial"] = _descifrar_historial(datos["historial"], clave)
+    return datos
+
+
+def _hay_clave_configurada() -> bool:
+    """¿Quiere JIM cifrar? Una clave ROTA tambien cuenta como "si": quien la
+    puso queria cifrado, y para esta pregunta da igual que este mal escrita
+    (eso ya lo para el arranque con su propio mensaje)."""
+    from src.config import ClaveCifradoInvalida
+
+    try:
+        return obtener_clave_conversaciones() is not None
+    except ClaveCifradoInvalida:
+        return True
+
+
+def _es_historial_legible(historial: object) -> bool:
+    """Lista de mensajes {role: str, content: str|None}. Lo minimo que
+    necesitan quien lo enseña y el RAG para no reventar al recorrerlo."""
+    return isinstance(historial, list) and all(
+        isinstance(m, dict)
+        and isinstance(m.get("role"), str)
+        and isinstance(m.get("content", ""), (str, type(None)))
+        for m in historial
+    )
+
+
+def _en_claro_comprobado(datos: dict, ruta: Path) -> dict:
+    """Un fichero que dice NO estar cifrado, antes de darlo por bueno.
+
+    R-05 (auditoria de seguridad de noviembre). La marca "cifrado" va en
+    claro y nada la protege: Fernet autentica el bloque cifrado, pero un
+    fichero que dice "no estoy cifrado" no le da ocasion de autenticar
+    nada. Quien pueda escribir en conversations/ podia plantar un JSON en
+    claro -o cambiar la marca- y se cargaba como un recuerdo legitimo.
+
+    NO SE RECHAZAN, y es la decision: los ficheros anteriores a F5.3 son
+    conversaciones de verdad, en claro y sin marca. Lo mas conservador que
+    no pierde nada es:
+      1. Si hay clave, se MARCAN (aviso_sin_cifrar) para que quien los
+         enseñe lo diga, y se avisa en el log con el NOMBRE del fichero
+         (una marca de tiempo), nunca con su contenido.
+      2. Si lo que hay dentro no es un historial -p. ej. el bloque cifrado
+         de antes con la marca cambiada a mano-, se trata como ilegible.
+         Antes se devolvia tal cual y el RAG reventaba al recorrerlo, y con
+         el el indexado de TODAS las conversaciones.
+    Queda propuesto, no hecho: re-cifrarlos con la clave actual (migracion)
+    y, cuando no quede ninguno, rechazar los ficheros en claro.
+    """
+    if not _es_historial_legible(datos.get("historial")):
+        raise ConversacionNoDescifrable(
+            f"'{ruta.name}' dice no estar cifrada pero su contenido no es una "
+            "conversación legible (¿fichero alterado?)."
+        )
+    if _hay_clave_configurada():
+        logging.warning(
+            "Conversacion '%s' guardada SIN CIFRAR aunque hay %s "
+            "(anterior a F5.3, o alterada)", ruta.name, "CONVERSATIONS_KEY",
+        )
+        datos["aviso_sin_cifrar"] = True
     return datos
 
 

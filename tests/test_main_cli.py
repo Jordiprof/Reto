@@ -115,6 +115,20 @@ def test_mostrar_conversacion_NO_imprime_el_system_prompt(monkeypatch, capsys):
     assert "buenas" in salida
 
 
+def test_R05_una_conversacion_EN_CLARO_con_cifrado_activo_lo_dice(monkeypatch, capsys):
+    """R-05: mismo aviso que en Telegram al abrir una conversacion que
+    storage ha marcado como "en claro aunque hay clave"."""
+    monkeypatch.setattr(m, "cargar_conversacion", lambda ruta: {
+        "aviso_sin_cifrar": True,
+        "historial": [{"role": "system", "content": "s"}, {"role": "user", "content": "hola"}],
+    })
+
+    m.mostrar_conversacion("da_igual.json")
+
+    salida = capsys.readouterr().out
+    assert "SIN CIFRAR" in salida and "hola" in salida
+
+
 @pytest.mark.requisito("RNF-02", "RF-17")
 def test_una_conversacion_que_no_se_puede_descifrar_avisa_y_NO_revienta(monkeypatch, capsys):
     """RNF-02: ante un fichero que no se puede leer, el programa avisa y sigue

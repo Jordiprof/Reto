@@ -427,6 +427,14 @@ def mostrar_conversacion(ruta) -> None:
         print(f"⚠️ {error}")
         return
 
+    # R-05: mismo aviso que en Telegram (una operacion compartida no puede
+    # contarse de dos maneras). Ver storage._en_claro_comprobado.
+    if datos.get("aviso_sin_cifrar"):
+        print(
+            "⚠️ Esta conversación está guardada SIN CIFRAR aunque el cifrado "
+            "está activo: es anterior al cifrado o alguien la ha tocado."
+        )
+
     # historial[0] es el system prompt: no es parte de "lo que se dijo".
     for mensaje in datos["historial"][1:]:
         quien = f"{_AZUL}Tú:{_RESET}" if mensaje["role"] == "user" else f"{_VERDE}Agente:{_RESET}"
