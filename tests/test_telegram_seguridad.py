@@ -749,6 +749,46 @@ def test_un_turno_que_falla_no_se_persiste(monkeypatch, persistencia_espiada):
     assert "cable" in " ".join(enviados)  # al usuario si se le contesta
 
 
+@pytest.mark.requisito("RF-03", "RF-06")
+def test_R06_si_fallan_TODOS_los_proveedores_ni_se_guarda_ni_se_lee_en_alto(
+    monkeypatch, persistencia_espiada
+):
+    """R-06 (auditoria de seguridad de noviembre). Agente.preguntar devuelve
+    el mensaje de error como si fuera una respuesta, y el bot lo trataba
+    igual que una de verdad: persistia la pregunta huerfana, la indexaba en
+    el RAG y, con la voz encendida, leia en alto el "⚠️ limite superado".
+
+    Con un Agente REAL y un router que falla entero: al usuario le llega el
+    aviso escrito, y nada mas."""
+    from src.agent import Agente
+    from src.llm_errors import ErrorLimitePeticiones
+
+    agente = Agente("s", "groq", "x", "fake")
+
+    def falla(mensajes, tools):
+        raise ErrorLimitePeticiones("Groq", "rate limit")
+
+    agente.router = SimpleNamespace(responder=falla, aviso_fallback=None)
+    monkeypatch.setattr(
+        telegram_bot, "_agente_de", lambda uid: telegram_bot._agentes.setdefault(uid, agente)
+    )
+    telegram_bot._voz_activa[111] = {"hablar"}
+    hablado = []
+
+    async def hablar_espia(update, context, texto):
+        hablado.append(texto)
+
+    monkeypatch.setattr(telegram_bot, "_hablar", hablar_espia)
+    enviados = []
+
+    asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
+
+    assert enviados and "límite" in enviados[0]
+    assert persistencia_espiada.guardados == []
+    assert persistencia_espiada.indexados == []
+    assert hablado == []
+
+
 def test_si_falla_el_guardado_el_usuario_recibe_su_respuesta(monkeypatch, persistencia_espiada):
     """Guardar es importante, pero no tanto como contestar: un fallo al
     persistir se registra y se sigue, no rompe el turno."""

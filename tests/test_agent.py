@@ -2,6 +2,8 @@
 # memoria de la conversacion. Desde T4, Agente llama a self.router, asi que
 # aqui sustituimos ese router por uno FALSO tras crear el agente - no toca
 # ni red ni la cadena real.
+from types import SimpleNamespace
+
 from src.agent import Agente
 from src.documentos import DocumentoAdjunto
 from src.llm_errors import ErrorAutenticacion
@@ -39,8 +41,29 @@ def test_error_llm_no_se_guarda_en_historial():
     respuesta = agente.preguntar("Hola")
 
     assert respuesta == "⚠️ la clave de API de Groq no es válida."
-    # El historial solo tiene: system prompt + la pregunta del usuario.
-    assert [m["role"] for m in agente.historial] == ["system", "user"]
+    # R-06 (auditoria de seguridad de noviembre): tampoco se queda la
+    # PREGUNTA. Antes el historial acababa en ["system", "user"]: una
+    # pregunta huerfana, sin respuesta, que el bot guardaba e indexaba en el
+    # RAG y que se reenviaba en el turno siguiente pegada a la nueva.
+    assert [m["role"] for m in agente.historial] == ["system"]
+    assert agente.turno_fallido is True
+
+
+def test_R06_tras_un_fallo_el_turno_siguiente_va_limpio():
+    """La pregunta que fallo no se cuela delante de la siguiente: el modelo
+    recibiria dos "user" seguidos y contestaria a las dos a la vez."""
+    agente = Agente(system_prompt="Eres un tutor.", proveedor="groq", api_key="x", modelo="fake")
+    agente.router = _RouterFalso(error=ErrorAutenticacion("Groq", "clave invalida"))
+    agente.preguntar("primera")
+
+    visto = []
+    agente.router = SimpleNamespace(
+        responder=lambda mensajes, tools: visto.append(list(mensajes)) or "ok"
+    )
+    agente.preguntar("segunda")
+
+    assert [m["content"] for m in visto[0]] == ["Eres un tutor.", "segunda"]
+    assert agente.turno_fallido is False
 
 
 def test_turno_normal_si_se_guarda_en_historial():

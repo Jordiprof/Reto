@@ -100,6 +100,9 @@ class Agente:
         # mensajes viejos desaparecian del disco, mientras los punteros
         # "fichero:indice" del RAG pasaban a señalar OTROS mensajes.
         self._fuera_de_contexto: list[dict] = []
+        # R-06: True si el ultimo turno acabo en ErrorLLM, o sea si lo que
+        # devolvio preguntar() es un AVISO y no una respuesta del modelo.
+        self.turno_fallido = False
         # Lo que una tool ha dejado para ENSEÑAR en este turno y no cabe en
         # el texto de la respuesta (hoy: la foto de la NASA). Lo recoge quien
         # sepa mostrarlo -Telegram con send_photo- y lo ignora quien no -la
@@ -163,6 +166,8 @@ class Agente:
         guarda el turno en el historial si la respuesta fue valida, y
         devuelve el texto para que quien llame lo muestre donde quiera.
         """
+        # R-06: se pone a True solo si este turno acaba en ErrorLLM.
+        self.turno_fallido = False
         # 1) La pregunta entra al historial ANTES de llamar.
         self.historial.append({"role": "user", "content": pregunta})
 
@@ -214,6 +219,19 @@ class Agente:
             # de verdad - contaminaria la memoria de la conversacion en
             # turnos futuros (mismo principio que F3.1, ahora con una
             # excepcion tipada en vez de mirar el texto de la respuesta).
+            #
+            # R-06 (auditoria de seguridad de noviembre): y tampoco se queda
+            # la PREGUNTA. Se metio en el paso 1 y aqui se saca: sin esto
+            # quedaba huerfana, el bot la guardaba e indexaba, y el turno
+            # siguiente llegaba al modelo con dos "user" seguidos. Es el
+            # ultimo mensaje aunque se haya compactado: la ventana conserva
+            # siempre los mas recientes.
+            self.historial.pop()
+            # El canal necesita saber que esto es un aviso y no una
+            # respuesta (no guardarlo, no leerlo en alto). Un atributo y no
+            # una excepcion para no cambiar lo que recibe la CLI, que solo
+            # imprime el texto - mismo patron que `compactados`.
+            self.turno_fallido = True
             return error.mensaje_usuario
         finally:
             restaurar_documento_actual(token)

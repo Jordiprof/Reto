@@ -758,6 +758,13 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             # apaga, el hilo termina la llamada igual. Acotado por el
             # timeout de 30s de F5.0/T3.
             respuesta = await asyncio.to_thread(agente.preguntar, texto)
+            # R-06 (auditoria de seguridad de noviembre): si fallaron TODOS
+            # los proveedores, preguntar() no lanza: devuelve el aviso
+            # generico del ErrorLLM. Antes se trataba como una respuesta
+            # normal -se persistia, se indexaba y con voz se leia en alto-.
+            # Ahora cuenta como fallo: se le enseña el aviso escrito y nada
+            # mas. getattr por los dobles de test que no traen el atributo.
+            fallo = bool(getattr(agente, "turno_fallido", False))
         except Exception as error:
             # Agente.preguntar() solo captura ErrorLLM; cualquier otro
             # fallo (ChromaDB, un AttributeError nuestro, un KeyError de
@@ -769,7 +776,7 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             )
             respuesta = "⚠️ Se me ha cruzado un cable. Vuelve a intentarlo en un momento."
             fallo = True
-        else:
+        if not fallo:
             # Solo se persiste si el turno fue bien: un historial que acaba
             # en un fallo no debe entrar en la memoria a largo plazo como si
             # fuera una conversacion real (mismo criterio que Agente.preguntar,

@@ -129,7 +129,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | Fichero | Tests | Qué protege |
 |---|---|---|
 | `test_tools.py` | 115 | Herramientas, validación de argumentos, SEG-07, categorías |
-| `test_telegram_seguridad.py` | 91 | Las tres puertas, privacidad de logs, comandos, adjuntos |
+| `test_telegram_seguridad.py` | 92 | Las tres puertas, privacidad de logs, comandos, adjuntos |
 | `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
 | `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
 | `test_red_segura.py` | 39 | Guardián anti-SSRF |
@@ -151,7 +151,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
 | `test_main_cli.py` | 17 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
 | `test_logging.py` | 14 | Política de solo metadatos |
-| `test_agent.py` | 14 | Núcleo, contaminación de historial |
+| `test_agent.py` | 15 | Núcleo, contaminación de historial |
 | `test_llm_gemini.py` | 13 | Traducción del dialecto de Gemini |
 | `test_tool_call_mal_generada.py` | 12 | `tool_use_failed` como reintentable |
 | `test_telegram_presentacion.py` | 12 | Markdown, foto duplicada, estado y adjuntos |
