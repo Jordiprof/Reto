@@ -208,20 +208,20 @@ función con una firma, cambiar el motor no toca el bot.
 
 | Requisito | ADR | Dónde vive | Cómo se verifica |
 |---|---|---|---|
-| RF-07, RF-08, RF-09 | ADR-003 | `src/tools.py`, `src/llm_client.py` | `tests/test_tools.py` (115) |
+| RF-07, RF-08, RF-09 | ADR-003 | `src/tools.py`, `src/llm_client.py` | `tests/test_tools.py` (119) |
 | RF-13 | ADR-006 | `src/tools.py` (`categorias_por_defecto`) | `tests/test_tools.py` |
 | RF-14, RF-15, RF-16, RF-22 | ADR-001, ADR-004 | `src/llm_router.py`, `src/llm_types.py` | `test_llm_router.py` (24), `test_llm_loop.py` (25), `test_cuota_y_orden.py` (20) |
-| RF-12, RF-18 | ADR-002 | `src/rag.py`, `src/storage.py` | `test_rag.py` (29), `test_storage.py` (20) |
-| RF-11, RNF-05 | ADR-005 | `src/telegram_bot.py` (puertas grupo −1) | `test_telegram_seguridad.py` (90) |
+| RF-12, RF-18 | ADR-002 | `src/rag.py`, `src/storage.py` | `test_rag.py` (30), `test_storage.py` (26) |
+| RF-11, RNF-05 | ADR-005 | `src/telegram_bot.py` (puertas grupo −1) | `test_telegram_seguridad.py` (101) |
 | RF-17, RNF-06 | ADR-002, ADR-005 | `src/storage.py` (Fernet) | `test_storage.py` |
-| RF-20 | ADR-006 | `src/documentos.py` | `test_documentos.py` (39) |
-| RNF-06 (SSRF) | ADR-006 | `src/red_segura.py` | `test_red_segura.py` (38), `test_redirecciones.py` (7) |
+| RF-20 | ADR-006 | `src/documentos.py` | `test_documentos.py` (42) |
+| RNF-06 (SSRF) | ADR-006 | `src/red_segura.py` | `test_red_segura.py` (41), `test_redirecciones.py` (7) |
 | RNF-07 | ADR-005 | `src/llm_client.py` (`_ejecutar_tool`) | `test_logging.py` (14), `test_config_logging.py` (16) |
 | RF-21 | ADR-006 | `src/voz.py` (Whisper + Piper) | `test_voz.py` (21), `test_telegram_voz.py` (20) |
 | RF-23 | ADR-005 | `src/telegram_bot.py` (`puerta_allowlist`) | `test_telegram_seguridad.py` |
 | RF-24 | — | `src/cerrojo.py` (cerrojo del SO) | `test_cerrojo.py` (11), uno con subproceso real |
 | RF-25 | — | `src/resumen_largo.py` | `test_resumen_largo.py` (36), `test_condensar_lectura.py` (17) |
-| RF-26 | — | `src/agent.py` (`compactar_si_hace_falta`) | `test_compactar_historial.py` (12) |
+| RF-26 | — | `src/agent.py` (`compactar_si_hace_falta`) | `test_compactar_historial.py` (14) |
 | RNF-08 | — | `docs/diario_decisiones.md` | Pruebas de mutación documentadas con fecha |
 
 ---

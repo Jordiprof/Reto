@@ -62,7 +62,7 @@ del proyecto, no una nota.
 
 | Métrica | Valor | Cómo se reproduce |
 |---|---|---|
-| Casos de prueba | **831** en 35 ficheros | `python -m pytest --collect-only -q` |
+| Casos de prueba | **880** en 35 ficheros | `python -m pytest --collect-only -q` |
 | Requisitos con verificación trazada | **31 de 46** (67 %) | `python scripts/trazabilidad.py` |
 | Requisitos críticos trazados | **5 de 5** (100 %) | ídem; el script falla si baja de ahí |
 | Casos de uso trazados | **3 de 7** | ídem |

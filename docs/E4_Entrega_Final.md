@@ -52,7 +52,7 @@ no se sostiene. Las limitaciones completas están en §6, sin esconder ninguna.
 | Métrica | Valor |
 |---|---|
 | Código fuente | **11.205 líneas** (18 módulos) |
-| Tests | **12.505 líneas · 831 tests, todos en verde** |
+| Tests | **880 tests, todos en verde** (831 hasta el 06/09; +49 de la auditoría de seguridad de noviembre) |
 | Proporción test/código | **1,12 : 1** — hay más test que código |
 | Cobertura de rama | **79,86 %** (medida por primera vez el 04/09; umbral en CI = 79) |
 | Verificación por mutación | Primera ejecución real (06/09): 167 mutantes sobre los 3 módulos críticos, 100 muertos, 67 vivos — 1 no era ruido y cerró NC-07 |
@@ -163,7 +163,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_clave_cifrado.py` | 9 | Validación de la clave Fernet |
 | `test_redirecciones.py` | 7 | Que una redirección no salte el guardián |
 | `test_llm_client.py` | 5 | Despacho de tools |
-| **TOTAL** | **831** | |
+| **TOTAL** | **880** | |
 
 ### 3.2 Cómo se ejecutan
 
@@ -273,7 +273,7 @@ python -m src.telegram_bot
 - [x] Licencia propietaria, coherente con que el proyecto se comparte para evaluarlo, no para reutilizarlo
 
 ### 5.2 Tests
-- [x] 831 tests en verde
+- [x] 880 tests en verde
 - [x] Cobertura de rama medida (79,86 %) con umbral real en CI, no uno "redondo"
 - [x] Controles críticos validados **por mutación** — primera ejecución real el 06/09, cerró NC-07
 - [x] Tests de privacidad que reproducen la fuga real del 27/07

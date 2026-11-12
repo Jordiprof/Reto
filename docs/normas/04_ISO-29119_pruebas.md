@@ -66,7 +66,7 @@ local, `ruff` limpio, y todo control nuevo llega con su test.
 | Puerta | Comprobación | Dónde |
 |---|---|---|
 | Lint | `ruff check src tests scripts` | `ci.yml` |
-| Pruebas | Los 831 casos en verde | `ci.yml` |
+| Pruebas | Los 880 casos en verde | `ci.yml` |
 | Cadena de suministro | `pip-audit` sin `continue-on-error` | `ci.yml` |
 | Cobertura | No baja del 79 % de rama | job `normas` |
 | Trazabilidad | `trazabilidad.py --check` sale 0 | job `normas` |
