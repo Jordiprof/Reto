@@ -162,6 +162,48 @@ def _indexar_en_sqlite(ruta_json: Path, proveedor: str, modelo: str, num_mensaje
             )
 
 
+def _escribir_json_atomico(ruta: Path, datos: dict) -> None:
+    """Escribe el JSON de forma que el fichero quede ENTERO o como estaba.
+
+    R-02 (auditoria de seguridad de noviembre). Antes era open(ruta, "w"),
+    que VACIA el fichero antes de escribir nada: un corte de luz, un disco
+    lleno o una excepcion a mitad dejaban el JSON vacio o truncado. En la
+    CLI eso es una conversacion; en el bot, que reescribe el mismo fichero
+    en cada turno, es la conversacion ENTERA desde que empezo.
+
+    Se escribe a un temporal EN LA MISMA CARPETA (os.replace solo es
+    atomico dentro del mismo sistema de ficheros), se fuerza a disco con
+    flush + fsync y se sustituye de golpe con os.replace. Quien lea ve el
+    fichero viejo o el nuevo, nunca uno a medias.
+
+    El temporal acaba en ".tmp" y no en ".json" a proposito: si el proceso
+    muere justo en medio, listar_conversaciones (glob "*.json") no lo toma
+    por una conversacion. mkstemp lo crea con permisos 0600 (solo el dueño),
+    que es mas restrictivo que antes y no cambia nada para el propio bot.
+    """
+    # Import local: solo los usa esta funcion.
+    import os
+    import tempfile
+
+    descriptor, temporal = tempfile.mkstemp(
+        dir=ruta.parent, prefix=f".{ruta.stem}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as fichero:
+            # ensure_ascii=False: sin esto, cada tilde/eñe saldria escapada
+            # como "ó" en vez de legible al abrir el fichero a mano.
+            # indent=2: formato legible, no una sola linea larga.
+            json.dump(datos, fichero, ensure_ascii=False, indent=2)
+            fichero.flush()
+            os.fsync(fichero.fileno())
+        os.replace(temporal, ruta)
+    except BaseException:
+        # BaseException y no Exception: un Ctrl+C a mitad tambien debe
+        # llevarse el temporal. Se relanza siempre; aqui solo se limpia.
+        Path(temporal).unlink(missing_ok=True)
+        raise
+
+
 def guardar_conversacion(
     historial: list, proveedor: str, modelo: str, nombre: str | None = None,
     ruta: Path | None = None,
@@ -239,11 +281,7 @@ def guardar_conversacion(
         "historial": contenido,
     }
 
-    # ensure_ascii=False: sin esto, cada tilde/eñe saldria escapada como
-    # "ó" en vez de legible al abrir el fichero a mano. indent=2:
-    # formato legible, no una sola linea larga.
-    with open(ruta, "w", encoding="utf-8") as fichero:
-        json.dump(datos, fichero, ensure_ascii=False, indent=2)
+    _escribir_json_atomico(ruta, datos)
 
     # F3.5: ademas del JSON (fuente completa), dejamos una fila-indice en
     # SQLite. Si esto fallara por lo que sea, no queremos perder el JSON
@@ -271,7 +309,7 @@ def cargar_conversacion(ruta: Path) -> dict:
     # .get() y no [""]: los ficheros guardados antes de F5.3 no tienen esta
     # clave, y para ellos la respuesta correcta es "no, no esta cifrado".
     if not datos.get("cifrado"):
-        return datos
+        return _en_claro_comprobado(datos, ruta)
 
     clave = obtener_clave_conversaciones()
     if clave is None:
@@ -281,6 +319,65 @@ def cargar_conversacion(ruta: Path) -> dict:
         )
 
     datos["historial"] = _descifrar_historial(datos["historial"], clave)
+    return datos
+
+
+def _hay_clave_configurada() -> bool:
+    """¿Quiere JIM cifrar? Una clave ROTA tambien cuenta como "si": quien la
+    puso queria cifrado, y para esta pregunta da igual que este mal escrita
+    (eso ya lo para el arranque con su propio mensaje)."""
+    from src.config import ClaveCifradoInvalida
+
+    try:
+        return obtener_clave_conversaciones() is not None
+    except ClaveCifradoInvalida:
+        return True
+
+
+def _es_historial_legible(historial: object) -> bool:
+    """Lista de mensajes {role: str, content: str|None}. Lo minimo que
+    necesitan quien lo enseña y el RAG para no reventar al recorrerlo."""
+    return isinstance(historial, list) and all(
+        isinstance(m, dict)
+        and isinstance(m.get("role"), str)
+        and isinstance(m.get("content", ""), (str, type(None)))
+        for m in historial
+    )
+
+
+def _en_claro_comprobado(datos: dict, ruta: Path) -> dict:
+    """Un fichero que dice NO estar cifrado, antes de darlo por bueno.
+
+    R-05 (auditoria de seguridad de noviembre). La marca "cifrado" va en
+    claro y nada la protege: Fernet autentica el bloque cifrado, pero un
+    fichero que dice "no estoy cifrado" no le da ocasion de autenticar
+    nada. Quien pueda escribir en conversations/ podia plantar un JSON en
+    claro -o cambiar la marca- y se cargaba como un recuerdo legitimo.
+
+    NO SE RECHAZAN, y es la decision: los ficheros anteriores a F5.3 son
+    conversaciones de verdad, en claro y sin marca. Lo mas conservador que
+    no pierde nada es:
+      1. Si hay clave, se MARCAN (aviso_sin_cifrar) para que quien los
+         enseñe lo diga, y se avisa en el log con el NOMBRE del fichero
+         (una marca de tiempo), nunca con su contenido.
+      2. Si lo que hay dentro no es un historial -p. ej. el bloque cifrado
+         de antes con la marca cambiada a mano-, se trata como ilegible.
+         Antes se devolvia tal cual y el RAG reventaba al recorrerlo, y con
+         el el indexado de TODAS las conversaciones.
+    Queda propuesto, no hecho: re-cifrarlos con la clave actual (migracion)
+    y, cuando no quede ninguno, rechazar los ficheros en claro.
+    """
+    if not _es_historial_legible(datos.get("historial")):
+        raise ConversacionNoDescifrable(
+            f"'{ruta.name}' dice no estar cifrada pero su contenido no es una "
+            "conversación legible (¿fichero alterado?)."
+        )
+    if _hay_clave_configurada():
+        logging.warning(
+            "Conversacion '%s' guardada SIN CIFRAR aunque hay %s "
+            "(anterior a F5.3, o alterada)", ruta.name, "CONVERSATIONS_KEY",
+        )
+        datos["aviso_sin_cifrar"] = True
     return datos
 
 

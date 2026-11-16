@@ -41,7 +41,7 @@ aplicar no es un control**. Por eso las dos fixtures de aislamiento son
 
 ```bash
 ruff check src tests scripts          # lo mismo que el CI
-python -m pytest -q                    # 815 casos, todos en verde
+python -m pytest -q                    # 880 casos, todos en verde
 python scripts/trazabilidad.py --check # la documentacion no miente
 ```
 

@@ -682,7 +682,28 @@ def _dejar_imagen(url: str, titulo: str) -> None:
         return
     if not url.startswith("https://"):
         return
-    host = url.split("/")[2].lower() if len(url.split("/")) > 2 else ""
+    # R-11 (auditoria de seguridad de noviembre): antes el host salia de
+    # url.split("/")[2], y en "https://evil.example#@apod.nasa.gov/a.jpg"
+    # eso es "evil.example#@apod.nasa.gov": acaba en .nasa.gov y pasaba,
+    # cuando quien descarga va a evil.example. Ahora lo saca el parser.
+    #
+    # Y ademas se rechazan las URLs con usuario ("algo@host") o con barra
+    # invertida: urlsplit y el cliente que descargue (el de Telegram, que
+    # no controlamos) pueden no ponerse de acuerdo en cual es el host de
+    # "https://evil.example\@apod.nasa.gov/", y una foto de la NASA de
+    # verdad no lleva ninguna de las dos cosas.
+    from urllib.parse import urlsplit
+
+    if "\\" in url:
+        return
+    try:
+        partes = urlsplit(url)
+        host = (partes.hostname or "").lower()
+        con_usuario = partes.username is not None or partes.password is not None
+    except ValueError:
+        return
+    if con_usuario:
+        return
     if host != "nasa.gov" and not host.endswith(".nasa.gov"):
         return
     bandeja.append({"tipo": "foto", "url": url, "titulo": titulo[:200]})

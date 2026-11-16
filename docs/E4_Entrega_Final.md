@@ -52,7 +52,7 @@ no se sostiene. Las limitaciones completas están en §6, sin esconder ninguna.
 | Métrica | Valor |
 |---|---|
 | Código fuente | **11.205 líneas** (18 módulos) |
-| Tests | **12.505 líneas · 831 tests, todos en verde** |
+| Tests | **880 tests, todos en verde** (831 hasta el 06/09; +49 de la auditoría de seguridad de noviembre) |
 | Proporción test/código | **1,12 : 1** — hay más test que código |
 | Cobertura de rama | **79,86 %** (medida por primera vez el 04/09; umbral en CI = 79) |
 | Verificación por mutación | Primera ejecución real (06/09): 167 mutantes sobre los 3 módulos críticos, 100 muertos, 67 vivos — 1 no era ruido y cerró NC-07 |
@@ -128,34 +128,34 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 
 | Fichero | Tests | Qué protege |
 |---|---|---|
-| `test_tools.py` | 115 | Herramientas, validación de argumentos, SEG-07, categorías |
-| `test_telegram_seguridad.py` | 90 | Las tres puertas, privacidad de logs, comandos, adjuntos |
-| `test_telegram_ux.py` | 39 | Menús, catálogo de comandos, estado de espera |
-| `test_documentos.py` | 39 | PDF/Word, bomba de descompresión, troceo |
-| `test_red_segura.py` | 39 | Guardián anti-SSRF |
+| `test_tools.py` | 119 | Herramientas, validación de argumentos, SEG-07, categorías |
+| `test_telegram_seguridad.py` | 101 | Las tres puertas, privacidad de logs, comandos, adjuntos |
+| `test_telegram_ux.py` | 40 | Menús, catálogo de comandos, estado de espera |
+| `test_documentos.py` | 42 | PDF/Word, bomba de descompresión, troceo |
+| `test_red_segura.py` | 41 | Guardián anti-SSRF |
 | `test_resumen_largo.py` | 36 | `/condensar` por bloques |
-| `test_rag.py` | 29 | Memoria semántica, privacidad del índice |
+| `test_rag.py` | 30 | Memoria semántica, privacidad del índice |
 | `test_readme.py` | 28 | **Que el README no mienta** |
-| `test_noticias.py` | 27 | `/noticias`: RSS, fechas RFC-822/ISO, lista blanca |
+| `test_noticias.py` | 37 | `/noticias`: RSS, fechas RFC-822/ISO, lista blanca |
 | `test_llm_loop.py` | 25 | Bucle de tools, presupuesto, idempotencia |
 | `test_llm_router.py` | 24 | Reintentos, degradación, reservas de modelo |
 | `test_voz.py` | 21 | Whisper + Piper, límites de duración |
 | `test_telegram_voz.py` | 20 | La puerta de la voz antes de descargar el audio |
-| `test_storage.py` | 20 | Cifrado, metadatos en claro, borrado |
+| `test_storage.py` | 26 | Cifrado, metadatos en claro, borrado |
 | `test_cuota_y_orden.py` | 20 | Cuota diaria, orden de proveedores, tope por proveedor |
-| `test_config.py` | 19 | Configuración, lista blanca de dominios |
+| `test_config.py` | 24 | Configuración, lista blanca de dominios |
 | `test_avisos_caida.py` | 19 | Avisos de caída distinguiendo tokens/peticiones/día |
 | `test_condensar_lectura.py` | 17 | Caché de lectura, una llamada por bloque |
 | `test_recuerdo_y_limpiar.py` | 18 | Ruido del RAG, `/limpiar`, reglas del prompt |
 | `test_config_logging.py` | 16 | Modo depuración opt-in |
 | `test_gemini_toolcall_texto.py` | 15 | Rescate de tool-calls escritas como texto |
-| `test_main_cli.py` | 15 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
+| `test_main_cli.py` | 18 | Lista blanca en la CLI, descifrado, `/tools` y **el cerrojo desde `main()`** |
 | `test_logging.py` | 14 | Política de solo metadatos |
-| `test_agent.py` | 14 | Núcleo, contaminación de historial |
+| `test_agent.py` | 15 | Núcleo, contaminación de historial |
 | `test_llm_gemini.py` | 13 | Traducción del dialecto de Gemini |
 | `test_tool_call_mal_generada.py` | 12 | `tool_use_failed` como reintentable |
 | `test_telegram_presentacion.py` | 12 | Markdown, foto duplicada, estado y adjuntos |
-| `test_compactar_historial.py` | 12 | AUD-03: el historial no crece sin freno |
+| `test_compactar_historial.py` | 14 | AUD-03: el historial no crece sin freno |
 | `test_tools_apagadas.py` | 11 | Aviso de categoría apagada |
 | `test_main_menus.py` | 11 | Menús de la CLI |
 | `test_cerrojo.py` | 11 | Cerrojo del SO entre procesos |
@@ -163,7 +163,7 @@ Detalle día a día en el diario de decisiones (04/09 en adelante) y en `docs/no
 | `test_clave_cifrado.py` | 9 | Validación de la clave Fernet |
 | `test_redirecciones.py` | 7 | Que una redirección no salte el guardián |
 | `test_llm_client.py` | 5 | Despacho de tools |
-| **TOTAL** | **831** | |
+| **TOTAL** | **880** | |
 
 ### 3.2 Cómo se ejecutan
 
@@ -273,7 +273,7 @@ python -m src.telegram_bot
 - [x] Licencia propietaria, coherente con que el proyecto se comparte para evaluarlo, no para reutilizarlo
 
 ### 5.2 Tests
-- [x] 831 tests en verde
+- [x] 880 tests en verde
 - [x] Cobertura de rama medida (79,86 %) con umbral real en CI, no uno "redondo"
 - [x] Controles críticos validados **por mutación** — primera ejecución real el 06/09, cerró NC-07
 - [x] Tests de privacidad que reproducen la fuga real del 27/07

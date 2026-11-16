@@ -97,6 +97,26 @@ def test_abrir_una_conversacion_enseña_lo_que_se_dijo(monkeypatch):
     assert "instrucciones internas" not in dicho
 
 
+def test_R05_abrir_una_conversacion_EN_CLARO_con_cifrado_activo_lo_dice(monkeypatch):
+    """R-05: lo que storage marca como "en claro aunque hay clave" se enseña
+    con un aviso delante. No se esconde (puede ser legitima, anterior a
+    F5.3), pero tampoco se presenta igual que una cifrada."""
+    ruta = _historial_falso(monkeypatch)
+    monkeypatch.setattr(telegram_bot, "_conversacion_valida", lambda n: ruta)
+    monkeypatch.setattr(telegram_bot, "cargar_conversacion", lambda r: {
+        "nombre": "vieja", "aviso_sin_cifrar": True,
+        "historial": [{"role": "system", "content": "s"}, {"role": "user", "content": "hola"}],
+    })
+    editado = []
+
+    asyncio.run(telegram_bot.manejar_boton(
+        _update_boton(f"{telegram_bot._PREFIJO_VER}{ruta.name}", editado=editado),
+        _context(),
+    ))
+
+    assert "sin cifrar" in " ".join(editado).lower()
+
+
 def test_abrir_una_conversacion_que_no_esta_en_la_lista_no_lee_nada(monkeypatch):
     """MISMA allowlist que /borrar: el nombre del fichero viaja a Telegram y
     vuelve. Leer es menos grave que borrar, pero "h:../../.env" escupiria la

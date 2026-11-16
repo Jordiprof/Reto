@@ -278,3 +278,33 @@ def test_los_modelos_retirados_no_vuelven_al_catalogo():
 
     for modelo, motivo in retirados.items():
         assert modelo not in todos, f"{modelo}: {motivo}"
+
+
+# --- R-10 (auditoria de seguridad de noviembre): la lista blanca de Telegram ---
+
+
+@pytest.mark.requisito("RF-11")
+@pytest.mark.control("E2-ACCESO")
+@pytest.mark.parametrize("valor", [
+    "1_1_1",     # int() acepta guiones bajos: "1_1_1" -> 111
+    "+111",      # y el signo
+    "١١١",       # y digitos de otras escrituras (arabe-indicos)
+    "111,2_22",
+])
+def test_R10_un_id_que_no_son_solo_cifras_cierra_el_bot(monkeypatch, valor):
+    """La lista blanca es el control nº1 del bot y se lee con int(t), que es
+    mas tolerante de lo que parece: "1_1_1" y "+111" valen 111. Un id que no
+    es LITERALMENTE una tira de cifras ASCII no es un id; se trata como
+    lista ilegible, que falla cerrado (ADR-005, control 2)."""
+    monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, valor)
+
+    with pytest.raises(config.ConfiguracionTelegramInvalida):
+        config.obtener_usuarios_permitidos()
+
+
+def test_R10_espacios_alrededor_de_cada_id_siguen_valiendo(monkeypatch):
+    """Lo de siempre no se rompe: "111, 222" con espacios es como lo
+    escribe cualquiera en el .env."""
+    monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, " 111 , 222 ,")
+
+    assert config.obtener_usuarios_permitidos() == frozenset({111, 222})

@@ -326,3 +326,27 @@ def test_una_IP_que_no_se_puede_interpretar_se_trata_como_INTERNA():
     assert red_segura._es_interna("no-soy-una-ip") is True
     assert red_segura._es_interna("") is True
     assert red_segura._es_interna("999.999.999.999") is True
+
+
+# --- R-03: una lista propia para quien la necesite, sin abrir la general ---
+
+
+@pytest.mark.requisito("RNF-06")
+@pytest.mark.control("E2-RED")
+def test_R03_una_lista_EXPLICITA_sustituye_a_la_general_no_la_amplia():
+    """/noticias valida los enlaces de sus feeds con SU lista (los medios
+    configurados), no con DOMINIOS_PERMITIDOS_WEB. Pasarla no puede abrir
+    la general: un dominio que solo esta en la general se rechaza."""
+    propia = frozenset({"medio.example"})
+
+    assert red_segura.validar_url("https://www.medio.example/x", propia)
+    with pytest.raises(red_segura.UrlNoPermitida):
+        red_segura.validar_url("https://ejemplo.com/", propia)
+
+
+@pytest.mark.control("E2-RED")
+def test_R03_con_lista_explicita_el_bloqueo_de_IP_interna_sigue_igual():
+    """La lista cambia QUE medios se aceptan; la comprobacion de red no se
+    toca: un dominio de la lista que resuelve dentro se para igual."""
+    with pytest.raises(red_segura.UrlNoPermitida):
+        red_segura.validar_url("http://interno.ejemplo.com/", frozenset({"ejemplo.com"}))

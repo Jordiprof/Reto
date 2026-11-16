@@ -56,6 +56,18 @@ _BLOQUE_LECTURA_ZIP = 1_000_000
 
 _EXTENSIONES_VALIDAS = {".pdf": "pdf", ".docx": "docx"}
 
+# R-08 (auditoria de seguridad de noviembre): topes de EXTRACCION. Los 15 MB
+# de arriba acotan el fichero, no el trabajo: un PDF de 15 MB pueden ser
+# decenas de miles de paginas vacias (cada una es CPU de pypdf) o muy poco
+# fichero que se descomprime en muchisimo texto. Generosos a proposito para
+# no tocar ningun documento real (un libro de 800 paginas son ~2 millones
+# de caracteres); se corta con marca VISIBLE, nunca en silencio.
+_MAX_PAGINAS_PDF = 3000
+_MAX_CARACTERES_EXTRAIDOS = 3_000_000
+_MARCA_RECORTE = (
+    "\n\n[… documento recortado: es demasiado largo y solo he leído el principio]"
+)
+
 
 class DocumentoNoValido(Exception):
     """Cualquier motivo por el que un adjunto no se acepta o no se puede
@@ -226,8 +238,19 @@ def _extraer_texto_pdf(datos: bytes) -> str:
     if lector.is_encrypted:
         raise DocumentoNoValido("Ese PDF está protegido con contraseña; no puedo leerlo.")
 
+    # R-08: se para en cuanto se pasa de cualquiera de los dos topes, SIN
+    # extraer las paginas de despues - que es lo que cuesta CPU.
+    paginas: list[str] = []
+    caracteres = 0
+    recortado = False
     try:
-        paginas = [pagina.extract_text() or "" for pagina in lector.pages]
+        for numero, pagina in enumerate(lector.pages):
+            if numero >= _MAX_PAGINAS_PDF or caracteres > _MAX_CARACTERES_EXTRAIDOS:
+                recortado = True
+                break
+            texto = pagina.extract_text() or ""
+            paginas.append(texto)
+            caracteres += len(texto) + 1
     except Exception:
         # pypdf puede lanzar varias excepciones internas ante un PDF
         # malformado que SI abre pero no se deja recorrer; no hay forma de
@@ -237,7 +260,14 @@ def _extraer_texto_pdf(datos: bytes) -> str:
             "Ese PDF no se deja leer; puede estar dañado o ser una imagen escaneada."
         )
 
-    return "\n".join(paginas)
+    return _con_tope("\n".join(paginas), recortado)
+
+
+def _con_tope(texto: str, recortado: bool = False) -> str:
+    """R-08: aplica el tope de caracteres y deja la marca si hubo recorte."""
+    if len(texto) > _MAX_CARACTERES_EXTRAIDOS:
+        texto, recortado = texto[:_MAX_CARACTERES_EXTRAIDOS], True
+    return texto + _MARCA_RECORTE if recortado else texto
 
 
 def _extraer_texto_docx(datos: bytes) -> str:
@@ -258,7 +288,10 @@ def _extraer_texto_docx(datos: bytes) -> str:
     for tabla in documento.tables:
         for fila in tabla.rows:
             partes.append(" | ".join(celda.text for celda in fila.cells))
-    return "\n".join(partes)
+    # R-08: mismo tope de texto que el PDF. Aqui el .docx ya se ha
+    # descomprimido (acotado a 50 MB por entrada en validar_adjunto), asi
+    # que esto solo limita lo que se pasa al resto del programa.
+    return _con_tope("\n".join(partes))
 
 
 def extraer_texto(adjunto: DocumentoAdjunto) -> str:

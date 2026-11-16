@@ -128,6 +128,21 @@ _rutas: dict[int, Path] = {}
 # que el guardado automatico no la pise con "Telegram" al reescribir.
 _nombres: dict[int, str] = {}
 
+# R-02 (auditoria de seguridad de noviembre): usuarios cuyo ULTIMO guardado
+# fallo, y a cuales de ellos ya se les ha dicho. Antes un fallo de
+# _persistir solo iba al log y el usuario seguia hablando creyendo que todo
+# quedaba guardado. Se avisa UNA vez por racha de fallos: repetirlo en cada
+# mensaje con el disco lleno seria ruido que se aprende a ignorar. Un
+# guardado bueno vacia los dos, asi que la racha siguiente vuelve a avisar.
+_guardado_fallido: set[int] = set()
+_avisados_guardado: set[int] = set()
+
+_AVISO_GUARDADO = (
+    "⚠️ No he podido guardar esta conversación en disco. Lo vuelvo a intentar "
+    "con cada mensaje (se guarda entera cada vez, así que no se pierde nada "
+    "mientras siga encendido), pero si me reinician ahora, lo último se perdería."
+)
+
 # F5.5 #8 - Voz: que mitades estan encendidas por usuario, subconjunto de
 # {"escuchar", "hablar"}. Empieza VACIO, o sea las dos apagadas.
 #
@@ -333,9 +348,15 @@ def _persistir(user_id: int, nombre: str | None = None) -> Path | None:
     agente = _agentes.get(user_id)
     if agente is None:
         return None
+    # R-01: la conversacion COMPLETA y no agente.historial. Tras compactar,
+    # historial es solo lo que se reenvia al modelo; reescribir el fichero
+    # con eso borraba del disco los mensajes viejos y dejaba los punteros
+    # "fichero:indice" del RAG señalando otros mensajes. getattr porque los
+    # dobles de test (SimpleNamespace) solo traen historial.
+    mensajes = getattr(agente, "conversacion_completa", agente.historial)
     try:
         ruta = guardar_conversacion(
-            agente.historial, agente.proveedor, agente.modelo,
+            mensajes, agente.proveedor, agente.modelo,
             nombre=nombre or _nombres.get(user_id) or "Telegram",
             ruta=_rutas.get(user_id),
         )
@@ -347,12 +368,27 @@ def _persistir(user_id: int, nombre: str | None = None) -> Path | None:
             # "Telegram" al reescribir el mismo fichero.
             _nombres[user_id] = nombre
         indexar_conversacion(ruta)
+        # R-02: guardado bueno, se cierra la racha de fallos (si la habia).
+        _guardado_fallido.discard(user_id)
+        _avisados_guardado.discard(user_id)
         return ruta
     except Exception as error:
         # Tipo, no texto (politica de logging del proyecto): el str() de un
         # error de cifrado o de ChromaDB puede arrastrar contenido.
         logging.error("Telegram: no se pudo persistir el turno (%s)", type(error).__name__)
+        # R-02: se apunta para poder DECIRSELO al usuario (ver
+        # _avisar_si_no_se_guardo). Aqui no se puede: esto corre en un hilo.
+        _guardado_fallido.add(user_id)
         return None
+
+
+async def _avisar_si_no_se_guardo(user_id: int, mensaje) -> None:
+    """R-02: si el ultimo guardado fallo y aun no se le ha dicho, se le
+    dice UNA vez, con un texto fijo nuestro: nunca el de la excepcion, que
+    puede llevar rutas o contenido (misma politica que el log)."""
+    if user_id in _guardado_fallido and user_id not in _avisados_guardado:
+        _avisados_guardado.add(user_id)
+        await mensaje.reply_text(_AVISO_GUARDADO)
 
 
 def _cerrojo_de(user_id: int) -> asyncio.Lock:
@@ -607,6 +643,16 @@ async def _cerrar_con_nombre(update: Update, nombre: str) -> None:
     try:
         async with _cerrojo_de(usuario.id):
             ruta = await asyncio.to_thread(_persistir, usuario.id, nombre)
+            # R-02: si el guardado FALLA no se cierra la charla. Cerrarla
+            # tiraria el Agente, y con el la unica copia de lo hablado que
+            # no llego al disco. Se dice y se deja abierta para reintentar.
+            if ruta is None and usuario.id in _guardado_fallido:
+                _avisados_guardado.add(usuario.id)
+                await mensaje.reply_text(
+                    "⚠️ No he podido guardarla, así que no la cierro: sigue "
+                    "abierta. Inténtalo de nuevo dentro de un rato."
+                )
+                return
             aviso = _aviso_categorias_perdidas(_agentes.get(usuario.id))
             # Se cierra igual que en _CONSERVAR: se olvida el contexto y se
             # suelta el fichero, para que el mensaje siguiente estrene charla.
@@ -712,6 +758,13 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             # apaga, el hilo termina la llamada igual. Acotado por el
             # timeout de 30s de F5.0/T3.
             respuesta = await asyncio.to_thread(agente.preguntar, texto)
+            # R-06 (auditoria de seguridad de noviembre): si fallaron TODOS
+            # los proveedores, preguntar() no lanza: devuelve el aviso
+            # generico del ErrorLLM. Antes se trataba como una respuesta
+            # normal -se persistia, se indexaba y con voz se leia en alto-.
+            # Ahora cuenta como fallo: se le enseña el aviso escrito y nada
+            # mas. getattr por los dobles de test que no traen el atributo.
+            fallo = bool(getattr(agente, "turno_fallido", False))
         except Exception as error:
             # Agente.preguntar() solo captura ErrorLLM; cualquier otro
             # fallo (ChromaDB, un AttributeError nuestro, un KeyError de
@@ -723,7 +776,7 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             )
             respuesta = "⚠️ Se me ha cruzado un cable. Vuelve a intentarlo en un momento."
             fallo = True
-        else:
+        if not fallo:
             # Solo se persiste si el turno fue bien: un historial que acaba
             # en un fallo no debe entrar en la memoria a largo plazo como si
             # fuera una conversacion real (mismo criterio que Agente.preguntar,
@@ -739,9 +792,10 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
             await asyncio.to_thread(_persistir, usuario.id)
 
     # AUD-03: si se saco algo del contexto, se dice. Aqui NO hace falta
-    # pasarle `persistir` a preguntar(): el bot ya guarda e indexa despues
-    # de CADA turno (_persistir), asi que lo que se compacta ya esta a
-    # salvo en conversations/ y en el RAG antes de salir del historial.
+    # pasarle `persistir` a preguntar(): lo compactado sale del CONTEXTO pero
+    # no de la conversacion (R-01, Agente.conversacion_completa), y
+    # _persistir guarda e indexa la conversacion entera despues de cada
+    # turno. Por eso el "siguen guardados" del aviso es verdad.
     compactados = getattr(_agentes.get(usuario.id), "compactados", 0)
     if compactados and not fallo:
         await mensaje.reply_text(
@@ -772,6 +826,12 @@ async def _turno(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str)
 
     for trozo in _trocear(_sin_markdown(respuesta)):
         await mensaje.reply_text(trozo, link_preview_options=sin_vista_previa)
+
+    # R-02: DESPUES de la respuesta, que es lo principal (mismo orden que la
+    # foto y la voz). Solo si el turno fue bien: si fallo, no se intento
+    # guardar.
+    if not fallo:
+        await _avisar_si_no_se_guardo(usuario.id, mensaje)
 
     # Salida binaria (01/08, peticion de Jordi): si alguna tool dejo una
     # imagen en la bandeja del turno, se manda como FOTO. Va despues del
@@ -933,7 +993,20 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await mensaje.reply_text("Ese adjunto no tiene nombre de fichero; no sé qué es.")
         return
 
-    from src.documentos import DocumentoNoValido, validar_adjunto
+    import src.documentos as documentos
+    from src.documentos import DocumentoNoValido
+
+    # R-08 (auditoria de seguridad de noviembre): el tope de tamaño se
+    # miraba DESPUES de bajar el fichero entero a memoria. Telegram ya dice
+    # cuanto pesa en el propio update: si pasa del tope, ni se descarga. Si
+    # no lo dice (file_size None), validar_adjunto lo sigue parando despues.
+    tamaño = getattr(documento, "file_size", None)
+    if tamaño is not None and tamaño > documentos._MAX_BYTES_ADJUNTO:
+        await mensaje.reply_text(
+            f"⚠️ Ese fichero pesa demasiado "
+            f"(máximo {documentos._MAX_BYTES_ADJUNTO // 1_000_000} MB)."
+        )
+        return
 
     async with _cerrojo_de(usuario.id):
         try:
@@ -945,7 +1018,12 @@ async def manejar_documento(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
 
         try:
-            adjunto = validar_adjunto(datos, documento.file_name)
+            # R-08: a un hilo. Para un .docx descomprime cada entrada por
+            # bloques para medirla (LOG-02), o sea CPU; en el bucle de
+            # eventos congelaba el bot entero, puerta de acceso incluida.
+            adjunto = await asyncio.to_thread(
+                documentos.validar_adjunto, datos, documento.file_name
+            )
         except DocumentoNoValido as error:
             await mensaje.reply_text(f"⚠️ {error}")
             return
@@ -1526,7 +1604,13 @@ async def _ejecutar_guardar(user_id: int, mensaje, nombre: str) -> None:
     async with _cerrojo_de(user_id):
         ruta = await asyncio.to_thread(_persistir, user_id, nombre)
 
-    if ruta is None:
+    # R-02: None tambien es lo que devuelve _persistir cuando FALLA. Antes
+    # se contestaba "no hay nada que guardar" en los dos casos, y con el
+    # disco lleno eso era mentir sobre una peticion explicita.
+    if ruta is None and user_id in _guardado_fallido:
+        _avisados_guardado.add(user_id)
+        await mensaje.reply_text("⚠️ No he podido guardarla. Inténtalo dentro de un rato.")
+    elif ruta is None:
         await mensaje.reply_text("Todavía no hemos hablado de nada que guardar.")
     else:
         await mensaje.reply_text(f'Guardada como "{nombre}".')
@@ -2127,7 +2211,15 @@ async def manejar_boton(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # mensaje entero - el mismo fallo que ya hubo el 30/07 con los
         # titulos de la lista de dominios.
         meta_nombre = datos.get("nombre") or "(sin nombre)"
-        await consulta.edit_message_text(f"📖 {meta_nombre}")
+        # R-05: guardada en claro aunque hay clave. Puede ser legitima
+        # (anterior a F5.3) o haberla plantado alguien: no se esconde, pero
+        # tampoco se presenta igual que una cifrada.
+        aviso_claro = (
+            "\n⚠️ Esta conversación está guardada SIN CIFRAR aunque el cifrado "
+            "está activo: es anterior al cifrado o alguien la ha tocado."
+            if datos.get("aviso_sin_cifrar") else ""
+        )
+        await consulta.edit_message_text(f"📖 {meta_nombre}{aviso_claro}")
         mensaje_origen = update.effective_message or consulta.message
         if mensaje_origen is None:  # defensa: sin mensaje no hay donde escribir
             return
@@ -2572,18 +2664,40 @@ def _arrancar(cerrojo) -> None:
     # con una clave rota levantaba tan tranquilo y reventaba al guardar el
     # primer turno. Es la misma asimetria que el bug del 28/07 (la CLI
     # indexaba al arrancar y el bot no): dos puertas, un solo control.
-    from src.config import ClaveCifradoInvalida
+    from src.config import (
+        CLAVE_CONVERSACIONES_ENV,
+        PERMITIR_SIN_CIFRAR_ENV,
+        ClaveCifradoInvalida,
+        guardar_sin_cifrar_consentido,
+    )
     from src.storage import cifrado_activo
 
     try:
-        if not cifrado_activo():
-            print(
-                "⚠️ Las conversaciones se guardarán SIN CIFRAR "
-                "(configura CONVERSATIONS_KEY en el .env; ver .env.example)."
-            )
+        hay_cifrado = cifrado_activo()
     except ClaveCifradoInvalida as error:
         print(f"❌ {error}")
         return
+    if not hay_cifrado:
+        # R-04 (auditoria de seguridad de noviembre): antes esto era solo un
+        # print y el bot arrancaba igual. En la VPS ese print acaba en
+        # journalctl, que no lee nadie, y el bot se quedaba guardando en
+        # claro meses. Ahora FALLA CERRADO salvo consentimiento explicito.
+        # Se sale con return (codigo 0), igual que con una clave rota:
+        # jimmy.service no lo reintenta en bucle, porque pide que venga
+        # una persona. La CLI conserva su aviso: alli se ve en pantalla.
+        if not guardar_sin_cifrar_consentido():
+            print(
+                f"❌ Falta {CLAVE_CONVERSACIONES_ENV} en el .env y el bot NO arranca "
+                "sin cifrar las conversaciones. Genera una clave (ver .env.example) "
+                f"o, si de verdad quieres guardarlas en claro, pon "
+                f"{PERMITIR_SIN_CIFRAR_ENV}=1."
+            )
+            return
+        print(
+            "⚠️ Las conversaciones se guardarán SIN CIFRAR: lo has permitido con "
+            f"{PERMITIR_SIN_CIFRAR_ENV} (configura {CLAVE_CONVERSACIONES_ENV} "
+            "en el .env para cifrarlas; ver .env.example)."
+        )
 
     aplicacion = construir_aplicacion()
 

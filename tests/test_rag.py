@@ -384,6 +384,67 @@ def test_un_indice_fuera_de_rango_no_tumba_la_busqueda(rag_aislado):
     assert all(r["pregunta"] or r["respuesta"] for r in resultados)
 
 
+@pytest.mark.requisito("RF-26", "RF-12", "RF-06")
+def test_R01_compactar_en_el_bot_NO_borra_lo_viejo_del_disco_ni_del_indice(
+    rag_aislado, monkeypatch
+):
+    """R-01 (auditoria de seguridad de noviembre, ALTA): perdida de mensajes.
+
+    LA CADENA, de punta a punta y sin dobles en medio: un Agente de verdad
+    que compacta, el _persistir de verdad del bot, el guardado de verdad y
+    el RAG de verdad (con el modelo falso de este fichero). Antes del
+    arreglo, al compactar, _persistir reescribia EL MISMO fichero con el
+    historial ya recortado: los mensajes viejos desaparecian del disco, los
+    punteros "fichero:indice" del RAG pasaban a señalar OTROS mensajes, y
+    los nuevos no se indexaban porque su id "ya existia". El aviso al
+    usuario ("siguen guardados, buscalos con /recuerdo") era falso.
+    """
+    from types import SimpleNamespace
+
+    from src import telegram_bot
+    from src.agent import Agente
+
+    monkeypatch.setattr(telegram_bot, "_agentes", {})
+    monkeypatch.setattr(telegram_bot, "_rutas", {})
+    monkeypatch.setattr(telegram_bot, "_nombres", {})
+
+    agente = Agente("Eres un asistente.", "groq", "x", "fake")
+    # Respuestas largas para que la charla pase del tope y se compacte.
+    agente.router = SimpleNamespace(
+        responder=lambda mensajes, tools: "python respuesta " + "z" * 1500,
+        aviso_fallback=None,
+    )
+    telegram_bot._agentes[111] = agente
+
+    primera = "Apúntame la cita del medico del jueves"
+    preguntas = [primera] + [f"python pregunta {i} " + "y" * 1500 for i in range(15)]
+    for pregunta in preguntas:
+        agente.preguntar(pregunta)
+        telegram_bot._persistir(111)
+
+    total = 1 + 2 * len(preguntas)
+    # Precondicion: de verdad se ha compactado (si no, el test no prueba nada).
+    assert len(agente.historial) < total
+
+    # 1. En disco esta TODO, en el orden en que se dijo, y en UN fichero.
+    assert len(storage.listar_conversaciones()) == 1
+    datos = storage.cargar_conversacion(telegram_bot._rutas[111])
+    assert len(datos["historial"]) == total
+    assert datos["historial"][1]["content"] == primera
+
+    # 2. El indice tiene un vector por cada mensaje (sin el system prompt):
+    #    ninguno se quedo sin indexar por un id "repetido".
+    assert rag._coleccion().count() == total - 1
+
+    # 3. Y /recuerdo devuelve el texto CORRECTO, no el que ocupe ahora esa
+    #    posicion del fichero.
+    resultado = rag.buscar("cita medico", n=1)[0]
+    assert resultado["pregunta"] == primera
+
+    # 4. El arranque (indexar_conversaciones) no encuentra nada pendiente.
+    assert rag.indexar_conversaciones() == 0
+
+
 def test_un_mensaje_larguisimo_se_recorta_con_marca_visible(rag_aislado):
     """Ahora se garantiza incluir RESPUESTAS, y en este bot son largas: esto
     se reenvia en CADA turno posterior (AUD-03). Recortado y a la vista es

@@ -1603,6 +1603,35 @@ def test_una_url_que_no_es_de_la_nasa_no_va_a_la_bandeja(monkeypatch):
         assert bandeja == [], f"{mala} no deberia haber entrado"
 
 
+@pytest.mark.control("E2-RED")
+@pytest.mark.parametrize("mala", [
+    "https://evil.example#@apod.nasa.gov/a.jpg",   # el host real es evil.example
+    "https://evil.example?@apod.nasa.gov/a.jpg",
+    r"https://evil.example\@apod.nasa.gov/a.jpg",  # barra invertida: cada parser a su manera
+    "https://alguien@apod.nasa.gov/a.jpg",         # con usuario: una foto real no lo lleva
+])
+def test_R11_el_host_de_la_foto_se_saca_PARSEANDO_la_url(monkeypatch, mala):
+    """R-11 (auditoria de seguridad de noviembre). El host se sacaba con
+    url.split("/")[2], que en "https://evil.example#@apod.nasa.gov/a.jpg"
+    devuelve "evil.example#@apod.nasa.gov" -termina en .nasa.gov y pasaba-
+    cuando quien descarga (Telegram) va a evil.example. Se usa el parser de
+    URLs, que da el host de verdad."""
+    import src.tools as t
+
+    monkeypatch.setattr(t, "_pedir_json", lambda *a, **kw: {
+        "title": "x", "date": "2026-08-01", "url": mala,
+        "explanation": "...", "media_type": "image",
+    })
+    bandeja = []
+    token = t.fijar_bandeja(bandeja)
+    try:
+        t.consultar_foto_astronomica()
+    finally:
+        t.restaurar_bandeja(token)
+
+    assert bandeja == []
+
+
 def test_sin_bandeja_la_tool_funciona_igual(monkeypatch):
     """La CLI no fija ninguna bandeja: la tool no puede reventar por eso."""
     import src.tools as t

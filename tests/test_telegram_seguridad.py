@@ -30,6 +30,8 @@ def estado_limpio(monkeypatch):
     telegram_bot._rutas.clear()
     telegram_bot._voz_activa.clear()
     telegram_bot._esperando_texto.clear()
+    telegram_bot._guardado_fallido.clear()
+    telegram_bot._avisados_guardado.clear()
     monkeypatch.setenv(config.TELEGRAM_PERMITIDOS_ENV, "111")
     monkeypatch.setenv(config.TELEGRAM_TOKEN_ENV, "123456:token-de-mentira")
     yield
@@ -747,6 +749,46 @@ def test_un_turno_que_falla_no_se_persiste(monkeypatch, persistencia_espiada):
     assert "cable" in " ".join(enviados)  # al usuario si se le contesta
 
 
+@pytest.mark.requisito("RF-03", "RF-06")
+def test_R06_si_fallan_TODOS_los_proveedores_ni_se_guarda_ni_se_lee_en_alto(
+    monkeypatch, persistencia_espiada
+):
+    """R-06 (auditoria de seguridad de noviembre). Agente.preguntar devuelve
+    el mensaje de error como si fuera una respuesta, y el bot lo trataba
+    igual que una de verdad: persistia la pregunta huerfana, la indexaba en
+    el RAG y, con la voz encendida, leia en alto el "⚠️ limite superado".
+
+    Con un Agente REAL y un router que falla entero: al usuario le llega el
+    aviso escrito, y nada mas."""
+    from src.agent import Agente
+    from src.llm_errors import ErrorLimitePeticiones
+
+    agente = Agente("s", "groq", "x", "fake")
+
+    def falla(mensajes, tools):
+        raise ErrorLimitePeticiones("Groq", "rate limit")
+
+    agente.router = SimpleNamespace(responder=falla, aviso_fallback=None)
+    monkeypatch.setattr(
+        telegram_bot, "_agente_de", lambda uid: telegram_bot._agentes.setdefault(uid, agente)
+    )
+    telegram_bot._voz_activa[111] = {"hablar"}
+    hablado = []
+
+    async def hablar_espia(update, context, texto):
+        hablado.append(texto)
+
+    monkeypatch.setattr(telegram_bot, "_hablar", hablar_espia)
+    enviados = []
+
+    asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
+
+    assert enviados and "límite" in enviados[0]
+    assert persistencia_espiada.guardados == []
+    assert persistencia_espiada.indexados == []
+    assert hablado == []
+
+
 def test_si_falla_el_guardado_el_usuario_recibe_su_respuesta(monkeypatch, persistencia_espiada):
     """Guardar es importante, pero no tanto como contestar: un fallo al
     persistir se registra y se sigue, no rompe el turno."""
@@ -759,7 +801,48 @@ def test_si_falla_el_guardado_el_usuario_recibe_su_respuesta(monkeypatch, persis
 
     asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
 
-    assert enviados == ["aqui tienes"]
+    # R-02: la respuesta llega PRIMERO y entera; detras, el aviso de que no
+    # se pudo guardar (antes el fallo solo iba al log y nadie se enteraba).
+    assert enviados[0] == "aqui tienes"
+
+
+@pytest.mark.requisito("RF-06", "RNF-02")
+def test_R02_si_falla_el_guardado_se_DICE_una_vez_y_sin_el_texto_del_error(
+    monkeypatch, persistencia_espiada
+):
+    """R-02 (auditoria de seguridad de noviembre). Un fallo de _persistir
+    solo iba al log: el usuario seguia hablando creyendo que todo quedaba
+    guardado. Se le dice en el chat, pero UNA vez por racha de fallos (si el
+    disco esta lleno, repetirlo en cada mensaje es ruido que se aprende a
+    ignorar) y SIN el texto de la excepcion, que puede llevar rutas o
+    contenido. Si vuelve a guardar bien y luego falla otra vez, se avisa
+    otra vez: es otra racha."""
+    estado = {"falla": True}
+
+    def guardar(historial, proveedor, modelo, nombre=None, ruta=None):
+        if estado["falla"]:
+            raise OSError("disco lleno en /home/bot-jimmy/conversations/secreto.json")
+        return persistencia_espiada.ruta
+
+    monkeypatch.setattr(telegram_bot, "guardar_conversacion", guardar)
+    _agente_falso(monkeypatch, respuesta="vale")
+
+    def turno():
+        enviados = []
+        asyncio.run(telegram_bot.manejar_mensaje(_update(enviados=enviados), _context()))
+        return [e for e in enviados if e != "vale"]
+
+    primero, segundo = turno(), turno()
+    estado["falla"] = False
+    tercero = turno()
+    estado["falla"] = True
+    cuarto = turno()
+
+    assert len(primero) == 1 and "guardar" in primero[0]
+    assert segundo == [] and tercero == []
+    assert len(cuarto) == 1
+    for aviso in primero + cuarto:
+        assert "disco lleno" not in aviso and "secreto" not in aviso
 
 
 def test_limpiar_suelta_el_fichero_pero_no_borra_lo_guardado(monkeypatch, persistencia_espiada):
@@ -782,6 +865,75 @@ def test_limpiar_suelta_el_fichero_pero_no_borra_lo_guardado(monkeypatch, persis
 # --- F5.2+: comandos con paridad con la CLI ----------------------------
 
 
+@pytest.fixture
+def arranque_espiado(monkeypatch):
+    """main_bot() sin red ni Telegram: se espia si llega a construir la
+    Application y a indexar. Devuelve la lista de lo que llego a hacer."""
+    hecho = []
+    monkeypatch.setattr(
+        telegram_bot, "indexar_conversaciones", lambda: hecho.append("indexar") or 0
+    )
+    monkeypatch.setattr(
+        telegram_bot, "construir_aplicacion",
+        lambda: SimpleNamespace(run_polling=lambda: hecho.append("polling")),
+    )
+    return hecho
+
+
+@pytest.mark.requisito("RF-17", "RNF-06")
+@pytest.mark.control("E2-REPOSO")
+def test_R04_sin_clave_de_cifrado_el_bot_NO_arranca(monkeypatch, arranque_espiado, capsys):
+    """R-04 (auditoria de seguridad de noviembre). Sin CONVERSATIONS_KEY el
+    bot arrancaba y guardaba en claro con solo un print, que en la VPS va a
+    journalctl y no lo lee nadie. Un bot 24/7 que guarda la vida de alguien
+    en claro no debe poder quedarse asi por olvido: falla cerrado."""
+    monkeypatch.delenv(config.CLAVE_CONVERSACIONES_ENV, raising=False)
+    monkeypatch.delenv(config.PERMITIR_SIN_CIFRAR_ENV, raising=False)
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == []
+    salida = capsys.readouterr().out
+    assert config.CLAVE_CONVERSACIONES_ENV in salida
+    assert config.PERMITIR_SIN_CIFRAR_ENV in salida
+
+
+@pytest.mark.parametrize("valor", ["", "0", "no", "quizas"])
+def test_R04_un_consentimiento_AMBIGUO_no_vale(monkeypatch, arranque_espiado, valor):
+    """Allowlist de valores, como DEBUG_LOG_CONTENIDO: solo un "si"
+    explicito abre la puerta; cualquier otra cosa la deja cerrada."""
+    monkeypatch.delenv(config.CLAVE_CONVERSACIONES_ENV, raising=False)
+    monkeypatch.setenv(config.PERMITIR_SIN_CIFRAR_ENV, valor)
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == []
+
+
+def test_R04_con_consentimiento_EXPLICITO_arranca_y_avisa(
+    monkeypatch, arranque_espiado, capsys
+):
+    monkeypatch.delenv(config.CLAVE_CONVERSACIONES_ENV, raising=False)
+    monkeypatch.setenv(config.PERMITIR_SIN_CIFRAR_ENV, "1")
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == ["indexar", "polling"]
+    assert "SIN CIFRAR" in capsys.readouterr().out
+
+
+def test_R04_con_clave_arranca_como_siempre(monkeypatch, arranque_espiado):
+    """No romper el arranque de quien YA tiene la clave (la VPS de hoy)."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv(config.CLAVE_CONVERSACIONES_ENV, Fernet.generate_key().decode())
+    monkeypatch.delenv(config.PERMITIR_SIN_CIFRAR_ENV, raising=False)
+
+    telegram_bot.main_bot()
+
+    assert arranque_espiado == ["indexar", "polling"]
+
+
 def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
     """REGRESION del bug encontrado probando en real el 28/07.
 
@@ -794,6 +946,12 @@ def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
     Este test no existia porque todos los demas ESPIAN el indexado en vez de
     arrancar el bot - por eso el fallo paso limpio los 175 tests.
     """
+    # R-04: desde que el bot no arranca sin clave, estos tests -que miran el
+    # indexado, no el cifrado- necesitan una. Antes pasaban o no segun el
+    # .env de la maquina, que es justo lo que un test no puede hacer.
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv(config.CLAVE_CONVERSACIONES_ENV, Fernet.generate_key().decode())
     llamadas = []
     monkeypatch.setattr(telegram_bot, "indexar_conversaciones", lambda: llamadas.append(1) or 0)
     # La Application real no se construye ni se arranca: solo interesa que
@@ -811,6 +969,12 @@ def test_al_arrancar_se_indexa_TODA_la_memoria(monkeypatch):
 def test_si_falla_el_indexado_el_bot_arranca_igual(monkeypatch):
     """RNF-02: sin memoria semantica el bot sigue siendo util, asi que un
     fallo al indexar no debe impedir que arranque."""
+    # R-04: desde que el bot no arranca sin clave, estos tests -que miran el
+    # indexado, no el cifrado- necesitan una. Antes pasaban o no segun el
+    # .env de la maquina, que es justo lo que un test no puede hacer.
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv(config.CLAVE_CONVERSACIONES_ENV, Fernet.generate_key().decode())
     def revienta():
         raise RuntimeError("chroma roto")
 
@@ -1500,6 +1664,54 @@ def test_un_docx_demasiado_grande_no_llega_a_guardarse(monkeypatch):
 
     assert 111 not in telegram_bot._agentes
     assert "pesa demasiado" in " ".join(enviados)
+
+
+@pytest.mark.requisito("RF-20")
+@pytest.mark.control("E2-FICHEROS")
+def test_R08_un_adjunto_que_Telegram_ya_dice_que_es_enorme_NI_se_descarga(monkeypatch):
+    """R-08 (auditoria de seguridad de noviembre). El tope de 15 MB se
+    miraba DESPUES de bajarse el fichero entero a memoria. Telegram dice el
+    tamaño en el propio update (file_size): si ya pasa del tope, no hay
+    nada que descargar. En una VPS con 1 GB de techo, eso es la diferencia
+    entre rechazar y caerse."""
+    import src.documentos as documentos
+
+    descargas = []
+    update = _update_documento(datos=b"%PDF", nombre="enorme.pdf")
+    update.effective_message.document.file_size = documentos._MAX_BYTES_ADJUNTO + 1
+
+    async def get_file():
+        descargas.append(1)
+        raise AssertionError("no deberia ni pedir el fichero")
+
+    update.effective_message.document.get_file = get_file
+
+    asyncio.run(telegram_bot.manejar_documento(update, _context()))
+
+    assert descargas == []
+    assert "pesa demasiado" in " ".join(update.effective_message.enviados)
+
+
+def test_R08_validar_el_adjunto_NO_corre_en_el_bucle_de_eventos(monkeypatch):
+    """validar_adjunto descomprime el .docx entero por bloques para medirlo
+    (LOG-02): es CPU, y en el bucle de eventos congelaba el bot -incluida la
+    puerta de acceso- mientras duraba. Mismo criterio que preparar() y
+    Agente.preguntar: a un hilo."""
+    import threading
+
+    import src.documentos as documentos
+
+    hilos = []
+
+    def validar_espia(datos, nombre):
+        hilos.append(threading.current_thread() is threading.main_thread())
+        raise documentos.DocumentoNoValido("no vale")
+
+    monkeypatch.setattr(documentos, "validar_adjunto", validar_espia)
+
+    asyncio.run(telegram_bot.manejar_documento(_update_documento(datos=b"x"), _context()))
+
+    assert hilos == [False]
 
 
 def test_los_documentos_pasan_por_la_allowlist():

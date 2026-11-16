@@ -13,7 +13,9 @@ import zipfile
 import docx
 import pytest
 
+from src import documentos
 from src.documentos import (
+    DocumentoAdjunto,
     DocumentoNoValido,
     documento_actual,
     extraer_texto,
@@ -685,3 +687,70 @@ def test_preparar_no_hace_nada_si_el_documento_cabe_entero(monkeypatch):
     monkeypatch.setattr(d, "extraer_texto", lambda a: "Documento cortito.")
 
     assert d.preparar(d.DocumentoAdjunto(datos=b"x", nombre="a.pdf", tipo="pdf")) == 0
+
+
+# --- R-08 (auditoria de seguridad de noviembre): topes de extraccion --------
+
+
+class _PaginaFalsa:
+    def __init__(self, texto, leidas):
+        self._texto = texto
+        self._leidas = leidas
+
+    def extract_text(self):
+        self._leidas.append(1)
+        return self._texto
+
+
+def _pdf_falso(monkeypatch, paginas: int, texto_por_pagina: str):
+    """PdfReader de mentira con N paginas, que apunta cuantas se leen."""
+    import pypdf
+
+    leidas = []
+
+    class _Lector:
+        is_encrypted = False
+
+        def __init__(self, *a, **kw):
+            self.pages = [_PaginaFalsa(texto_por_pagina, leidas) for _ in range(paginas)]
+
+    monkeypatch.setattr(pypdf, "PdfReader", _Lector)
+    return leidas
+
+
+@pytest.mark.requisito("RF-20")
+@pytest.mark.control("E2-FICHEROS")
+def test_R08_un_PDF_con_demasiadas_PAGINAS_se_corta_y_se_dice(monkeypatch):
+    """15 MB de PDF pueden ser decenas de miles de paginas vacias: cada una
+    es CPU de pypdf al extraer, aunque no traiga texto. Se para en el tope
+    de paginas, sin leer las de despues, y con marca VISIBLE (misma politica
+    que el resto: recortado y a la vista, nunca en silencio)."""
+    monkeypatch.setattr(documentos, "_MAX_PAGINAS_PDF", 3)
+    leidas = _pdf_falso(monkeypatch, paginas=50, texto_por_pagina="hola")
+
+    texto = documentos.extraer_texto(DocumentoAdjunto(datos=b"%PDF", nombre="a.pdf", tipo="pdf"))
+
+    assert leidas == [1, 1, 1]
+    assert "recortado" in texto
+
+
+@pytest.mark.control("E2-FICHEROS")
+def test_R08_el_TEXTO_extraido_tiene_tope(monkeypatch):
+    """Un PDF pequeño puede descomprimir muchisimo texto por pagina. Se deja
+    de extraer en cuanto se pasa del tope de caracteres."""
+    monkeypatch.setattr(documentos, "_MAX_CARACTERES_EXTRAIDOS", 1000)
+    leidas = _pdf_falso(monkeypatch, paginas=50, texto_por_pagina="x" * 400)
+
+    texto = documentos.extraer_texto(DocumentoAdjunto(datos=b"%PDF", nombre="a.pdf", tipo="pdf"))
+
+    assert len(leidas) < 50
+    assert len(texto) <= 1000 + 200  # el tope + la marca de recorte
+    assert "recortado" in texto
+
+
+def test_R08_un_documento_normal_no_se_toca(monkeypatch):
+    leidas = _pdf_falso(monkeypatch, paginas=5, texto_por_pagina="hola")
+
+    texto = documentos.extraer_texto(DocumentoAdjunto(datos=b"%PDF", nombre="a.pdf", tipo="pdf"))
+
+    assert len(leidas) == 5 and "recortado" not in texto
