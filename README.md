@@ -1,6 +1,23 @@
+> ## ⚠️ Proyecto retirado el 14/11/2026
+>
+> **Este proyecto (el asistente «Jimmy») ya no se mantiene y el bot no corre.** Se quitó
+> del VPS (unidades systemd, scripts y usuario de Linux) y el bot `@JimmyAsistente_bot`
+> se borró en BotFather. Sus partes buenas se fusionaron en
+> [**Jordiprof/agente-telegram**](https://github.com/Jordiprof/agente-telegram):
+> documentos, memoria por significado, interfaz, `/tiempo` (ahora de cualquier lugar de
+> España y la semana, F22), `/calcula`, `/condensar`, historial cifrado y aviso de caída.
+> **Para el asistente vivo, ir allí.**
+>
+> El resto de este README se conserva como **documentación histórica** de lo que era; lo
+> que dice en presente describe el proyecto tal como quedó, no algo que esté en marcha.
+> Última tanda de trabajo: una auditoría de seguridad en noviembre de 2026 y los arreglos
+> R-01 … R-11 (diario del 12/11/2026 en
+> [docs/diario_decisiones.md](docs/diario_decisiones.md); R-07 quedó sin hacer a propósito),
+> más la subida de dependencias vulnerables para que el CI volviera a verde.
+
 # Agente de IA en Python — Reto DataQuantum
 
-**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 · **Estado:** Niveles Básico,
+**Autor:** Jordi · **Periodo:** 15/07 → ~14/08/2026 (con trabajo posterior hasta nov/2026) · **Estado:** *retirado el 14/11/2026* (histórico). Al cierre: Niveles Básico,
 Intermedio y Avanzado completos (Fases 2–4, con tag). **Nivel Experto (Fase 5) en
 cierre:** memoria semántica con RAG local, validación de herramientas con Pydantic,
 **bot de Telegram** con memoria compartida con la CLI, catálogo de herramientas por
@@ -146,6 +163,8 @@ verás un aviso en pantalla mientras esté activo.
 
 ## Bot de Telegram
 
+*(El bot `@JimmyAsistente_bot` se borró el 14/11/2026; lo que sigue documenta cómo funcionaba.)*
+
 El mismo agente, accesible desde el móvil. **Reutiliza la clase `Agente` sin modificarla**:
 solo cambia quién le hace las preguntas (ver [ADR-005](docs/ADR/ADR-005-seguridad-bot-telegram.md)).
 
@@ -225,9 +244,13 @@ extremo a extremo** — pasan por los servidores de Telegram. Es una consecuenci
 ese canal, no del código, pero conviene saberlo: matiza el requisito RNF-06 del proyecto
 (ver [E1 §4.1](docs/E1_Especificacion_Requisitos.md)).
 
-## Corriendo 24/7 en una VPS
+## Corriendo 24/7 en una VPS (histórico: retirado el 14/11/2026)
 
-Desde el **21/08/2026** el bot no depende de que haya un ordenador encendido: vive en una
+> Esta sección describe cómo estuvo desplegado entre el 21/08 y el 14/11/2026. Ya no
+> existe nada de esto en el servidor; el asistente vivo es
+> [agente-telegram](https://github.com/Jordiprof/agente-telegram).
+
+Desde el **21/08/2026** el bot no dependía de que hubiera un ordenador encendido: vivía en una
 VPS (Hetzner CX23 · 2 vCPU · 4 GB · Ubuntu 26.04 · Núremberg · 7,25 €/mes sin permanencia)
 como servicio de systemd — [`scripts/jimmy.service`](scripts/jimmy.service), que lleva
 dentro el porqué de cada línea.
